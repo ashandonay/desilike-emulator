@@ -1007,6 +1007,307 @@ Confirms §16d / §17b / §23b: the F/D residual is **not** in the cov-→-α pr
 - `windowed_fisher_diag.py` — new diagnostic.
 - `windowed_fisher_diag.csv` — LRG2 + QSO σ comparison (referenced above).
 
+## 27. Broadband-prior audit — negative result
+
+Tested whether DESI uses wider BB(k) polynomial priors than our pipeline, which would mean our σ(α) is artificially tight by under-marginalizing the BB-α degeneracy. Two pieces of evidence collapse the avenue.
+
+### 27a. Priors are already fully open
+
+Inspected `likelihood.all_params` for a representative LRG2 build. All ten BB amplitudes (`al0_{-3,-2,-1,0,1}`, `al2_{-3,-2,-1,0,1}`) carry desilike's default **improper-uniform** prior (no `low`/`high` bounds). This matches Adame+24 Sec 4.2.1's setup — there is no tightness to widen.
+
+### 27b. BB marginalization is essentially free of σ-budget
+
+`test_bb_priors.py` measures σ(DH/DM/DV) in three states: BB floated (current), BB fixed, and ALL nuisances fixed (BB + b1 + dbeta + Σ_⊥ + Σ_∥ + Σ_s). The latter is the absolute Fisher-tightest σ the model can produce given its covariance.
+
+| Tracer / DR1   | F/D floated | F/D BB-fix | F/D ALL-fix | Δ (floated → ALL-fix) |
+|----------------|-------------|------------|-------------|-----------------------|
+| QSO DV         | 0.470       | 0.469      | 0.468       | 0.4%                  |
+| LRG2 DH        | 0.457       | 0.455      | 0.453       | 0.9%                  |
+| LRG2 DM        | 0.419       | 0.417      | 0.416       | 0.7%                  |
+| LRG3+ELG1 DH   | 0.533       | 0.531      | 0.529       | 0.8%                  |
+| LRG1 DH        | 0.664       | 0.661      | 0.658       | 0.9%                  |
+
+Even fixing **all** nuisances combined moves σ by ~1% on the worst tracer. The Σ-prior contribution that §21 widened to scale=2.0 lives inside that 1% budget. The Fisher is in the regime where data fully constrains the BB amplitudes and the nuisance-marginalization channel is essentially saturated — no prior change can produce more σ here.
+
+### 27c. Implication for the residual gap
+
+Combined with §26: avenues #1 (windowed Fisher) and #4 (BB priors) both close as negative results, and together they cap the total marginalization + projection budget at ≤ ~1% on σ(α). The residual F/D ≈ 0.4–0.7 lives **almost entirely in the cov normalization** — survey-realism inflations of `C_P` itself (alt-MTL, imaging systematics, IC subtraction) that §16d / §17b / §23b already characterized and that the no-fudge policy precludes.
+
+### 27d. Files touched
+
+- `CHANGELOG.md` — §27 entry.
+- `test_bb_priors.py` — pre-existing; no code changes, used as-is for the audit.
+
+## 28. Residual-σ shortlist closure: radial IC, non-QSO z-error, recon-shot
+
+Three remaining physics-clean avenues from the residual-σ shortlist, tested for thoroughness. All three close sub-percent.
+
+### 28a. Radial integral constraint (k_IC vs kmin floor)
+
+The radial IC suppresses modes with k_∥ < k_IC ~ 2π/L_z, where L_z is the comoving LOS extent of the redshift slice. If k_IC sits below the pipeline's kmin_eff floor (0.02 h/Mpc), the IC modes are already excluded and explicit IC modeling is a no-op.
+
+Tabulated `L_z` and `k_IC` at DR1 fiducial (script `test_radial_ic.py`):
+
+| Tracer       | zrange      | L_z [Mpc/h] | k_IC [h/Mpc] | k_IC < kmin? |
+|--------------|-------------|-------------|--------------|--------------|
+| BGS          | [0.1, 0.4]  | 531         | 0.0118       | yes |
+| LRG1         | [0.4, 0.6]  | 306         | 0.0206       | **no** (just above) |
+| LRG2         | [0.6, 0.8]  | 270         | 0.0232       | **no** |
+| LRG3+ELG1    | [0.8, 1.1]  | 349         | 0.0180       | yes |
+| ELG2         | [1.1, 1.6]  | 464         | 0.0135       | yes |
+| QSO          | [0.8, 2.1]  | 1171        | 0.0054       | yes |
+
+For LRG1 and LRG2, k_IC sits 3–15% above the kmin_eff floor — so IC modes ARE present in the analysis range for those two tracers. To bracket the impact, `sweep_kmin.py` raises the floor from 0.005 → 0.04 (well above k_IC) for both:
+
+| Tracer | kmin=0.005 | kmin=0.02 (ref) | kmin=0.04 | rel. Δσ(DH) |
+|--------|------------|-----------------|-----------|-------------|
+| LRG1   | 0.4036     | 0.4040          | 0.4052    | **+0.29%**  |
+| LRG2   | 0.2708     | 0.2711          | 0.2719    | **+0.26%**  |
+
+Even moving kmin from 0.005 to 0.04 (a 30% removal of low-k modes) changes σ(DH) by 0.3%. The radial IC, which only suppresses k_∥ < k_IC (a fraction of even that range, since k_⊥ is unaffected), contributes < 0.1% on σ(α). **Avenue #2 closes.**
+
+### 28b. Non-QSO spectroscopic z-error
+
+QSO already carries `z_error_kms: 600` (§10b) — broad-line catastrophic z. For other tracers, DESI spec pipeline values (Lan+23 / Schlegel+25) are:
+
+| Tracer | σ_z [km/s] | Source |
+|--------|------------|--------|
+| BGS    | 30 | Hα + multiple absorption lines |
+| LRG    | 40 | Ca II triplet, moderate S/N |
+| ELG    | 20 | [OII] doublet, resolved |
+| LRG3+ELG1 | 30 | bias-weighted blend |
+
+σ_z enters σ_v² in quadrature with the f_sat-weighted satellite virial dispersion. The σ_FoG inflation per tracer is 2.5–6.5%; through Lorentzian-FoG in the BAO model and into the Fisher, the σ(α) effect (script `test_z_error_nonqso.py`):
+
+| Tracer | z_err | σ(DH) Δ | σ(DM) Δ | σ(DV) Δ |
+|--------|-------|---------|---------|---------|
+| BGS    | 30 km/s | +0.06% | +0.02% | +0.04% |
+| LRG1   | 40 km/s | +0.12% | +0.03% | +0.07% |
+| LRG2   | 40 km/s | +0.13% | +0.03% | +0.08% |
+| LRG3+ELG1 | 30 km/s | +0.10% | +0.03% | +0.05% |
+| ELG2   | 20 km/s | +0.05% | +0.01% | +0.02% |
+
+Largest effect (LRG2, +0.13% on σ(DH)) sits inside §27's 1% nuisance-marginalization budget. Consistent with §27 — σ_s sits in the saturated channel. **Avenue #3 closes.** Yaml NOT updated since the effect is below the rounding noise on the F/D table; can be added cosmetically later for completeness, but it doesn't change the production σ values.
+
+### 28c. Reconstruction random-catalog noise on Σ_post
+
+The displacement field is reconstructed from a random catalog with `N_rand/N_data = 50` (`_N_RAND_OVER_N_DATA` in prep_covar). The existing `_sigma_nl_post_from_recon` uses `1/nbar` for the shot-displacement variance:
+
+```
+σ_shot² = (1 / (6π² b1² nbar)) · ∫ S²(k) dk
+```
+
+The physically correct form uses `(1 + 1/α)/nbar` to account for finite N_rand. For α=50 this is a 2% inflation on σ_shot².
+
+Sized the shot piece relative to Σ_⊥² for each tracer:
+
+| Tracer | σ_⊥_signal | σ_⊥_shot | shot²/Σ_⊥² | Σ_⊥ if shot ×1.02 |
+|--------|------------|----------|------------|-------------------|
+| BGS    | 3.11 | 1.18 | 12.6% | +0.13% |
+| LRG1   | 2.76 | 0.94 | 10.3% | +0.10% |
+| LRG2   | 2.53 | 0.95 | 12.3% | +0.12% |
+| LRG3+ELG1 | 2.31 | 1.02 | 16.3% | +0.16% |
+| ELG2   | 2.31 | 2.16 | **46.6%** | +0.47% |
+| QSO    | 2.49 | 1.71 | **32.1%** | +0.32% |
+
+For sparse tracers (QSO, ELG2) the shot piece IS substantial (32–47% of Σ_⊥²), but the (1+1/α=50) inflation is only ~0.5% on Σ_⊥. To convert to σ(α) impact, `test_sigma_post_recon_noise.py` brackets the Σ_post channel by inflating Σ_⊥ + Σ_∥ by +10% and measuring the σ response:
+
+| Tracer | σ(DH) Δ at Σ×1.10 | implied σ(DH) Δ at Σ×1.005 |
+|--------|--------------------|-----------------------------|
+| BGS    | +9.8% | +0.49% |
+| LRG1   | +8.7% | +0.44% |
+| LRG2   | +7.6% | +0.38% |
+| LRG3+ELG1 | +6.2% | +0.31% |
+| ELG2   | +6.0% | +0.30% |
+| QSO    | +3.4% | +0.17% |
+
+Σ_post IS a substantial lever — but the physical (1+1/α) inflation only moves it by ~0.5%, translating to ≤ 0.5% on σ(α). **Avenue #5 closes.** This also independently confirms §20a's "Σ_post dead end" diagnosis: the channel CAN move σ meaningfully if Σ_post is inflated by several percent, but no physics-derivable mechanism inflates it by that much; only mock/data-calibrated terms (DESI's empirical-fit Σ vs our 1-loop Σ) would, and those are policy-blocked.
+
+### 28d. Cumulative budget for the residual gap
+
+| Avenue | §  | Direction | Δσ contribution |
+|--------|----|-----------|-----------------|
+| #1 windowed Fisher | 26 | M projection in ξ-space | < 0.2% |
+| #4 BB priors | 27 | nuisance marginalization | < 1% (ALL-fix bound) |
+| #2 radial IC | 28a | low-k mode loss | < 0.1% |
+| #3 non-QSO z-error | 28b | FoG σ_s inflation | < 0.13% |
+| #5 recon random-cat shot | 28c | Σ_post inflation | < 0.5% |
+| **total addressable** | | | **< 2%** |
+
+The full F/D gap is 30–70%, and we can account for at most 2% from any combination of the methodology / physics-clean residuals. The remaining 28–68% lives entirely in **cov_P normalization** — survey-realism inflations (alt-MTL, imaging systematics, IC subtraction) characterized in §16d / §17b / §23b. This closes the residual-σ shortlist; no more cosmology-clean levers are available within the no-fudge-factors policy.
+
+### 28e. Files touched
+
+- `test_radial_ic.py` — new diagnostic (k_IC table).
+- `sweep_kmin.py` — new diagnostic (kmin sweep, monkey-patches the kmin floor).
+- `test_z_error_nonqso.py` — new diagnostic (literature z_err per-tracer impact).
+- `test_sigma_post_recon_noise.py` — new diagnostic (Σ_post ±10% σ-response bracket).
+- `CHANGELOG.md` — §28 entry.
+
+No production code or yaml changes — all three avenues sized analytically/empirically below the rounding noise.
+
+## 29. Relative-weight gap for ELG2 — fibre-assignment PIP audit
+
+After regenerating the Fisher+MCMC plots at 64 walkers × 8000 iter (DR1+DR2), the most concerning entry for the downstream BED multi-tracer combination is **ELG2 DM/rd**, where the pipeline F/D is 0.30 (DR1) / 0.39 (DR2) — the worst entry in the 11-row table. Investigated whether a fibre-assignment correction could close the *relative* weight discrepancy with LRG2, which matters for multi-tracer optimal weighting even if the absolute F/D is policy-bounded.
+
+### 29a. Relative-weight diagnostic
+
+σ(DM) ratio ELG2/LRG2:
+
+| Dataset | Pipeline ratio | DESI ratio | Pipeline / DESI |
+|---------|---------------|------------|-----------------|
+| DR1     | 0.209 / 0.134 = **1.56** | 0.690 / 0.319 = **2.16** | 0.72 |
+| DR2     | 0.126 / 0.095 = **1.33** | 0.325 / 0.180 = **1.81** | 0.73 |
+
+The mismatch is multiplicative — the pipeline systematically under-predicts ELG2's relative width vs LRG2 by ~30% in both datasets. For inverse-variance multi-tracer weighting, this would over-weight ELG2 DM by a factor ~(1.9)² ≈ 3.6 relative to the optimum from DESI's actual cov. Cosmological constraints aren't biased, but reported error bars on derived parameters understate the true error because they assume more ELG2 information than is really there.
+
+### 29b. Where tracer completeness already lives
+
+`bedcosmo/src/bedcosmo/num_tracers/prep_tracer_data.py` reads `efficiency` and `comp` per tracer from Adame+24 Table 2 (DR1) / DR2 paper Table 2:
+
+| Tracer | DR1 eff | DR1 comp | DR2 eff | DR2 comp |
+|--------|---------|----------|---------|----------|
+| BGS    | 0.989   | 0.636    | 0.988   | 0.755    |
+| LRG    | 0.991   | 0.693    | 0.990   | 0.826    |
+| ELG    | 0.727   | 0.352    | 0.739   | 0.537    |
+| QSO    | 0.668   | 0.874    | 0.680   | 0.936    |
+
+The `passed` count (= `targets × comp × eff`) is what flows into our `N_tracers`. Our Fisher uses this lower density via `nbar_comoving = passed / V_geom`, which inflates the shot piece `1/nbar` in the Gaussian cov. The **amplitude** of completeness/efficiency loss is therefore correctly absorbed. Adding a separate "fibre completeness V_eff factor" on top would double-count this piece.
+
+### 29c. What's NOT in the pipeline: angular selection function variance
+
+The completeness amplitude doesn't capture the *angular* selection-function variance. Fibre patrol-radius conflicts preferentially remove close pairs, biasing the cov shape (not just its amplitude) at small angular separations. This is what DESI's PIP/IIP pair-weighting corrects for. The leading effect:
+
+- For BAO at s ~ 100 Mpc/h ≫ patrol-radius angular scale (~5 arcmin → ~1 Mpc/h transverse at z=1), pair-loss is roughly uncorrelated with the BAO signal scale, so the amplitude piece (already in via 1/nbar) does capture most of the effect.
+- But for ELG-density-on-the-sky with limited tile passes, the residual angular sel-fn variance produces a tracer-specific cov-shape multiplier beyond the uniform 1/nbar boost. Mohammad+20 / Pinon+24 show this is ~1.5× for ELG and ~1.1× for LRG in DESI, which would explain the ~1.9 cov ratio mismatch we observe.
+
+### 29d. Literature audit: no analytical leading-order form
+
+Initially hypothesised a closed-form analytical model for the PIP `p_ij` based on patrol radius + pass count + target density (Bianchi+17 / Mohammad+20 / Hahn+22 / Pinon+24). Investigation closes this hope:
+
+- **Pinon+24** (arxiv 2411.12025, DESI DR1 fibre-assignment characterization): contains no closed-form expression for `p_ij(r_patrol, n_tile)`. Production methods are entirely Monte Carlo — either `altMTL` (~100 randomised seeds of the actual fibreassign code) or the `FFA emulator` (learned kernel `ℱ(n_CFC, n_tile)` from training data).
+- **Bianchi & Percival 2017** (the original PIP paper, arxiv 1703.02070): explicitly note *"despite the nominal possibility of computing such pairwise weights analytically, for modern surveys like DESI which will observe O(10⁷) galaxies, such calculations will be practically impossible."* The combinatorial intractability is the whole reason bitweights were invented.
+- **Mohammad+20** (MNRAS staa2344, eBOSS application): stores `~1860 fibre-assignment realisations` as bitweights, derives PIP from co-occurrence statistics. No analytical form provided or attempted.
+
+So the would-be lever is mock-derived all the way down. The "leading-order analytical" form I'd hoped existed doesn't exist in any production form in the literature.
+
+### 29e. Implication: avenue is policy-blocked
+
+Closing the ELG2 relative-weight gap requires alt-MTL bitweights (a DESI-survey-specific Monte Carlo realization of the fibreassign code on the actual target catalog) or the FFA emulator (trained on those same realizations). Both are `data-derived` / mock-calibrated — exactly the category the no-fudge policy precludes.
+
+This puts ELG2 relative-weight in the same closed category as the §16d / §17b / §23b cov-normalization gap: real physics-distinguishable mechanism (PIP angular sel-fn variance), no first-principles substitute available, policy-blocked from inclusion.
+
+### 29f. Downstream guidance for BED
+
+For BED multi-tracer combination using this pipeline's Fisher output:
+
+- **The pipeline σ remains policy-clean idealized Fisher** — represents "what BAO information content is available given the cosmology, n(z), and N_tracers" without DESI's analysis-stage systematic inflations.
+- **Inverse-variance weighting at face value will over-weight ELG2 DM** by a factor ~3.6 relative to LRG2 DM compared to DESI's actual cov. Cosmological estimates aren't biased, but reported error bars on derived parameters will under-state the true error by a tracer-dependent factor.
+- **Two practical options for BED** without crossing the no-fudge policy: (1) accept the over-weighting with documentation, or (2) apply a downstream per-tracer cov-inflation factor at BED inference time (not in this pipeline) using DESI's published per-tracer σ as the calibration target. Option (2) crosses the no-fudge policy at the BED level but leaves this Fisher pipeline policy-clean.
+
+### 29g. Files touched
+
+- `CHANGELOG.md` — §29 entry.
+
+No code changes — the literature audit closes the avenue before any implementation. Diagnostic was conducted via the existing `fisher_vs_desi_mcmc_dr{1,2}.png` outputs and `prep_tracer_data.py` inspection.
+
+### 29h. Channel breakdown — completeness IS in, PIP cov-shape ISN'T
+
+For clarity on what "incorporating completeness" means in this architecture, the dependency chain is:
+
+```
+DESI Table 2/3        →  prep_tracer_data.py        →  bao/ Fisher input
+──────────────           ──────────────────             ──────────────────
+targets         ×comp →  observed       ×eff       →   passed     →   N_tracers
+```
+
+The `passed` count (Adame+24 Table 1 / DR2 paper Table 3) is what `_get_ntracers(dataset, tracer)` returns to `run_fisher`. It is already post-completeness × post-efficiency, so the pipeline's `nbar_comoving = passed / V_geom` reflects the actual catalog density. Three distinct completeness-related channels affect σ; the table below summarises which are captured.
+
+| Channel | Mechanism | In current pipeline? |
+|---|---|---|
+| (1) Catalog-amplitude shot | Lower N_tracers → higher `1/nbar` in Gaussian cov | ✓ via `passed` |
+| (2) FKP V_eff suppression | Lower n̄P → effective `V_eff = ∫ (nP/(1+nP))² dV` shrinks | ✓ via `nbar_comoving` |
+| (3) Angular sel-fn variance | PIP cov-shape inflation from fibre-conflict pair-loss at small θ | ✗ mock-derived only (§29d) |
+
+(1) and (2) are the AMPLITUDE effects of completeness. Both already flow correctly. (3) is the SHAPE effect — the per-tracer cov-inflation factor (Mohammad+20 / Pinon+24) that requires alt-MTL bitweights — and is the residual gap responsible for the ELG2 relative-weight discrepancy.
+
+**Implication for forecast scenarios.** No code changes needed to handle different completeness regimes:
+
+- DR1 / DR2 equivalent forecasts: input `passed` from `prep_tracer_data.py` as today.
+- Future-survey forecast at hypothetical completeness `c'`: compute `passed_new = targets × c' × eff'` outside the pipeline, feed as `N_tracers`. The pipeline doesn't need to know about completeness explicitly.
+- LHS emulator training: `tracers.yaml` `low`/`high` bounds span the regime around DR1 + DR2 `passed` values, so the trained emulator is valid for any catalog size in that range — including non-DR1/DR2 (cosmology, completeness, area) combinations as long as the resulting `passed` lands in the prior box.
+
+So the user's intuition is correct: the current code IS DR1/DR2-equivalent because `passed` is the input. The §29 gap is NOT a missing completeness amplitude — it's a missing PIP cov-shape that has no policy-clean substitute.
+
+## 30. Post-§29 audit: sliced-nz / HMF / EFT / RascalC literature
+
+After the §29 ELG2 relative-weight question, ran four additional audits to test whether anything physics-clean remained unexplored before locking in the policy-bound interpretation. Three of the four close with small effects; one (RascalC cov amplitude) surfaces a genuinely open question.
+
+### 30a. Sliced-nz Fisher — small but real
+
+Currently `plot_fisher_vs_desi.py` calls `run_fisher` with a single Fisher-info-weighted `z_eff` per tracer (derived via `_compute_z_eff_from_nz`). The sliced-nz alternative (`get_bao_fisher_covariance_sliced_nz`) loops over each row of `~/data/desi/nz_slices/{tracer}_nz_slices.csv`, builds a separate likelihood per slice with `N_i = N_tracers × slice_fraction_i` at that slice's z_mid, and sums per-slice Fisher information. This properly accounts for within-bin z-evolution of D(z), Σ_∥, b₁, n̄, σ_v.
+
+Effect on F/D (sliced-nz minus single-z_eff):
+
+| Tracer    | DR1 ΔF/D (DH, DM, DV)   | DR2 ΔF/D                 |
+|-----------|-------------------------|--------------------------|
+| BGS       | DV: 0                   | DV: 0                    |
+| LRG1      | -0.001, +0.001, –        | -0.001, 0, –             |
+| LRG2      | -0.001, 0, –            | 0, 0, –                  |
+| LRG3+ELG1 | **+0.008, +0.007, –**   | **+0.009, +0.009, –**    |
+| ELG2      | **+0.006, +0.005, –**   | **+0.008, +0.007, –**    |
+| QSO       | DV **−0.007**           | DH/DM **−0.008, −0.008** |
+
+Within-bin z-evolution loosens σ for wide-bin tracers (ELG2, LRG3+ELG1) by ~1–2%, consistent with Jensen-inequality logic on the per-slice Fisher info sum. **QSO actually tightens** by ~0.8%: QSO's n(z) peaks strongly at z~1.5 where Σ_∥ is small, so per-slice sum recovers MORE info than the single-z_eff weighted average — direction depends on whether the high-n̄ slices are also the high-Fisher-info slices. For LRG1/2/BGS (narrow Δz=0.2), within-bin D(z) variation is too small to matter (effect <0.1%).
+
+### 30b. Sliced-nz reverted to opt-in
+
+Sliced-nz is ~30–45× slower than single-z_eff because of repeated `build_bao_likelihood` calls per slice (QSO alone has 65 slices in its CSV → 130 builds per cosmology). The runtime hit on `plot_fisher_vs_desi.py` was ~30–45 min vs <1 min. Given the ≤0.8% F/D shift, the cost/benefit doesn't favor making it the default — reverted to single-z_eff. The sliced-nz Fisher path remains available via `pc.run_fisher(..., nz_slices_path=...)` for users who want the more accurate within-bin treatment, and the audit numbers here document the size of the approximation.
+
+### 30c. HMF swap audit — not concluded
+
+Attempted to swap Tinker+08 HMF for Despali+16 (universal virial parameters from MNRAS 456 eq. 9: A=0.333, a=0.794, p=0.247) via a one-line monkey-patch on `_tinker08_f_sigma`. Naive results showed ~13–20% σ shifts on the worst tracers, but the implementation has known convention ambiguities:
+
+1. **Overdensity mismatch.** Tinker+08 uses Δ=200 (mean), Despali+16 uses Δ=virial. At z=0 in ΛCDM these coincide (Δ_vir ≈ 178), but at z=1.3 (ELG2) Δ_vir ≈ 165 — a ~15% mismatch in the overdensity definition.
+2. **ν vs σ normalization.** Tinker's `f(σ)` and Despali's `νf(ν)` use different multiplicity-function conventions. My one-line `f_nu/ν` conversion may not match what the calling `_hmf_arrays` expects.
+
+The direct sanity check (`f_despali/f_tinker` at fixed σ at z_eff) gave a ratio of 0.55–0.59 at σ=1, way larger than the few-% disagreement these HMFs actually have in the literature. **Result not trustworthy.** A proper swap requires the `colossus` library which handles Δ conversions natively. Effect is likely real at the few-percent level but the ~15-20% number from my patch is an implementation artifact and should not be quoted.
+
+### 30d. EFT-of-LSS velocity moments — out of scope
+
+CLASS-PT (or similar EFT-of-LSS code) is not installed in the emulator conda env. The 1-loop sv², sv²_dot, sv²_ddot are currently computed via velocileptors LPT. Going to 2-loop EFT would shift Σ_post by a few percent per Σ_perp = √(sv² + ...) integral, translating to similar % shifts on σ(α). Not pursued in this session — would require half-day setup to install CLASS-PT, validate against velocileptors at 1-loop, then bracket the 2-loop correction. Sub-leading effect anyway given the §28d cumulative budget.
+
+### 30e. RascalC literature dive — opens a real question
+
+The investigation into whether DESI's BAO covariance is mock-derived (EZmock) or analytical (RascalC) surfaced a discrepancy that doesn't fit the §16d/§17b/§29 narrative cleanly:
+
+- **Forero-Sánchez+24** (arxiv 2411.12027) states: DR1 BAO uses RascalC analytical covariance, with analytical/mock agreement to ~2% at the parameter-error level (r ≈ 0.97).
+- **Rashkovetskyi+23** (arxiv 2306.06320 Table 2) reports the RascalC shot-noise rescaling α_SN ≈ 1.04–1.10 — small.
+- BUT our `compare_to_dr1_rigorous.py` measures pipeline cov is **4–11× smaller** than what's in the DR1 likelihood `.h5` files (per §13/§16d/§17). RascalC's small α_SN can't explain a 4–11× cov gap on its own.
+
+Three possibilities:
+(i) The DR1 likelihood `.h5` files contain EZmock-derived cov, not RascalC — despite Forero-Sánchez+24 stating RascalC is the BAO fiducial. Public release packaging might differ from the analysis state.
+(ii) DESI applies an amplitude scaling beyond RascalC's α_SN that isn't documented in Rashkovetskyi+23. Possible but not found in the audit.
+(iii) Our pipeline cov has a normalization bug not caught by the §16b textbook check (which compared C_gauss to Grieb+16 at the 5% level).
+
+Worth a focused follow-up to verify what cov is actually in `likelihood_correlation-recon-poles_*.h5` (compare numerically against published RascalC outputs). Could in principle change the §16d / §17b / §29 diagnosis if it turns out our pipeline cov has a missing piece. Not pursued in this session.
+
+### 30f. Updated honest verdict on "are we sure"
+
+Earlier §28d / §29 framed the residual gap as fully policy-bounded. The four audits in §30 don't change the bottom-line numerical picture (sliced-nz is the only real effect, capped at <0.8% on F/D), but the §30e RascalC thread is open enough that I'd say ~90% confident in the policy-bound interpretation, not 100%. The remaining 10% uncertainty is:
+
+- §30e RascalC: the cov amplitude mismatch between our pipeline and the DR1 `.h5` files is 4–11×, much larger than what RascalC's documented α_SN can account for. Until we verify the cov provenance, we can't rule out a missing physics piece.
+- §30c HMF swap: not concluded due to implementation issues; would need `colossus` to do properly.
+
+These are pursuable if you want to push further. If you want to lock in the current state, the §28d / §29 / §30 collectively make a strong case that no clean lever exists at the magnitude required to close the F/D gap.
+
+### 30g. Files touched
+
+- `test_sliced_nz_fisher.py` — new diagnostic (sliced-nz vs single-z_eff per-tracer).
+- `test_hmf_swap.py` — new diagnostic (Tinker08 vs Despali16, with caveats).
+- `plot_fisher_vs_desi.py` — temporarily switched to sliced-nz, then reverted to single-z_eff after timing assessment.
+- `CHANGELOG.md` — §30 entry.
+
 ## Constraints respected throughout
 
 - No `covariance_scale`, `α_stoch`, `η`, or data-derived window
