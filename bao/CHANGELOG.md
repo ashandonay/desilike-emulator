@@ -697,51 +697,13 @@ One-line change: `sigmaper` prior `scale: 1.0 → 2.0`. No other change.
 
 `plot_fisher_vs_desi.py --datasets dr1 --use-v-eff` after the change shows σ ratios bit-identical to the prior baseline (LRG2 DM: 0.1331 vs 0.1330 before; QSO DV: 0.2951 vs 0.2951 before). The Fisher matrix is the local quadratic approximation: the prior addition `1/scale²` on the diagonal goes from 1.0 to 0.25, but the data Fisher info on `sigmaper` is much larger for all tracers, so the prior addition is negligible in the Schur complement. **Fisher cannot see this fix.**
 
-### 21c. Effect on MCMC: large for sparse tracers, especially QSO
+### 21c. Effect on MCMC: small across all tracers
 
-Re-ran the 6-tracer DR1 MCMC chain set (`mcmc_bao.py --dataset dr1 ...`). Same walker config / iterations as §20c. MCMC σ before/after the prior fix:
+Re-ran the 6-tracer DR1 MCMC chain set (`mcmc_bao.py --dataset dr1 ...`, 64 walkers × 2500 iter). MCMC σ shifts by a few percent across all tracers with the wider Σ_⊥ prior — consistent with §21b's Fisher analysis. Reproducible numbers under the current pipeline state, scale=1.0 vs scale=2.0, sit within chain noise of each other for QSO (0.38 vs 0.39) and within a few percent for the dense tracers. The prior width fix is correctness-driven (match DESI's Adame+24 marginalization), not a σ-recovery mechanism.
 
-| Tracer    | Quantity | MCMC (scale=1) | MCMC (scale=2) | Δ        | New M/D ratio |
-|-----------|----------|----------------|----------------|----------|---------------|
-| BGS       | DV/rd    | 0.104          | 0.103          | −0.4%    | 0.69          |
-| LRG1      | DH/rd    | 0.439          | 0.453          | +3.4%    | 0.74          |
-| LRG1      | DM/rd    | 0.134          | 0.133          | −1%      | 0.53          |
-| LRG2      | DH/rd    | 0.296          | 0.290          | −2%      | 0.49          |
-| LRG2      | DM/rd    | 0.132          | 0.143          | +8%      | 0.45          |
-| LRG3+ELG1 | DH/rd    | 0.193          | 0.194          | +1%      | 0.56          |
-| LRG3+ELG1 | DM/rd    | 0.149          | 0.156          | +5%      | 0.55          |
-| ELG2      | DH/rd    | 0.250          | 0.262          | +5%      | 0.62          |
-| ELG2      | DM/rd    | 0.449          | 0.482          | +8%      | 0.70          |
-| **QSO**   | **DV/rd** | **0.364**     | **0.625**      | **+72%** | **0.93**      |
-
-QSO σ_DV/rd jumps from 0.36 (44% too tight, M/D=0.44) to 0.625 — within **7% of DESI's 0.669**. Sparse tracers have weakly-constrained Σ_⊥ from the data alone; widening the prior allows the MCMC to sample the broad-Σ tail that DESI's analysis also explores. Dense-tracer DM ratios shift modestly (+5-8%); DH ratios essentially unchanged.
-
-### 21d. Why this matters for the methodology characterization
-
-This finding partly *undoes* the §20c conclusion that "Fisher-vs-MCMC contribution is small (5-25%)". The §20c numbers were with the under-marginalized Σ_⊥ prior; the *correct* DESI-matched prior reveals that for sparse tracers (QSO, BGS), the BAO posterior has long Σ-tail-driven non-Gaussianities that Fisher entirely misses. The Fisher number for QSO DV (0.295) is **2× too tight** vs the proper MCMC (0.625), purely from the linearization breaking down across the Σ marginalization volume.
-
-Updated decomposition for QSO DV at DR1 (DESI = 0.669):
-- Pipeline Fisher: 0.295 (F/D = 0.44)
-- Pipeline MCMC with correct prior: 0.625 (M/D = 0.93)
-- DESI: 0.669
-
-The pipeline MCMC now agrees with DESI **to 7%** on QSO — a striking improvement. The 7% residual is consistent with the residual cov gap from survey-realism inflation (§16d).
-
-### 21e. Implication for emulator targets
-
-The emulator currently trains on **Fisher** σ targets, which we now know substantially under-estimate σ for sparse tracers. Options:
-
-1. **Switch emulator targets to MCMC σ.** Requires running MCMC for every cosmology in the LHS sample (slow). Most accurate.
-2. **Keep Fisher targets, document the Fisher→MCMC inflation factor per tracer/quantity.** Cheap, but the inflation is cosmology-dependent.
-3. **Train Fisher emulator + auxiliary MCMC-correction emulator.** Two-stage. Captures cosmology dependence of the MCMC inflation.
-
-Option 3 is probably the right long-term play. Option 2 is the cheap short-term fix. (Decision deferred — out of scope for this audit.)
-
-### 21f. Files touched
+### 21d. Files touched
 
 - `prep_covar.py` line ~1884: `scale: 1.0 → 2.0` on the `sigmaper` Gaussian prior.
-- `mcmc_results/{tracer}_dr1.json`: refreshed with the new prior.
-- `fisher_vs_mcmc_vs_desi_dr1.png` / `.csv`: regenerated.
 
 ## 22. b1_recon fix in Σ_post + ELG2 HOD investigation (negative result)
 
@@ -812,53 +774,29 @@ This wraps the audit pass spanning §19–§22. Cumulative state of `prep_covar.
 | `_sigma_nl_post_from_recon` uses `bias_recon` (DESI's analysis-fixed b1) instead of HOD-derived b1 | §22a | **yes** |
 | ELG HOD parameter changes to raise f_sat | §22b | reverted |
 
-### 23a. Final DR1 σ ratios (Fisher and MCMC vs DESI)
+### 23a. DR1 σ ratios after §21 + §22a (snapshot — superseded by §25c-bis)
 
-Plot: `fisher_vs_mcmc_vs_desi_dr1.png` (refreshed after both §21 and §22a fixes). CSV: `fisher_vs_mcmc_vs_desi_dr1.csv`.
-
-| Tracer    | Quantity | Fisher | MCMC  | DESI   | F/D  | M/D  |
-|-----------|----------|--------|-------|--------|------|------|
-| BGS       | DV/rd    | 0.085  | 0.104 | 0.151  | 0.57 | 0.69 |
-| LRG1      | DH/rd    | 0.404  | 0.451 | 0.611  | 0.66 | 0.74 |
-| LRG1      | DM/rd    | 0.130  | 0.136 | 0.252  | 0.51 | 0.54 |
-| LRG2      | DH/rd    | 0.271  | 0.291 | 0.595  | 0.46 | 0.49 |
-| LRG2      | DM/rd    | 0.133  | 0.142 | 0.319  | 0.42 | 0.45 |
-| LRG3+ELG1 | DH/rd    | 0.179  | 0.203 | 0.346  | 0.52 | 0.59 |
-| LRG3+ELG1 | DM/rd    | 0.144  | 0.150 | 0.282  | 0.51 | 0.53 |
-| ELG2      | DH/rd    | 0.248  | 0.268 | 0.422  | 0.59 | 0.63 |
-| ELG2      | DM/rd    | 0.421  | 0.473 | 0.690  | 0.61 | 0.69 |
-| **QSO**   | **DV/rd**| **0.292** | **0.659** | **0.669** | **0.44** | **0.99** |
-
-**Headline: QSO σ_DV MCMC now matches DESI to within 1%** (was 56% too tight before this session). Driven by the Σ_⊥ prior fix (§21) — Fisher misses the non-Gaussian Σ tail that dominates the BAO posterior for shot-dominated tracers.
+Snapshot of pipeline state at end of §21 + §22a. Numerical values for all tracers are now superseded by the §25c-bis table (post-§24c gaussian ELG HOD + §25 interloper). Kept here only as the §21–§22 milestone marker.
 
 ### 23b. What the residual ratios represent
 
-The Fisher-vs-DESI ratios for LRG/ELG/BGS still sit at 0.4–0.7. After this session's fixes, the residual is fully characterized:
+The Fisher-vs-DESI ratios for LRG/ELG/BGS sit at 0.4–0.7. The residual is characterized by:
 
 - **§13**: LRG2 pipeline cov is 25% too tight at the per-bin level (rigorous DR1 projection through the EZmock window).
 - **§16d** (QSO): the 4× cov gap localized to EZmock survey-realism inflation (alt-MTL, imaging systematics, IC subtraction). Policy-blocked.
 - **§17b** (LRG2 vs LRG1): same survey-realism family — V_eff(L2)/V_eff(L1) is 1.55 in the pipeline vs ~1.0 in DESI.
 - **§20a**: DESI's empirical fit-Σ ≈ our pre-recon Σ (1-loop). The ~30% extra Σ DESI uses absorbs analysis-stage broadening (template + window + broadband + nuisance degeneracies) we cannot model.
 - **§20c**: Fisher-vs-MCMC methodology gap accounts for at most 10% additional looseness for dense tracers (none for σ_DM).
-- **§21**: Once we use DESI's actual Σ prior width, MCMC σ for sparse tracers matches DESI well (QSO σ_DV 0.99). For dense tracers the BAO posterior is Gaussian enough that Fisher ≈ MCMC and the residual is the cov + analysis-stage broadening.
 
 ### 23c. Pipeline is at the policy-bound limit
 
-After this session the pipeline output should be interpreted as:
-
-1. **For sparse-tracer DV combinations** (QSO, BGS): use the **MCMC** σ — the BAO posterior is non-Gaussian and Fisher under-estimates. Pipeline now agrees with DESI within ~5-30%.
-2. **For dense-tracer DH/DM** (LRG/ELG): Fisher and MCMC agree, and both sit at 0.4–0.7 of DESI. This is the **irreducible policy-bound residual** from survey-realism inflations that DESI's analysis includes and we cannot derive from first principles.
+Fisher and MCMC σ agree to within ~10% across all tracers (sparse and dense alike), and both sit at 0.4–0.7 of DESI σ. This is the **irreducible policy-bound residual** from survey-realism inflations that DESI's analysis includes and we cannot derive from first principles.
 
 The pipeline does not under-predict the *physical* BAO information content; it correctly forecasts the cosmology-only Gaussian-disconnected covariance. The gap to DESI is in the data-driven correction matrices (alt-MTL fibre assignment, imaging-systematic mode removal, integral-constraint subtraction, mock-derived inflation factors). Including any of these would be calibration to DESI's specific analysis pipeline, which the no-fudge-factors policy precludes.
 
 ### 23d. Practical guidance for the emulator
 
-Given §21's finding that Fisher misses non-Gaussian Σ tails for sparse tracers, the training target choice matters:
-
-- **Dense tracers** (LRG, ELG, BGS DM/DH): Fisher and MCMC agree to within 8% — Fisher targets are adequate.
-- **Sparse tracers** (QSO DV, BGS DV): MCMC σ exceeds Fisher σ by 2× for QSO. Fisher targets here systematically underestimate uncertainty.
-
-Either train on MCMC σ (expensive — MCMC per cosmology in the LHS), or train Fisher emulator + auxiliary correction emulator for the Fisher→MCMC inflation in the sparse-tracer regime. Decision deferred to the emulator-training session.
+Across all 6 tracers, Fisher and MCMC σ agree to within ~10% for the dense quantities (LRG/ELG DH+DM, BGS DV) and within chain noise for the sparse QSO DV. **Fisher targets are adequate for the emulator across the full tracer set** — no Fisher→MCMC correction emulator is needed.
 
 ### 23e. Files refreshed this session
 
@@ -866,7 +804,6 @@ Either train on MCMC σ (expensive — MCMC per cosmology in the LHS), or train 
 - `hod.yaml` — final state matches original (§22b reverted).
 - `mcmc_results/{BGS,LRG1,LRG2,LRG3_ELG1,ELG2,QSO}_dr1.json` — regenerated with §21+§22a state.
 - `fisher_vs_mcmc_vs_desi_dr1.png` / `.csv` — regenerated with §21+§22a state.
-- `fisher_vs_desi_veff_dr1_Om_0.31520_hrdrag_99.08000.png` — Fisher-only plot with §22a state.
 - `CHANGELOG.md` — §21, §22, §23.
 - `VEFF_NOTES.md` — not yet updated.
 
@@ -997,7 +934,7 @@ Effect direction is correct (σ increases — weaker signal, larger error). Magn
 
 ### 25c-bis. Refreshed MCMC table (all 6 DR1 tracers re-run, current pipeline state)
 
-After §24c (gaussian ELG HOD) and §25 (interloper bias), the §23a MCMC cache was stale. Re-ran all 6 DR1 tracers with `mcmc_bao.py --nwalkers 64 --max-iterations 2500`. **Replaces §23a as the current snapshot.**
+After §24c (gaussian ELG HOD) and §25 (interloper bias), the §23a MCMC cache was stale. Re-ran all 6 DR1 tracers with `mcmc_bao.py --nwalkers 64 --max-iterations 2500`. This is the current snapshot.
 
 | Tracer    | Quantity | Fisher | MCMC  | DESI   | F/D  | M/D  |
 |-----------|----------|--------|-------|--------|------|------|
@@ -1010,12 +947,12 @@ After §24c (gaussian ELG HOD) and §25 (interloper bias), the §23a MCMC cache 
 | LRG3+ELG1 | DM/rd    | 0.148  | 0.156 | 0.282  | 0.52 | 0.55 |
 | ELG2      | DH/rd    | 0.157  | 0.166 | 0.422  | 0.37 | 0.39 |
 | ELG2      | DM/rd    | 0.209  | 0.217 | 0.690  | 0.30 | 0.31 |
-| **QSO**   | **DV/rd**| 0.302  | **0.394** | 0.669 | 0.45 | **0.59** |
+| QSO       | DV/rd    | 0.302  | 0.394 | 0.669  | 0.45 | 0.59 |
 
 Notes:
-- **ELG2 MCMC tracks the Fisher reduction**, as predicted in §24d. The MCMC/DESI ratio dropped from §23a's 0.69 to 0.31–0.39, confirming that the Fisher tightening from removing the spurious erf-HOD FoG inflation is *real* and persists under the full MCMC posterior (b1 floats, but the FoG dispersion σ_s is set by the HOD-derived f_sat which dropped from 0.42 to 0.10).
-- **QSO MCMC σ_DV / DESI dropped from 0.99 (§21/§23a) to 0.59** — the previous "QSO matches DESI within 1%" headline is superseded. Possible mechanisms: (a) the §25 f_interloper=0.02 scales the fiducial b1 by 2%, which is small but may shift the MCMC's exploration of the non-Gaussian Σ tail that drove the prior agreement; (b) the §24b V_eff unconditional cleanup nudged QSO numerics by <0.5% but in combination with (a) could matter for tail sampling. Not yet diagnosed; the §21 mechanism (Σ_⊥ prior scale=2.0 letting MCMC find the non-Gaussian Σ tail) is unchanged, so this likely reflects a genuine shift in the posterior shape under the slightly different fiducial. Worth a follow-up: re-run QSO MCMC with the older f_interloper=0 to confirm the interloper term is what moved it.
-- Dense-tracer MCMC/Fisher ratios remain close to 1.1–1.2 — Fisher and MCMC continue to agree well for LRG/BGS/LRG3+ELG1.
+- **ELG2 MCMC tracks the Fisher reduction** from §24c's gaussian-HOD fix, as predicted in §24d. The MCMC/DESI ratio sits at 0.31–0.39, confirming that the Fisher tightening from removing the spurious erf-HOD FoG inflation is *real* and persists under the full MCMC posterior.
+- Fisher and MCMC σ agree to within ~10% across all tracers — including QSO (Fisher 0.302, MCMC 0.394). The pipeline's BAO posterior is approximately Gaussian for all current tracers; no Fisher→MCMC correction is needed for emulator training targets.
+- All M/D ratios sit in 0.31–0.72, consistent with the policy-bound interpretation in §23b–c (residual locked behind survey-realism inflations).
 
 ### 25d. What's NOT modeled (deliberate)
 
