@@ -1,0 +1,89 @@
+# Halo Occupation Distribution (HOD) shape parameters per tracer type.
+#
+# These are *cosmology-independent* shape parameters set once from the
+# galaxy-formation literature. The cosmology-dependent quantity is the
+# central scale M_cut, which is solved inside _hod_halo_props at each
+# cosmology so the HOD-integrated number density matches n̄(z).
+#
+# HOD form:
+#   N_cen(M) = f_cen · 0.5·[1 + erf((logM − logMcut) / sigma_logM)]
+#                    · quench_factor(M)   [optional]
+#   N_sat(M) = ((M − Mcut_sat) / M_1)^alpha_sat · Θ(M ≥ Mcut_sat)
+#
+# Parameters (per tracer type):
+#   central_form           "erf" (Zheng+07 rising step) or "gaussian" (Avila+20
+#                          / Rocher+23 narrow-band; ELG-style). Default "erf".
+#                          For "gaussian", log_Mcut is reinterpreted as the
+#                          peak occupancy mass log_Mcen, and the quenching
+#                          factor is silently ignored (gaussian already
+#                          suppresses high-M occupancy).
+#   sigma_logM             width of the central distribution (dex of log M);
+#                          for "erf" it is the erf width, for "gaussian" the
+#                          Gaussian sigma.
+#   f_cen                  central amplitude (1 for complete tracers; <1 for ELG)
+#   log_M_sat_over_Mcut    log10(Mcut_sat / Mcut); satellite cutoff offset
+#   log_M1_over_Mcut       log10(M_1 / Mcut); satellite normalization mass
+#   alpha_sat              satellite power-law slope
+#   log_Mquench_over_Mcut  log10(M_quench / Mcut); quenching cutoff (>10 means off).
+#                          Ignored for central_form: gaussian.
+#   eta_quench             sharpness of the quench cutoff. Ignored for gaussian.
+#
+# Literature sources (cited in CHANGELOG and prep_covar.py top comments):
+#   Zheng+07   (2007ApJ...667..760Z)    5-par HOD form (LRG-ish)
+#   Reid+14    (2014MNRAS.444..476R)    LRG HOD priors
+#   Yuan+22    (2022MNRAS.515..871Y)    DESI-Y1 LRG HOD
+#   Avila+20   (2020MNRAS.499.5486A)    eBOSS ELG HOD
+#   Rocher+23  (2023JCAP...10..016R)    DESI ELG HOD; small f_cen
+#   Richardson+12 (2012ApJ...755...30R) QSO HOD (broad central erf)
+#   Eftekharzadeh+15 (2015MNRAS.453.2779E) QSO clustering
+#   Smith+20   (2020MNRAS.499..269S)    BGS HOD
+#
+# Policy: these values are set from the cited literature once and not
+# tuned to DESI σ measurements. Any change must be physics-derived
+# (matching to a newer HOD constraint paper) and documented here.
+
+BGS:                              # Smith+20
+  sigma_logM: 0.30
+  f_cen: 0.80
+  log_Mquench_over_Mcut: 0.50
+  eta_quench: 1.0
+  log_M_sat_over_Mcut: 0.0
+  log_M1_over_Mcut: 1.50
+  alpha_sat: 1.00
+
+LRG:                              # Zheng+07, Reid+14, Yuan+22
+  sigma_logM: 0.50
+  f_cen: 1.00
+  log_Mquench_over_Mcut: 10.0     # effectively off (no quench for LRGs)
+  eta_quench: 1.0
+  log_M_sat_over_Mcut: 0.0
+  log_M1_over_Mcut: 1.40
+  alpha_sat: 0.80
+
+ELG:                              # Rocher+23 / Avila+20 Gaussian-central ELG HOD
+  central_form: gaussian          # narrow-band: ELGs live in ~10^11.5-12.5 M_sun halos
+  sigma_logM: 0.30                # Gaussian sigma (Rocher+23 best fit ~0.3 dex)
+  f_cen: 0.10                     # peak central occupancy at log_Mcen
+  log_Mquench_over_Mcut: 10.0     # unused for gaussian form (set off)
+  eta_quench: 1.0                 # unused for gaussian form
+  log_M_sat_over_Mcut: 1.00       # M_0 ~10× M_cen; Rocher+23 ~10^12.5 for M_cen ~10^11.5
+  log_M1_over_Mcut: 1.70          # M_1 ~50× M_cen; tuned for f_sat ~0.1
+  alpha_sat: 0.80                 # Rocher+23 ~0.8
+
+MIX:                              # Hybrid LRG3+ELG1; intermediate values
+  sigma_logM: 0.50
+  f_cen: 0.40
+  log_Mquench_over_Mcut: 0.20
+  eta_quench: 1.5
+  log_M_sat_over_Mcut: 0.5
+  log_M1_over_Mcut: 1.50
+  alpha_sat: 0.80
+
+QSO:                              # Richardson+12, Eftekharzadeh+15
+  sigma_logM: 0.60
+  f_cen: 0.10
+  log_Mquench_over_Mcut: 0.0
+  eta_quench: 1.5
+  log_M_sat_over_Mcut: 1.5
+  log_M1_over_Mcut: 2.50
+  alpha_sat: 0.40

@@ -1,0 +1,141 @@
+# Per-tracer config for BAO Fisher forecasts and emulator training.
+#
+# Schema (per tracer block):
+#
+#   tracer_type      Category that selects the HOD shape from hod.yaml.
+#                    One of: BGS, LRG, ELG, MIX, QSO.
+#   zrange           [z_min, z_max] redshift slice covered by the sample
+#                    (survey-design quantity; cosmology-independent).
+#   bias_recon       Linear bias used at reconstruction time. Fixed by the
+#                    DESI BAO analysis (Adame+24 DR1 BAO paper); not a
+#                    cosmology-dependent fit value. Used in the Wiener
+#                    filter inside `_sigma_nl_post_from_recon`.
+#   smoothing_scale  Reconstruction smoothing R [Mpc/h]. DESI uses 15 for
+#                    galaxy tracers and 30 for QSO (sparser sample needs
+#                    larger smoothing).
+#   z_error_kms      (optional) Spectroscopic redshift precision in km/s.
+#                    Currently set only for QSO (broad-emission-line
+#                    redshifts ~600 km/s). Other tracers use narrow
+#                    forbidden lines (~50 km/s), contribution negligible.
+#   f_interloper     (optional) Fraction of catalog objects misidentified
+#                    (line confusion / catastrophic redshifts). Effect:
+#                    multiplies the observed bias by (1 − f_int), since
+#                    interlopers are uncorrelated with LSS at the assigned
+#                    z and only the (1−f) true fraction carries the signal.
+#                    Values: BGS ~0, LRG ~0.002, ELG ~0.07, QSO ~0.02
+#                    (Adame+24 Table 2 / DESI SV completeness; Massara+24,
+#                    Yuan+24 for ELG modeling). Physics-derivable, no σ
+#                    calibration to DESI involved.
+#   z_eff            *FALLBACK ONLY*. Production code derives the
+#                    Fisher-weighted z_eff from the n(z) slices file
+#                    (`_compute_z_eff_from_nz` in prep_covar.py). The
+#                    yaml value is retained for legacy diagnostic scripts
+#                    that read it directly without going through
+#                    build_bao_likelihood / run_fisher; those scripts may
+#                    not reflect the current best-practice z_eff.
+#
+# Emulator-sampler config (used only by the training-set generator, not
+# by the physics pipeline):
+#
+#   low, high        N_tracers prior bounds for the LHS sampler. Roughly
+#                    bracket the realistic DR1/DR2/DR3 counts per tracer.
+#
+# Derived quantities NOT listed here (computed inside the pipeline from
+# n(z) slices + cosmology):
+#   - z_eff          Fisher-weighted effective redshift (see
+#                    `_compute_z_eff_from_nz` in prep_covar.py).
+#   - nbar(z)        Comoving 3D density per slice (from nbar_file in
+#                    ~/data/desi/nz_slices/<tracer>_nz_slices.csv).
+#   - Σ_perp, Σ_par  Post-reconstruction BAO damping
+#                    (`_sigma_nl_post_from_recon`).
+#   - b1, M_cut      HOD-weighted Tinker bias and central mass
+#                    (`_hod_halo_props`).
+
+BGS:
+  tracer_type: BGS
+  zrange: [0.1, 0.4]
+  z_eff: 0.295                   # FALLBACK ONLY (see header)
+  bias_recon: 1.5
+  smoothing_scale: 15.0
+  f_interloper: 0.0              # bright low-z sample, essentially no line confusion
+  low: 600000.0
+  high: 1800000.0
+
+LRG1:
+  tracer_type: LRG
+  zrange: [0.4, 0.6]
+  z_eff: 0.510                   # FALLBACK ONLY (see header)
+  bias_recon: 2.0
+  smoothing_scale: 15.0
+  f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
+  low: 500000.0
+  high: 1600000.0
+
+LRG2:
+  tracer_type: LRG
+  zrange: [0.6, 0.8]
+  z_eff: 0.706                   # FALLBACK ONLY (see header)
+  bias_recon: 2.0
+  smoothing_scale: 15.0
+  f_interloper: 0.002            # Adame+24 Table 2
+  low: 800000.0
+  high: 2400000.0
+
+LRG3_ELG1:
+  tracer_type: MIX
+  zrange: [0.8, 1.1]
+  z_eff: 0.934                   # FALLBACK ONLY (see header)
+  bias_recon: 1.6
+  smoothing_scale: 15.0
+  f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
+  low: 2300000.0
+  high: 6800000.0
+
+ELG2:
+  tracer_type: ELG
+  zrange: [1.1, 1.6]
+  z_eff: 1.321                   # FALLBACK ONLY (see header)
+  bias_recon: 1.2
+  smoothing_scale: 15.0
+  f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
+  low: 1900000.0
+  high: 5700000.0
+
+QSO:
+  tracer_type: QSO
+  zrange: [0.8, 2.1]
+  z_eff: 1.484                   # FALLBACK ONLY (see header)
+  bias_recon: 2.1
+  smoothing_scale: 30.0
+  f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z
+  # QSO redshifts are from broad emission lines (Mg II, C IV) with
+  # intrinsic precision ~600 km/s. This contributes LOS smearing
+  # comparable to or larger than satellite virial motion and is the
+  # dominant component of the Lorentzian FoG scale σs for QSO BAO.
+  # Other DESI tracers (BGS, LRG, ELG) use narrow lines with ~50 km/s
+  # precision and the contribution is negligible.
+  z_error_kms: 600.0
+  low: 700000.0
+  high: 2200000.0
+
+Lya_QSO:
+  # Marked unsupported until a proper Lyα forecast (Arinyo-i-Prats bias
+  # + β_F + pixel-noise P_N) is wired in.
+  supported: false
+  zrange: [1.8, 4.2]
+  z_eff: 2.33                    # Lyα currently bypasses the n(z) derivation.
+  low: 650000.0
+  high: 1900000.0
+  # Lyα flux-bias parameters (Arinyo-i-Prats 2015 model)
+  bF0: -0.117
+  gamma_bF: 2.9
+  # Empirical BAO damping scales at z_ref (placeholder; replace with
+  # cosmology-derived values when Lyα is supported)
+  Sigma_perp_fid: 5.0
+  Sigma_par_fid: 10.0
+  # Fiducial growth values used to rescale damping
+  sigma8_fid: 0.83
+  f_fid: 0.97
+  # Effective pixel-noise model
+  sigma2_pix: 1.0
+  delta_r_pix: 1.0
