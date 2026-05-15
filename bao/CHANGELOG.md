@@ -968,6 +968,45 @@ Notes:
 - `fisher_vs_mcmc_vs_desi_dr1.png` / `.csv` — refreshed 3-panel ratio bar chart.
 - `mcmc_results/{BGS,LRG1,LRG2,LRG3_ELG1,ELG2,QSO}_dr1.json` — **all re-run** (§25c-bis); supersedes §23a cache. Log: `mcmc_refresh.log` (6 tracers, ~1 min each).
 
+## 26. Windowed-Fisher diagnostic — negative result
+
+Tested whether applying the full DR1 survey window matrix W to the Fisher (rather than relying on the simplified `kmin = max(0.02, 2π/L_survey^{1/3})` cutoff in `prep_covar.py:1761`) widens the predicted σ(α) toward the DESI value. Motivation: DESI fits BAO in ξ_obs(s) space after convolving the theory P(k) through the survey window, which mixes/discards k-modes. If that mode-mixing carried significant BAO information loss, the Fisher in windowed ξ basis would be smaller than the Fisher in unwindowed P basis, giving a wider σ closer to DESI.
+
+### 26a. Setup
+
+Diagnostic `windowed_fisher_diag.py` builds `M = W @ H_Hankel` from each tracer's DR1 likelihood h5 (reusing the projection machinery in `compare_to_dr1_rigorous.py`), then computes both:
+
+  F_unwin = J^T C_P^{-1} J         (current pipeline)
+  F_win   = J^T M^T (M C_P M^T)^{-1} M J
+
+The implementation overrides `likelihood.precision` on the desilike `ObservablesGaussianLikelihood` before calling `Fisher(likelihood)`. Sanity checks confirm the substitution takes effect: precision rank drops from 112 to 42 (LRG2) and 112 to 26 (QSO, ξ_0-only), and ‖P_win − P_unwin‖/‖P_unwin‖ ≈ 0.71.
+
+### 26b. Results
+
+| Tracer | M shape | rank-loss | σ_win/σ_unwin (DH, DM, DV) | F/D unwin → F/D win |
+|--------|---------|-----------|----------------------------|---------------------|
+| LRG2   | 52×112  | 60 modes  | 1.000 / 1.000 / 1.000      | 0.456 → 0.456 (DH); 0.417 → 0.417 (DM) |
+| QSO    | 26×112  | 86 modes  | 4.78 / 4.05 / **1.02**     | 0.41 → 0.42 (DV)    |
+
+For QSO the apparent DH/DM blow-up is mechanical — the DR1 QSO fit is ξ_0-only, so M has no quadrupole information and DH/DM become degenerate along the anisotropic direction. The only DESI-published QSO quantity is DV, which moves by ≈ 2%.
+
+ELG2 not tested: `likelihood_correlation-recon-poles_ELG_LOPnotqso_GCcomb_z1.1-1.6.h5` is not in `~/data/desi/bao_dr1/` (only the spectrum-poles covariance file is downloaded). LRG2 + QSO results are conclusive for the general phenomenon.
+
+### 26c. Interpretation
+
+The precision-matrix substitution discards 60–86 of 112 P-space modes, yet the Fisher q-block changes by < 0.2% for LRG2 and σ(DV) by < 2% for QSO. **The BAO signal ∂P/∂α lives almost entirely in the row-space of M.** This is unsurprising in retrospect: the DESI window is designed to retain the BAO feature on scales k ~ 0.05–0.2 h/Mpc; modes orthogonal to it carry essentially no BAO info, so projecting them out is information-preserving for the BAO Fisher.
+
+The simplified `kmin` cutoff already in `prep_covar.py:1761` is doing the same effective job as the full W matrix for the Fisher σ(α). Switching from "P-space Fisher with kmin cutoff" to "ξ-obs-space Fisher with full W projection" buys nothing.
+
+### 26d. Closure of avenue #1 in the residual-σ shortlist
+
+Confirms §16d / §17b / §23b: the F/D residual is **not** in the cov-→-α projection step (window, Hankel, or k-mode coupling). It lives in the cov **normalization** — survey-realism inflations (alt-MTL, imaging systematics, IC subtraction) that scale C_P uniformly and that the no-fudge policy precludes.
+
+### 26e. Files touched
+
+- `windowed_fisher_diag.py` — new diagnostic.
+- `windowed_fisher_diag.csv` — LRG2 + QSO σ comparison (referenced above).
+
 ## Constraints respected throughout
 
 - No `covariance_scale`, `α_stoch`, `η`, or data-derived window
