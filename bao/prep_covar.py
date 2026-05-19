@@ -256,53 +256,6 @@ def _compute_v_eff_fkp(
     return V_eff, V_shell
 
 
-def _compute_v_eff_cov_band(
-    V_bin_slice: np.ndarray,
-    nbar_slice: np.ndarray,
-    P_g_band_per_slice: np.ndarray,
-) -> float:
-    """Band-averaged FKP effective volume for the Gaussian covariance.
-
-    Standard FKP cov uses the optimal weight w(z, k) = 1/(1 + n̄(z) P(k)):
-
-        V_eff_cov(k) = [Σᵢ Vᵢ n̄ᵢ wᵢ(k)]² / Σᵢ Vᵢ n̄ᵢ² wᵢ(k)²
-
-    Band-averaging with the BAO Fisher kernel W²(k) = k⁴ exp(-k²Σ_silk²):
-
-        V_eff_cov = ∫dk W²(k) V_eff_cov(k) / ∫dk W²(k)
-
-    This is the volume that should enter the Gaussian cov_P formula
-    Var[P(k)] = 2 (P + 1/n̄_FKP)² / N_modes(V_eff_cov(k)). For uniform n̄(z),
-    V_eff_cov → V_shell. For peaked n̄(z) (e.g. QSO) it is strictly smaller
-    than V_shell — desilike's CutskyFootprint cov treats the survey as
-    uniform-n̄ over V_geom, which is then equivalent to using V_eff_cov as
-    the survey volume while keeping n̄_3d at the volume-averaged value
-    (deep-shot limit). General-nP regime falls out of the full formula.
-
-    Inputs:
-      V_bin_slice           : (NZ,)        slice comoving volumes [(Mpc/h)^3]
-      nbar_slice            : (NZ,)        slice number densities  [(Mpc/h)^-3]
-      P_g_band_per_slice    : (NZ, NK)     galaxy P_g(k, z_slice) on _BAO_K_GRID
-
-    Returns V_eff_cov_band [(Mpc/h)^3].
-    """
-    V = np.asarray(V_bin_slice, dtype=np.float64)
-    n = np.asarray(nbar_slice, dtype=np.float64)
-    P = np.asarray(P_g_band_per_slice, dtype=np.float64)  # (NZ, NK)
-    if P.ndim != 2 or P.shape[0] != n.size:
-        raise ValueError(
-            f"P_g_band_per_slice shape {P.shape} incompatible with "
-            f"nbar_slice size {n.size}"
-        )
-    # w(z_i, k_j) = 1 / (1 + n_i P_ij)
-    w = 1.0 / (1.0 + n[:, None] * P)  # (NZ, NK)
-    Vn = V[:, None] * n[:, None]      # (NZ, 1)
-    num_k = np.sum(Vn * w, axis=0) ** 2          # (NK,) numerator
-    den_k = np.sum(Vn * n[:, None] * w**2, axis=0)  # (NK,) denominator
-    veff_k = np.where(den_k > 0, num_k / den_k, 0.0)
-    return float(np.trapezoid(_BAO_W_K2 * veff_k, _BAO_K_GRID) / _BAO_W_K2_NORM)
-
-
 def _sample_constrained_pair(
     low1: float, high1: float,
     low2: float, high2: float,
@@ -1368,7 +1321,7 @@ def build_bao_likelihood(
     # per-slice abundance matching for b1(z_i); growth suppression enters via
     # P_lin(k_BAO, z). No DESI-derived bias values used.
     nbar_3d_eff: Optional[float] = None
-    v_eff_cov_ratio: Optional[float] = None
+    v_shell_for_footprint: Optional[float] = None
     if tracer_bin != "Lya_QSO":
         try:
             z_mid_slice, z_edges_slice, frac_slice, _ = _load_nz_slice_fractions(tracer_bin)
@@ -1429,25 +1382,7 @@ def build_bao_likelihood(
                 cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
                 fkp_weight_sq_per_bin=fkp_wsq_per_bin,
             )
-            # FKP-effective volume for the Gaussian COVARIANCE. This is
-            # distinct from V_eff_signal: for sparse tracers where n̄(z)
-            # is sharply peaked, V_eff_cov < V_shell because the FKP
-            # estimator's modes are concentrated in the dense regions.
-            # desilike's CutskyFootprint cov uses V_geom as the volume;
-            # passing area_eff = area × (V_eff_cov / V_shell) and N_eff =
-            # N × (V_eff_cov / V_shell) leaves nbar_3d at the volume-
-            # averaged value n_avg while reducing the mode-count to the
-            # FKP-correct N_modes(V_eff_cov). This recovers the FKP cov
-            # Var[P] = 2(P + 1/n̄_FKP)² / N_modes(V_eff_cov) in both the
-            # deep-shot and signal-dominated limits.
-            v_eff_cov = _compute_v_eff_cov_band(
-                V_bin_slice=V_bin_slice,
-                nbar_slice=nbar_slice,
-                P_g_band_per_slice=P_g_per_slice_arr,
-            )
-            v_eff_cov_ratio = (
-                float(v_eff_cov) / float(v_shell) if v_shell > 0 else None
-            )
+            v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
             # Effective 3D density n_eff such that the BAO-Fisher-band
             # average of FKP^2 at fixed n_eff and P_g(k, z_eff) matches the
             # n(z)-weighted band average that produced V_eff:
@@ -1500,15 +1435,12 @@ def build_bao_likelihood(
                 nbar_3d_eff = None
             if os.environ.get("_PREP_COVAR_DIAG") == "1":
                 n_avg_dbg = float(N_tracers) / max(v_shell, 1.0)
-                v_eff_cov_dbg = (
-                    v_eff_cov_ratio * v_shell if v_eff_cov_ratio is not None else float("nan")
-                )
                 print(
                     f"[veff] tracer={tracer_bin} V_shell={v_shell/1e9:.2f} "
-                    f"V_eff_sig={v_eff/1e9:.2f} V_eff_cov={v_eff_cov_dbg/1e9:.2f} "
-                    f"Gpc^3/h^3 fkp_w2_eff={fkp_w2_avg:.4f} "
-                    f"V_cov/V_shell={v_eff_cov_ratio if v_eff_cov_ratio is not None else float('nan'):.4f} "
-                    f"n_avg={n_avg_dbg:.3g} n_eff_sig={float(nbar_3d_eff) if nbar_3d_eff else float('nan'):.3g}",
+                    f"V_eff_sig={v_eff/1e9:.2f} Gpc^3/h^3 "
+                    f"fkp_w2_eff={fkp_w2_avg:.4f} "
+                    f"n_avg={n_avg_dbg:.3g} "
+                    f"n_eff_sig={float(nbar_3d_eff) if nbar_3d_eff else float('nan'):.3g}",
                     flush=True,
                 )
 
@@ -1678,21 +1610,23 @@ def build_bao_likelihood(
     P_N_eff = float(tracer_settings["P_N_eff"])
     nbar_for_footprint = float(tracer_settings["nbar_for_footprint"])
 
-    # Apply FKP-effective COVARIANCE-volume rescaling whenever the V_eff
-    # block above resolved one. The final desilike footprint is built with:
+    # Inject the V_eff-matched effective 3D density into the footprint.
+    # The Brent root-find above solved for n_eff such that
     #
-    #     area_eff = area × (V_eff_cov / V_shell)
-    #     N_eff    = N    × (V_eff_cov / V_shell)
+    #     <FKP^2(n_eff, P_g(k, z_eff))>_band  =  V_eff / V_shell
     #
-    # so nbar_for_footprint = N_eff/area_eff stays at the volume-averaged
-    # value n_avg (deep-shot FKP limit), while footprint.volume = V_eff_cov.
-    # desilike's cov_P formula Var[P] = 2(P+1/n̄)²/N_modes(V) then reproduces
-    # the FKP cov Var[P] = 2(P+1/n̄_FKP)²/N_modes(V_eff_cov) for both
-    # shot-dominated (nP << 1) and signal-dominated (nP >> 1) regimes;
-    # for uniform n̄(z), V_eff_cov → V_shell and there is no rescaling.
-    area_eff = float(area)
-    if v_eff_cov_ratio is not None and v_eff_cov_ratio > 0.0:
-        area_eff = float(area) * float(v_eff_cov_ratio)
+    # so the footprint's internal FKP^2 weighting at the band-integrated
+    # BAO scale reproduces V_eff exactly. CutskyFootprint stores a scalar
+    # nbar as an angular density (deg^-2) and recovers nbar_3d = size/V,
+    # so converting via (n_eff × V_shell / area) lands nbar_3d at n_eff
+    # while leaving footprint.volume = V_shell (physical geometry).
+    # If the V_eff block did not run (Lya, missing n(z)), the upstream
+    # angular density is left in place.
+    if (nbar_3d_eff is not None and v_shell_for_footprint is not None
+            and float(area) > 0):
+        nbar_for_footprint = (
+            float(nbar_3d_eff) * float(v_shell_for_footprint) / float(area)
+        )
 
     # Parameters supplied to the BAO observable model.
     # `sigmas` is the Lorentzian FoG/streaming scale (Beutler+17 form),
@@ -1715,7 +1649,7 @@ def build_bao_likelihood(
     #
     # attrs are metadata only (not used directly by desilike).
     footprint = CutskyFootprint(
-        area=area_eff,
+        area=area,
         zrange=zrange,
         nbar=nbar_for_footprint,
         cosmo=cosmo,
