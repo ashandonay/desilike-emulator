@@ -1903,6 +1903,98 @@ This generalizes the §31g.bis LRG2-only finding to the full tracer set
 honestly: bundle-cov substitution is NOT a universal F/D-closure
 mechanism; LRG2's clean closure was tracer-specific.
 
+### 31g.nonus. BB-basis truncation and Σ-fiducial override — both ruled out as dominant overshoot driver
+
+Follow-up to §31g.octavus to pin down what's behind the residual ~10-15%
+F/D overshoot on LRG1 and LRG3+ELG1 after bundle-cov substitution. Two
+candidate mechanisms tested as cheap closed-form perturbations of the
+Tier-3 Fisher.
+
+CLI knobs added to `test_tier3_all_tracers.py` (test code only, NOT
+touched in any pipeline module):
+
+- `--bb`: comma-separated BB powers (default `-3,-2,-1,0,1`, the DESI
+  Adame+24 5-col basis). Lets us truncate to fewer cols/ℓ to test
+  whether broadband marginalization absorbing BAO peak signal is what's
+  inflating σ.
+- `--sigma-par`, `--sigma-per`, `--sigma-s`: override Σ_∥, Σ_⊥, σ_s
+  fiducials applied after `_build_wide_lik` returns. Lets us pin Σ to
+  DESI canonical (6.0/3.0 post-recon for LRG/ELG; Adame+24 Table 5)
+  rather than the pipeline-derived values.
+
+**BB-basis truncation (mechanism 1: BB marginalization on correlated cov).**
+
+Sweep on LRG1, LRG2, LRG3+ELG1:
+
+```
+BB cols/ℓ:        LRG1 DH/DM      LRG2 DH/DM      LRG3+ELG1 DH/DM
+{-3,-2,-1,0,1} 5  1.135 / 0.974   0.808 / 0.808   1.116 / 1.144
+{-2,-1,0}      3  1.107 / 0.945   0.788 / 0.784   1.081 / 1.101
+{-1,0}         2  1.107 / 0.944   0.787 / 0.784   1.081 / 1.101
+```
+
+- Dropping from 5 cols/ℓ to 2 tightens σ by ~3% per dropped column, then
+  **plateaus at 2 cols**. The s^-3 and s^-2 columns are in the cov noise.
+- The effect is **tracer-independent**: LRG2 (the clean-closure case)
+  tightens by the same ~3% as the overshooting LRG1 / LRG3+ELG1, so BB
+  count is not differentially hurting the overshooting tracers.
+- BB marginalization accounts for ~3% of a 12-15% overshoot. **Ruled
+  out as the dominant mechanism.**
+
+**Σ-fiducial override (mechanism 2: damping at fiducial).**
+
+Pipeline-derived Σ values (computed by `_hod_halo_props` →
+`_sigma_nl_post_from_recon`):
+
+| Tracer       | Σ_par (pipe) | Σ_per (pipe) | Σ_par (DESI) | Σ_per (DESI) |
+|--------------|--------------|--------------|--------------|--------------|
+| LRG1         | 6.20         | 3.31         | 6.0          | 3.0          |
+| LRG2         | 5.67         | 2.99         | 6.0          | 3.0          |
+| LRG3+ELG1    | 5.17         | 2.77         | 6.0          | 3.0          |
+| ELG2         | 5.36         | 3.51         | 6.0          | 3.0          |
+
+Override with DESI canonical (6.0/3.0), 5-col BB:
+
+```
+                 Pipeline Σ      DESI canonical
+                 DH F/D DM F/D   DH F/D DM F/D    Δ direction
+LRG1             1.135  0.974    1.098  0.943    closer to 1 (pipe Σ was larger)
+LRG2             0.808  0.808    0.842  0.817    slightly worse
+LRG3+ELG1        1.116  1.144    1.233  1.191    further from 1 (pipe Σ was smaller)
+ELG2             0.795  0.719    0.841  0.702    mixed
+```
+
+- Σ override moves F/D by ~3-10%, but the **direction is not
+  synchronized across tracers**: pipeline Σ was *larger* than DESI for
+  LRG1 (so DESI-Σ tightens, helping); *smaller* for LRG3+ELG1 (so
+  DESI-Σ loosens, hurting).
+- DESI canonical Σ **cannot simultaneously close LRG1 and LRG3+ELG1**.
+  Using "the right" Σ for LRG3+ELG1 actually makes its overshoot worse.
+- Σ fiducial is a real ~5-10% effect, but **not the dominant mechanism
+  for the residual overshoot**.
+
+**What remains** (the cov-substitution arc is now closed):
+
+After ruling out (a) bundle vs pipeline cov shape closes LRG2 only —
+§31g.quintus, (b) BB basis count — this section, and (c) Σ fiducial —
+this section, the residual ~10-12% F/D overshoot for LRG1 and
+LRG3+ELG1 most plausibly lives in **pipeline-vs-DESI theory shape
+differences** the Tier-3 Fisher inherits from the pipeline's
+DampedBAOWigglesTracerPowerSpectrumMultipoles:
+
+- linear template P_lin (cosmology choice, BBN vs DESI's CMB-anchored)
+- dilation parameterization (qpar/qper structure; recon transfer
+  function inside W)
+- for LRG3+ELG1 specifically: the **mixed-tracer treatment**. DESI may
+  fit LRG3 and ELG1 with separate bias / nuisance towers and a joint
+  AP, whereas we run a single (effective) bias for the combined sample.
+
+These are bigger surgeries than knob-flipping and not pursued further
+here — they would require re-deriving the theory chain to match DESI's
+exactly. Documented as a follow-up; the headline §31g result (LRG2
+clean closure; bundle-cov substitution is NOT a universal mechanism)
+stands.
+
 ### 31h. Files touched
 
 - `cov_substitution_diag.py` — NEW, three-Fisher diagnostic with `--source {bundle,ezmock}`; unit bug fixed in `_sigmas_from_cov_q`
@@ -1924,7 +2016,7 @@ mechanism; LRG2's clean closure was tracer-specific.
 - `~/data/desi/bao_dr1/likelihoods/` — created, files moved
 - `~/data/desi/bao_dr1/likelihoods/covariance/` — created, EZmock cov VAC downloaded
 - `~/data/desi/bao_dr1/likelihoods/covariance_rascalc/` — NEW dir (§31g.sexus), six GCcomb RascalC analytic cov files downloaded from DESI DR1 VAC; verified identical to the bundle's `covariance/value` to machine precision for all six tracers (resolves §30e)
-- `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers
+- `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers; §31g.nonus added CLI knobs `--bb`, `--sigma-par`, `--sigma-per`, `--sigma-s` for the BB-truncation and Σ-fiducial sweeps (test-script only, no pipeline-code changes)
 - `hod.yaml` — added `assembly_bias_factor` field with default 1.0 for all tracers; ELG entry has policy-compliant 1.0 with verbose justification comment about why the speculative 0.85 was reverted
 - `util.py` — `_load_hod_configs` now passes through `central_form` (was silently dropped — real bug fix, particularly affected ELG narrow-band HOD) and optional float fields like `assembly_bias_factor`
 - `prep_covar.py` — `_hod_halo_props` now applies `params.get("assembly_bias_factor", 1.0)` multiplicatively to b1; infrastructure for future literature-grounded AB values
@@ -1936,7 +2028,8 @@ mechanism; LRG2's clean closure was tracer-specific.
 - **AbacusSummit ruled out** as the §31b hypothesis for "where the bundle cov comes from" — §31g.sexus confirmed it's RascalC analytic, not mock-derived at all. §30e thread closed.
 - **Re-run six-tracer MCMC** chains for freshness (the plotting scripts already apply the ×1/h correction). Worth doing only as a seed-stability check; not required for correctness.
 - **MCMC on bundle for ELG2 specifically** (the worst-corrected ratio at 0.45 for DM). The all-six bundle MCMC (§31g.quintus) gave ELG2 DM at 0.53 — better but not closed. Worth a native-ξ MCMC follow-up alongside BGS/QSO.
-- **BB basis form test** (still cheap): swap our {s⁻², s⁻¹, s⁰, s¹, s²} basis for DESI's {s⁻³, s⁻², s⁻¹, s⁰, s¹} in `test_tier3_bundle_fisher.py`. Lower priority now that LRG2 is closed and the dominant residual is F2 rank-deficiency.
+- ~~**BB basis form test**~~ — completed in §31g.nonus; effect is ~3% per dropped column, plateau at 2 cols/ℓ, not the dominant mechanism.
+- **Pipeline-vs-DESI theory shape diff** — the only remaining plausible source of the residual ~10-12% F/D overshoot on LRG1 and LRG3+ELG1 after §31g.nonus ruled out BB count and Σ fiducial. Likely candidates: linear P_lin template choice; dilation/AP parameterization; for LRG3+ELG1 specifically, single-bias vs DESI's mixed-tracer (separate bias per subtype + joint AP). Requires re-derivation of the theory chain, not knob-flipping.
 - **Historical test scripts not unit-fixed**: `test_hmf_swap.py`, `test_z_error_nonqso.py`, `test_sigma_post_recon_noise.py`, `test_bb_priors.py`, `sweep_kmin.py`. These wrote results into §20-§30 with the bug. Their reported absolute σ values are wrong by ×1/h, but their *ratio* / *difference* findings (which is what those sections cared about) are unaffected. Fix only if re-running.
 
 ## Constraints respected throughout

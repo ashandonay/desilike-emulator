@@ -154,13 +154,13 @@ def _pred_at_params(wide_lik, wide_obs, k_lin, bundle, info, overrides):
     return bundle["W"] @ xi_th_vec
 
 
-def _bb_basis(obs_ells, obs_s, n_total):
-    """DESI Adame+24 BB basis: {s^-3, s^-2, s^-1, s^0, s^1} per ℓ."""
+def _bb_basis(obs_ells, obs_s, n_total, powers=(-3, -2, -1, 0, 1)):
+    """DESI Adame+24 BB basis: {s^-3, s^-2, s^-1, s^0, s^1} per ℓ by default."""
     cols = []
     cur = 0
     for _, s in zip(obs_ells, obs_s):
         n = len(s)
-        for p in [-3, -2, -1, 0, 1]:
+        for p in powers:
             col = np.zeros(n_total)
             col[cur:cur + n] = s ** p
             cols.append(col)
@@ -189,10 +189,18 @@ def _schur_marginalize(F, idx_keep):
     return F_kk - F_km @ np.linalg.solve(F_mm, F_km.T)
 
 
-def run_tracer(tracer):
-    print(f"\n{'=' * 70}\n  {tracer}\n{'=' * 70}", flush=True)
+def run_tracer(tracer, bb_powers=(-3, -2, -1, 0, 1), sigma_override=None):
+    print(f"\n{'=' * 70}\n  {tracer}  (BB powers={list(bb_powers)})\n{'=' * 70}", flush=True)
     info, wide_lik, wide_obs, k_lin = _build_wide_lik(tracer)
     bundle = _load_bundle(tracer)
+    sig_par_pipe = info["params"].get("sigmapar")
+    sig_per_pipe = info["params"].get("sigmaper")
+    print(f"  pipeline fid: Σ_par={sig_par_pipe:.3f}, Σ_per={sig_per_pipe:.3f}", flush=True)
+    if sigma_override is not None:
+        for k, v in sigma_override.items():
+            info["params"][k] = float(v)
+        print(f"  override applied: Σ_par={info['params']['sigmapar']:.3f}, "
+              f"Σ_per={info['params']['sigmaper']:.3f}", flush=True)
 
     pred_fid = _pred_at_params(wide_lik, wide_obs, k_lin, bundle, info, {})
     data = np.concatenate(bundle["obs_data"])
@@ -216,9 +224,9 @@ def run_tracer(tracer):
         J_nl[:, i] = (plus - minus) / (2.0 * dp)
         print(f"    ∂pred/∂{p}: ‖J‖_∞ = {np.abs(J_nl[:, i]).max():.3e}", flush=True)
 
-    BB = _bb_basis(bundle["obs_ells"], bundle["obs_s"], n_data)
+    BB = _bb_basis(bundle["obs_ells"], bundle["obs_s"], n_data, powers=bb_powers)
     J_full = np.concatenate([J_nl, BB], axis=1)
-    param_names = nl_params + [f"al{e}_{p}" for e in bundle["obs_ells"] for p in [-3,-2,-1,0,1]]
+    param_names = nl_params + [f"al{e}_{p}" for e in bundle["obs_ells"] for p in bb_powers]
     F = J_full.T @ C_inv @ J_full
     idx_qpar = param_names.index("qpar")
     idx_qper = param_names.index("qper")
@@ -246,16 +254,41 @@ def run_tracer(tracer):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tracers", default="BGS,LRG1,LRG2,LRG3_ELG1,ELG2,QSO",
+                    help="comma-separated list of tracers to run")
+    ap.add_argument("--bb", default="-3,-2,-1,0,1",
+                    help="comma-separated BB powers; default '-3,-2,-1,0,1' (5 cols/ℓ)")
+    ap.add_argument("--sigma-par", type=float, default=None,
+                    help="override Σ_par fiducial (applies to all tracers in run)")
+    ap.add_argument("--sigma-per", type=float, default=None,
+                    help="override Σ_per fiducial")
+    ap.add_argument("--sigma-s", type=float, default=None,
+                    help="override σ_s (FoG) fiducial")
+    args = ap.parse_args()
+    tracers = [t.strip() for t in args.tracers.split(",") if t.strip()]
+    bb_powers = tuple(int(p.strip()) for p in args.bb.split(",") if p.strip())
+    sigma_override = {}
+    if args.sigma_par is not None:
+        sigma_override["sigmapar"] = args.sigma_par
+    if args.sigma_per is not None:
+        sigma_override["sigmaper"] = args.sigma_per
+    if args.sigma_s is not None:
+        sigma_override["sigmas"] = args.sigma_s
+    sigma_override = sigma_override or None
+
     rows = []
-    for tracer in ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]:
+    for tracer in tracers:
         try:
-            rows.append(run_tracer(tracer))
+            rows.append(run_tracer(tracer, bb_powers=bb_powers,
+                                   sigma_override=sigma_override))
         except Exception as e:
             print(f"  [{tracer}] failed: {type(e).__name__}: {e}")
 
     print()
     print("=" * 102)
-    print(f"Tier-3 Fisher (FFTLog) — bundle data+cov+W with pipeline theory derivatives")
+    print(f"Tier-3 Fisher (FFTLog) — bundle data+cov+W with pipeline theory; BB powers={list(bb_powers)}")
     print("=" * 102)
     print(f"{'Tracer':<11} {'σ(DH/rd)':>9} {'DESI':>9} {'F/D':>6}   "
           f"{'σ(DM/rd)':>9} {'DESI':>9} {'F/D':>6}   {'σ(DV/rd)':>9} {'DESI':>9} {'F/D':>6}")
