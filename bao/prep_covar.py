@@ -1931,10 +1931,12 @@ def get_bao_fisher_covariance(
         cov_q = np.linalg.pinv(F_q, rcond=1e-12)
 
     template = info["template"]
-    rd = info["rd"]
 
-    DH_over_rd_fid = float(template.DH_fid) / rd
-    DM_over_rd_fid = float(template.DM_fid) / rd
+    # Use template.{DH,DM}_over_rd_fid directly — dimensionally correct.
+    # The naive `template.DH_fid / info["rd"]` form is dimensionally mixed
+    # (DH_fid is Mpc/h, info["rd"] is proper Mpc) and underreports σ by 1/h.
+    DH_over_rd_fid = float(template.DH_over_rd_fid)
+    DM_over_rd_fid = float(template.DM_over_rd_fid)
 
     J = np.diag([DH_over_rd_fid, DM_over_rd_fid])
     cov_phys = J @ cov_q @ J.T
@@ -2023,9 +2025,11 @@ def get_bao_fisher_covariance_sliced_nz(
         apmode="qparqper",
     )
 
-    rd = hrdrag / _H_FID
-    DH_over_rd_fid = float(template_bin.DH_fid) / rd
-    DM_over_rd_fid = float(template_bin.DM_fid) / rd
+    # Use template_bin.{DH,DM}_over_rd_fid directly — dimensionally correct.
+    # The naive `template_bin.DH_fid / rd` form is dimensionally mixed
+    # (DH_fid is Mpc/h, rd here is proper Mpc) and underreports σ by 1/h.
+    DH_over_rd_fid = float(template_bin.DH_over_rd_fid)
+    DM_over_rd_fid = float(template_bin.DM_over_rd_fid)
 
     J = np.diag([DH_over_rd_fid, DM_over_rd_fid])
     cov_phys = J @ cov_q @ J.T

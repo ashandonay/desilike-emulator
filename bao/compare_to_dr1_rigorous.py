@@ -42,13 +42,27 @@ _DR1_FILES = {
 }
 
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
+_DR1_LIK_DIR = _DR1_DIR / "likelihoods"
 _DR1_AREA = 7500.0
+
+# Public DR1 EZmock joint FS+ξ_post-recon covariances (v1.0 VAC).
+# Cover all six DR1 tracers. Cov-only — no W matrix. §26 bounds the missing-W
+# contribution to σ at < 2%, so for visual structure comparison this is fine.
+_EZMOCK_DIR = _DR1_LIK_DIR / "covariance"
+_EZMOCK_CORRREC_FILES = {
+    "BGS":        "covariance_spectrum-poles+correlation-poles-recon_BGS_BRIGHT-21.5_GCcomb_z0.1-0.4_thetacut0.05.h5",
+    "LRG1":       "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.4-0.6_thetacut0.05.h5",
+    "LRG2":       "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.6-0.8_thetacut0.05.h5",
+    "LRG3_ELG1":  "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.8-1.1_thetacut0.05.h5",
+    "ELG2":       "covariance_spectrum-poles+correlation-poles-recon_ELG_LOPnotqso_GCcomb_z1.1-1.6_thetacut0.05.h5",
+    "QSO":        "covariance_spectrum-poles+correlation-poles-recon_QSO_GCcomb_z0.8-2.1_thetacut0.05.h5",
+}
 
 
 def _load_dr1(tracer_key):
     """Return cov_xi_obs (n_obs,n_obs), W (n_obs,n_theory),
     obs_ells, obs_s_per_ell (list of arrays), theory_ells, theory_s_per_ell."""
-    fpath = _DR1_DIR / _DR1_FILES[tracer_key]
+    fpath = _DR1_LIK_DIR / _DR1_FILES[tracer_key]
     if not fpath.exists():
         raise FileNotFoundError(f"DR1 file not found: {fpath}")
     with h5py.File(fpath, "r") as f:
@@ -65,6 +79,58 @@ def _load_dr1(tracer_key):
                 theory_ells.append(int(f[f"window/theory/{key}/meta/ell"][()]))
                 theory_s.append(np.asarray(f[f"window/theory/{key}/s"][...], dtype=np.float64))
     return cov, W, obs_ells, obs_s, theory_ells, theory_s
+
+
+def _load_ezmock_correlationrecon(tracer_key, keep_ells, s_range=None):
+    """Load the post-recon ξ_ℓ(s) block from the joint FS+ξ EZmock cov file
+    (the canonical DR1 cov, available for all six tracers).
+
+    Returns (cov_xi, obs_ells, obs_s_per_ell) restricted to keep_ells and the
+    optional s_range (in Mpc/h). The raw block is ℓ ∈ {0,2,4} × 50 s-bins on
+    s ∈ [2.97, 198.01] Mpc/h; the pipeline only models ℓ=0,2 so we slice to
+    those by default.
+
+    No window matrix in this file — caller treats M = H_Hankel only.
+    """
+    fpath = _EZMOCK_DIR / _EZMOCK_CORRREC_FILES[tracer_key]
+    if not fpath.exists():
+        raise FileNotFoundError(f"EZmock file not found: {fpath}")
+    with h5py.File(fpath, "r") as f:
+        C_full = np.asarray(f["value"][...], dtype=np.float64)
+        # Block layout per labels_values: [spectrum (240), correlationrecon (150)]
+        spec_grp = f["observable/spectrum"]
+        n_spec = sum(int(spec_grp[f"{e}/k"].shape[0])
+                     for e in spec_grp.keys() if e.isdigit())
+        cr_grp = f["observable/correlationrecon"]
+        cr_keys = sorted([k for k in cr_grp.keys() if k.isdigit()])
+        cr_ells_in_file = [int(cr_grp[f"{e}/meta/ell"][()]) for e in cr_keys]
+        cr_n_per_ell = [int(cr_grp[f"{e}/s"].shape[0]) for e in cr_keys]
+        s_per_ell_in_file = [np.asarray(cr_grp[f"{e}/s"][...], dtype=np.float64)
+                             for e in cr_keys]
+
+    cr_block = C_full[n_spec:, n_spec:]
+    row_offset_by_ell = {}
+    cur = 0
+    for ell_f, n_ell in zip(cr_ells_in_file, cr_n_per_ell):
+        row_offset_by_ell[ell_f] = (cur, cur + n_ell)
+        cur += n_ell
+    idx, ells_out, s_per_ell_out = [], [], []
+    for want_ell in keep_ells:
+        if want_ell not in row_offset_by_ell:
+            continue
+        lo, hi = row_offset_by_ell[want_ell]
+        s_full = s_per_ell_in_file[cr_ells_in_file.index(want_ell)]
+        if s_range is None:
+            mask = np.ones_like(s_full, dtype=bool)
+        else:
+            mask = (s_full >= s_range[0]) & (s_full <= s_range[1])
+        kept_local = np.flatnonzero(mask)
+        idx.extend((lo + j) for j in kept_local)
+        ells_out.append(want_ell)
+        s_per_ell_out.append(s_full[mask])
+    idx = np.asarray(idx, dtype=np.int64)
+    cov_xi = cr_block[np.ix_(idx, idx)]
+    return cov_xi, ells_out, s_per_ell_out
 
 
 def _get_dr1_ntracers(tracer_key):
@@ -120,13 +186,13 @@ def _hankel_matrix(ell, k, dk, s):
 
 def _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk):
     """Build M of shape (n_obs, n_pipe) such that
-        flat_xi_obs = M @ flat_pipeP_theory,
-    where flat_pipeP has layout [ell=0 (n_k), ell=2 (n_k)].
+        flat_xi_obs = M @ flat_pipeP_theory.
 
-    We construct the intermediate H_block of shape (n_theory_total, n_pipe)
-    that maps pipeline P to theory-side xi for the ells the window expects;
-    pipeline ells absent from theory (e.g. ell=4) get zero columns,
-    theory ells absent from pipeline get zero rows.
+    Construct H_block (n_theory_total, n_pipe) mapping pipeline P to theory ξ;
+    pipeline ells absent from theory get zero columns, theory ells absent
+    from pipeline get zero rows. M = W @ H_block when W is provided;
+    M = H_block when W is None (EZmock-source path — §26 bounds the missing
+    W contribution at < 2% on σ).
     """
     n_k = len(k_centers)
     n_pipe = n_k * len(pipe_ells)
@@ -140,9 +206,8 @@ def _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk):
             H_ell = _hankel_matrix(te, k_centers, dk, theory_s_per_ell[it])
             H_block[row_offset:row_offset + n_theory_per[it],
                     ip * n_k:(ip + 1) * n_k] = H_ell
-        # else: leave zeros (pipeline does not predict this ell).
         row_offset += n_theory_per[it]
-    M = W @ H_block
+    M = H_block if W is None else W @ H_block
     return M, H_block
 
 
@@ -199,9 +264,20 @@ def _corr(M):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--tracer", required=True, help=f"One of {sorted(_DR1_FILES.keys())}.")
+    p.add_argument("--tracer", required=True,
+                   help=f"One of {sorted(_EZMOCK_CORRREC_FILES.keys())}.")
     p.add_argument("--omega-m", type=float, default=0.3153)
     p.add_argument("--hrdrag", type=float, default=99.53)
+    p.add_argument("--source", choices=["ezmock", "bundle"], default="ezmock",
+                   help="Where to load DR1 cov_ξ from. 'ezmock' (default): "
+                        "DR1 EZmock joint cov file, available for all six "
+                        "tracers, cov only (no W matrix). 'bundle': local "
+                        "likelihood h5 file (cov + W), available locally for "
+                        "LRG2 and QSO only.")
+    p.add_argument("--s-range", type=float, nargs=2, default=None,
+                   metavar=("S_MIN", "S_MAX"),
+                   help="Restrict s-range (Mpc/h) when loading from EZmock "
+                        "source. Default: use the full s-grid (s ∈ [3, 198]).")
     p.add_argument("--component", default="C_total",
                    choices=["C_total", "C_gauss", "C_SSC", "C_recon_shot"],
                    help="Pipeline covariance component to project (default: C_total).")
@@ -214,23 +290,36 @@ def main():
     p.add_argument("--output", default=None)
     args = p.parse_args()
 
-    print(f"\n=== {args.tracer} ===")
+    print(f"\n=== {args.tracer} (source={args.source}) ===")
 
-    cov_xi_dr1, W, obs_ells, obs_s_per_ell, theory_ells, theory_s_per_ell = _load_dr1(args.tracer)
-    n_obs_per = len(obs_s_per_ell[0])
-    print(f"DR1 cov: shape {cov_xi_dr1.shape}, obs ells={obs_ells}, "
-          f"n_s_per_ell={n_obs_per}, s in [{obs_s_per_ell[0][0]:.1f}, {obs_s_per_ell[0][-1]:.1f}] Mpc/h")
-    print(f"Window: {W.shape}, theory ells={theory_ells}")
-
+    # Compute pipeline first so we know which ells to load from DR1.
     cov_p_pipe, k_centers, dk, pipe_ells = _pipeline_pcov(
         args.tracer, args.omega_m, args.hrdrag,
         component=args.component, kmax_cov=args.kmax_cov,
     )
-    print(f"Pipeline cov_P: shape {cov_p_pipe.shape}, ells={list(pipe_ells)}, "
+    pipe_ells = list(pipe_ells)
+    print(f"Pipeline cov_P: shape {cov_p_pipe.shape}, ells={pipe_ells}, "
           f"k in [{k_centers[0]:.4f}, {k_centers[-1]:.4f}] h/Mpc, dk={dk:.4f}")
 
-    # Drop ell=4 from theory to match pipeline if pipeline lacks it.
-    M, H_block = _build_M(W, theory_ells, theory_s_per_ell, list(pipe_ells), k_centers, dk)
+    if args.source == "bundle":
+        cov_xi_dr1, W, obs_ells, obs_s_per_ell, theory_ells, theory_s_per_ell = _load_dr1(args.tracer)
+        print(f"DR1 cov (bundle): shape {cov_xi_dr1.shape}, obs ells={obs_ells}, "
+              f"s ∈ [{obs_s_per_ell[0][0]:.1f}, {obs_s_per_ell[0][-1]:.1f}] Mpc/h")
+        print(f"Window: {W.shape}, theory ells={theory_ells}")
+    else:  # ezmock
+        cov_xi_dr1, obs_ells, obs_s_per_ell = _load_ezmock_correlationrecon(
+            args.tracer, keep_ells=pipe_ells, s_range=tuple(args.s_range) if args.s_range else None,
+        )
+        W = None
+        # For ezmock + H-only projection, theory ells & s-grid equal obs ells & s-grid.
+        theory_ells, theory_s_per_ell = obs_ells, obs_s_per_ell
+        s_lo, s_hi = obs_s_per_ell[0][0], obs_s_per_ell[0][-1]
+        print(f"DR1 cov (ezmock): shape {cov_xi_dr1.shape}, obs ells={obs_ells}, "
+              f"n_s_per_ell={len(obs_s_per_ell[0])}, s ∈ [{s_lo:.1f}, {s_hi:.1f}] Mpc/h")
+        print("Window: N/A (EZmock path uses M = H_Hankel only; §26 bounds W effect at < 2%)")
+    n_obs_per = len(obs_s_per_ell[0])
+
+    M, H_block = _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk)
     print(f"Projection matrix M: shape {M.shape}")
 
     if args.bandpower_sigma_dk > 0:
@@ -303,18 +392,24 @@ def main():
     ax.grid(alpha=0.3)
 
     comp_label = args.component.replace("C_", "")
+    proj_desc = ("Hankel + DR1 window" if args.source == "bundle"
+                 else "Hankel only (DR1 EZmock cov source)")
     fig.suptitle(
         f"DR1 vs pipeline covariance in $\\xi_\\mathrm{{obs}}$ basis "
-        f"(rigorous: pipeline P-cov passed through Hankel + DR1 window) — "
+        f"(pipeline P-cov projected through {proj_desc}) — "
         f"{args.tracer} [pipeline component: {args.component}]",
         fontsize=12,
     )
 
     out_suffix = "" if args.component == "C_total" else f"_{comp_label}"
+    if args.source != "ezmock":
+        out_suffix += f"_{args.source}"
     if args.bandpower_sigma_dk > 0:
         out_suffix += f"_bp{args.bandpower_sigma_dk:g}"
     if args.kmax_cov is not None:
         out_suffix += f"_kmax{args.kmax_cov:g}"
+    if args.s_range is not None:
+        out_suffix += f"_s{args.s_range[0]:g}-{args.s_range[1]:g}"
     out = args.output or f"compare_rigorous_{args.tracer}{out_suffix}.png"
     fig.savefig(out, dpi=140)
     print(f"\nSaved: {out}")

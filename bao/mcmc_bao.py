@@ -87,8 +87,11 @@ def run(
     template = info["template"]
     rd = info["rd"]
 
-    DH_fid_over_rd = float(template.DH_fid) / rd
-    DM_fid_over_rd = float(template.DM_fid) / rd
+    # Use template.DH_over_rd_fid directly — dimensionally correct.
+    # The naive `template.DH_fid / rd` form is dimensionally mixed
+    # (DH_fid is Mpc/h, info["rd"] is proper Mpc) and underreports σ by 1/h.
+    DH_fid_over_rd = float(template.DH_over_rd_fid)
+    DM_fid_over_rd = float(template.DM_over_rd_fid)
 
     # Restrict qpar, qper to a uniform box — this is the prior-truncation we want MCMC to see.
     likelihood.all_params["qpar"].update(

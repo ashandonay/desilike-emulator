@@ -72,10 +72,10 @@ def _fisher_sigmas(tracer_bin: str, n_tracers: float):
         z_eff = float(cfg["z_eff"])
 
     template = pc.BAOPowerSpectrumTemplate(z=z_eff, fiducial=("DESI", dict(theta)), apmode="qparqper")
-    theta2, hr = pc._to_bao_cosmo_params({**pc.PARAM_DEFAULTS, **_DESI_FID})
-    rd = hr / pc._H_FID
-    dh = float(template.DH_fid) / rd
-    dm = float(template.DM_fid) / rd
+    # Use template.{DH,DM}_over_rd_fid directly — dimensionally correct.
+    # The `template.DH_fid / rd` form is dimensionally mixed and underreports σ by 1/h.
+    dh = float(template.DH_over_rd_fid)
+    dm = float(template.DM_over_rd_fid)
     sd_dh = math.sqrt(max(var_dh, 0.0))
     sd_dm = math.sqrt(max(var_dm, 0.0))
     dv = (z_eff * dm * dm * dh) ** (1.0 / 3.0)
@@ -101,7 +101,12 @@ def main():
             continue
         # Fisher
         fish = _fisher_sigmas(tb, N)
-        # MCMC
+        # MCMC. JSON files were written before the prep_covar unit fix, so
+        # sigma_*_over_rd_mcmc values were computed with the dimensionally
+        # mixed `template.DH_fid / info["rd"]` form and are deflated by 1/h.
+        # Multiply by 1/h_fid to get the correct dimensionless σ(DH/rd).
+        # (Re-running the chains would also work, but this is exact.)
+        _h_corr = 1.0 / pc._H_FID
         mcmc_path = _MCMC_DIR / f"{tb}_dr1.json"
         if not mcmc_path.exists():
             print(f"[skip] {tb}: missing {mcmc_path}")
@@ -118,9 +123,9 @@ def main():
             "Fisher_DH": fish["DH_over_rs"],
             "Fisher_DM": fish["DM_over_rs"],
             "Fisher_DV": fish["DV_over_rs"],
-            "MCMC_DH": float(mcmc.get("sigma_DH_over_rd_mcmc", float("nan"))),
-            "MCMC_DM": float(mcmc.get("sigma_DM_over_rd_mcmc", float("nan"))),
-            "MCMC_DV": float(mcmc.get("sigma_DV_over_rd_mcmc", float("nan"))),
+            "MCMC_DH": float(mcmc.get("sigma_DH_over_rd_mcmc", float("nan"))) * _h_corr,
+            "MCMC_DM": float(mcmc.get("sigma_DM_over_rd_mcmc", float("nan"))) * _h_corr,
+            "MCMC_DV": float(mcmc.get("sigma_DV_over_rd_mcmc", float("nan"))) * _h_corr,
             "DESI_DH": desi.get("DH_over_rs", float("nan")),
             "DESI_DM": desi.get("DM_over_rs", float("nan")),
             "DESI_DV": desi.get("DV_over_rs", float("nan")),

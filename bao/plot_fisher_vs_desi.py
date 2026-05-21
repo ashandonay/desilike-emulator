@@ -60,9 +60,15 @@ def _get_desi_std(dataset, tracer_key):
 def _load_mcmc_stds(dataset):
     """Read cached MCMC sigmas from mcmc_results/{tracer}_{dataset}.json.
 
+    JSON files were written before the prep_covar unit fix, so the cached
+    sigma_*_over_rd_mcmc values were computed with the dimensionally mixed
+    `template.DH_fid / info["rd"]` form and are deflated by 1/h. Multiply
+    by 1/h_fid to get the correct dimensionless σ.
+
     Missing files are silently skipped — re-run mcmc_bao.py --save-json
     for the tracers you want overlaid.
     """
+    h_corr = 1.0 / pc._H_FID
     out = {}
     for tracer_key in TRACER_CONFIGS:
         path = _MCMC_DIR / f"{tracer_key}_{dataset}.json"
@@ -74,7 +80,7 @@ def _load_mcmc_stds(dataset):
             print(f"[mcmc] {tracer_key}: failed to read {path}: {e}")
             continue
         out[tracer_key] = {
-            q: float(blob.get(_MCMC_KEY[q], np.nan)) for q in QUANTITIES
+            q: float(blob.get(_MCMC_KEY[q], np.nan)) * h_corr for q in QUANTITIES
         }
     return out
 
@@ -124,10 +130,11 @@ def _fisher_stds(dataset, omega_m, hrdrag):
         cov_dh_dm = targets["cov_DH_over_rd_DM_over_rd"]
         var_dm = targets["cov_DM_over_rd_DM_over_rd"]
         theta, hr = pc._to_bao_cosmo_params({**pc.PARAM_DEFAULTS, "Om": omega_m, "hrdrag": hrdrag})
-        rd = hr / pc._H_FID
         template = pc.BAOPowerSpectrumTemplate(z=z_eff, fiducial=("DESI", dict(theta)), apmode="qparqper")
-        dh_mean = float(template.DH_fid) / rd
-        dm_mean = float(template.DM_fid) / rd
+        # Use template.{DH,DM}_over_rd_fid directly — dimensionally correct.
+        # The `template.DH_fid / rd` form is dimensionally mixed and underreports σ by 1/h.
+        dh_mean = float(template.DH_over_rd_fid)
+        dm_mean = float(template.DM_over_rd_fid)
         out[key] = {
             "DH_over_rs": float(np.sqrt(max(var_dh, 0.0))),
             "DM_over_rs": float(np.sqrt(max(var_dm, 0.0))),
