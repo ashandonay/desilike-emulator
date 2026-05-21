@@ -97,15 +97,24 @@ _REQUIRED_HOD_KEYS = {
     "log_M1_over_Mcut",
     "alpha_sat",
 }
+# Optional HOD keys with their defaults. Float-coerced and passed through to
+# `_hod_halo_props` in prep_covar.py.
+_OPTIONAL_HOD_FLOAT_KEYS = {
+    "assembly_bias_factor": 1.0,  # decorated-HOD multiplier on b1 (Hadzhiyska+22)
+}
+# Optional HOD keys that are strings (left as-is by the loader).
+_OPTIONAL_HOD_STR_KEYS = {
+    "central_form",               # "erf" (default in _hod_halo_props) or "gaussian"
+}
 
 
-def _load_hod_configs(path: Path) -> Dict[str, Dict[str, float]]:
+def _load_hod_configs(path: Path) -> Dict[str, Dict[str, object]]:
     """Load and validate ``hod.yaml``.
 
     Returns a dict keyed by tracer_type ("BGS", "LRG", "ELG", "MIX", "QSO")
-    with float-coerced HOD shape parameters. The parameters are
-    cosmology-independent by construction; M_cut is solved per cosmology
-    inside `_hod_halo_props` in prep_covar.py.
+    with float-coerced shape parameters plus any optional fields
+    (``central_form``, ``assembly_bias_factor``). Cosmology-independent by
+    construction; M_cut is solved per cosmology inside `_hod_halo_props`.
     """
     if not path.exists():
         raise FileNotFoundError(f"HOD config file not found: {path}")
@@ -116,14 +125,20 @@ def _load_hod_configs(path: Path) -> Dict[str, Dict[str, float]]:
     if not isinstance(raw, dict) or not raw:
         raise ValueError(f"Invalid or empty HOD config YAML: {path}")
 
-    cleaned: Dict[str, Dict[str, float]] = {}
+    cleaned: Dict[str, Dict[str, object]] = {}
     for key, cfg in raw.items():
         if not isinstance(cfg, dict):
             raise ValueError(f"HOD config for {key!r} must be a mapping")
         missing = _REQUIRED_HOD_KEYS - set(cfg)
         if missing:
             raise ValueError(f"HOD config for {key!r} missing keys: {sorted(missing)}")
-        cleaned[key] = {k: float(cfg[k]) for k in _REQUIRED_HOD_KEYS}
+        entry: Dict[str, object] = {k: float(cfg[k]) for k in _REQUIRED_HOD_KEYS}
+        for k, default in _OPTIONAL_HOD_FLOAT_KEYS.items():
+            entry[k] = float(cfg.get(k, default))
+        for k in _OPTIONAL_HOD_STR_KEYS:
+            if k in cfg:
+                entry[k] = str(cfg[k])
+        cleaned[key] = entry
     return cleaned
 
 

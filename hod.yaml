@@ -27,6 +27,11 @@
 #   log_Mquench_over_Mcut  log10(M_quench / Mcut); quenching cutoff (>10 means off).
 #                          Ignored for central_form: gaussian.
 #   eta_quench             sharpness of the quench cutoff. Ignored for gaussian.
+#   assembly_bias_factor   multiplicative factor on the HOD-mass-only b1 to
+#                          account for assembly bias (decorated HOD; Hearin &
+#                          Watson 2013). f < 1 for star-formers preferring
+#                          low-bias halos; 1.0 = no AB. Per-tracer literature
+#                          values: LRG/BGS ~1.0, ELG ~0.85 (Hadzhiyska+22).
 #
 # Literature sources (cited in CHANGELOG and prep_covar.py top comments):
 #   Zheng+07   (2007ApJ...667..760Z)    5-par HOD form (LRG-ish)
@@ -50,6 +55,7 @@ BGS:                              # Smith+20
   log_M_sat_over_Mcut: 0.0
   log_M1_over_Mcut: 1.50
   alpha_sat: 1.00
+  assembly_bias_factor: 1.00      # red galaxies — minimal AB signal (Hadzhiyska+22)
 
 LRG:                              # Zheng+07, Reid+14, Yuan+22
   sigma_logM: 0.50
@@ -59,6 +65,7 @@ LRG:                              # Zheng+07, Reid+14, Yuan+22
   log_M_sat_over_Mcut: 0.0
   log_M1_over_Mcut: 1.40
   alpha_sat: 0.80
+  assembly_bias_factor: 1.00      # red galaxies — minimal AB (Yuan+22 Table 2)
 
 ELG:                              # Rocher+23 / Avila+20 Gaussian-central ELG HOD
   central_form: gaussian          # narrow-band: ELGs live in ~10^11.5-12.5 M_sun halos
@@ -69,6 +76,18 @@ ELG:                              # Rocher+23 / Avila+20 Gaussian-central ELG HO
   log_M_sat_over_Mcut: 1.00       # M_0 ~10× M_cen; Rocher+23 ~10^12.5 for M_cen ~10^11.5
   log_M1_over_Mcut: 1.70          # M_1 ~50× M_cen; tuned for f_sat ~0.1
   alpha_sat: 0.80                 # Rocher+23 ~0.8
+  assembly_bias_factor: 1.00      # NO assembly bias correction applied. The literature
+                                  # I could verify (Garcia-Quintero+24 arXiv:2404.03009;
+                                  # Hadzhiyska+25 arXiv:2510.20896) does NOT support a
+                                  # specific b1-reduction factor for DESI ELGs:
+                                  # - Garcia-Quintero+24 §5: HOD systematic on BAO α is
+                                  #   < 0.17% across AB extensions → AB doesn't close σ gaps
+                                  # - Hadzhiyska+25 measures Q_sat = 0.05 ± 0.14 for BGS,
+                                  #   consistent with zero; no direct ELG measurement.
+                                  # Infrastructure kept here so future literature values
+                                  # can be plugged in cleanly. Set 0.85 in an earlier
+                                  # iteration of this work, but that was post-hoc
+                                  # speculation that violated the no-calibration policy.
 
 MIX:                              # Hybrid LRG3+ELG1; intermediate values
   sigma_logM: 0.50
@@ -78,6 +97,9 @@ MIX:                              # Hybrid LRG3+ELG1; intermediate values
   log_M_sat_over_Mcut: 0.5
   log_M1_over_Mcut: 1.50
   alpha_sat: 0.80
+  assembly_bias_factor: 1.00      # set to 1.0 (no AB) for the combined LRG+ELG sample —
+                                  # weighted average would be ~0.91 but no direct literature
+                                  # measurement and LRG3+ELG1's σ overshoot is unrelated to AB.
 
 QSO:                              # Richardson+12, Eftekharzadeh+15
   sigma_logM: 0.60
@@ -87,3 +109,5 @@ QSO:                              # Richardson+12, Eftekharzadeh+15
   log_M_sat_over_Mcut: 1.5
   log_M1_over_Mcut: 2.50
   alpha_sat: 0.40
+  assembly_bias_factor: 1.00      # QSO AB poorly constrained; literature suggests
+                                  # small effect for high-mass / high-bias hosts

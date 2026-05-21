@@ -1799,6 +1799,110 @@ Within 5% of the simple prediction. The 40% reduction is exactly what a clean ga
 
 Practical consequence: the "5/6 tracers, bundle cov ~4-15% wider than ezmock cov" finding from §31b extended is uniformly clean once LRG3+ELG1 is removed as a comparable case. The cross-tracer-bin's bundle cov is internally consistent with the bundle-cov pattern (slightly inflated relative to the single-tracer EZmock, when properly compared). The bundle-cov-MCMC overshoot for LRG3+ELG1 (M/D = 1.17-1.28) is therefore NOT due to the cov being too small — it's something else (likely the combined-sample treatment in our pipeline cov + theory chain, which uses single-tracer assumptions, mismatching the bundle's combined-sample geometry).
 
+### 31g.octavus. Tier-3 Fisher for all six tracers + ELG2 chase
+
+Generalized `test_tier3_bundle_fisher.py` (§31g LRG2-only) to all six tracers
+as `test_tier3_all_tracers.py`. Tier-3 Fisher uses bundle data + cov + W with
+the pipeline's BAO theory derivatives FFTLog-projected to ξ-space — the
+right test of the "leading theory: cov is the missing piece" hypothesis
+without the F2 precision-override numerical issues.
+
+**Initial six-tracer Tier-3 Fisher result** (with the broken util.py loader
+silently dropping `central_form: gaussian` for ELG, AB=1.0):
+
+| Tracer | σ(DH/rd) F/D | σ(DM/rd) F/D | Note |
+|---|---|---|---|
+| BGS | crashed | crashed | numerical blow-up, ∂b1 → 10⁸⁰ |
+| LRG1 | 1.13 | 0.97 | overshoots DH, matches DM |
+| LRG2 | 0.81 | 0.81 | undershoots ~20% |
+| LRG3+ELG1 | 1.12 | 1.14 | overshoots |
+| ELG2 | 0.68 | 0.58 | undershoots, χ²(fid) = 5.7/dof |
+| QSO | prior-lim | prior-lim | DV-only AP degeneracy |
+
+**ELG2's χ²(fid) = 297.93 / 52 was the standout finding** — pipeline theory
+doesn't fit DESI ELG2 data well even before nuisance fitting, suggesting a
+b1 mismatch (HOD-mass-only b1 ≈ 2.17 vs DESI's measured ≈ 1.2).
+
+**Two real fixes pursued for ELG2**:
+
+(1) **`util.py` HOD loader bug fix** — `_load_hod_configs` was filtering out
+all keys not in `_REQUIRED_HOD_KEYS`, which includes `central_form` and any
+optional shape parameters. The ELG entry's `central_form: gaussian` was
+being silently dropped, so the ELG HOD ran with the default `erf` central
+form (Zheng+07 LRG-style), not the gaussian narrow-band Rocher+23 form
+the file was designed to encode.
+
+Fix: added `_OPTIONAL_HOD_FLOAT_KEYS` and `_OPTIONAL_HOD_STR_KEYS` to the
+loader to pass through optional fields (`central_form`, plus new
+`assembly_bias_factor` infrastructure).
+
+Effect on ELG2:
+- b1: 2.17 → 1.92 (~12% reduction from proper gaussian central form)
+- Tier-3 σ(DH/rd) F/D: 0.68 → 0.80
+- Tier-3 σ(DM/rd) F/D: 0.58 → 0.72
+- Bundle-cov MCMC σ(DH/rd) F/D: 0.67 → 0.80
+- Bundle-cov MCMC σ(DM/rd) F/D: 0.53 → 0.69
+
+ELG2 is no longer the worst-tracer outlier; comparable to LRG2/QSO.
+
+(2) **Assembly-bias decoration infrastructure** — added `assembly_bias_factor`
+to hod.yaml (Hadzhiyska+22-style multiplicative correction on HOD-mass-only
+b1, decorated-HOD per Hearin & Watson 2013). Applied as `b1 *= f_AB` in
+`_hod_halo_props`.
+
+**This was speculated to close ELG2's remaining gap (set ELG f_AB = 0.85).**
+With AB=0.85, ELG2 Tier-3 F/D climbed to 1.01/0.97 — apparently matching
+DESI. But on verification:
+- **Garcia-Quintero+24** (arXiv:2404.03009, DESI 2024 ELG HOD systematics)
+  shows HOD systematic on BAO α is < 0.17% across AB extensions — i.e.,
+  AB choice barely affects the BAO σ result
+- **Hadzhiyska+25** (arXiv:2510.20896, Direct AB measurement on DESI DR1)
+  reports Q_sat = 0.05 ± 0.14 for BGS, consistent with zero. No direct
+  DESI ELG AB measurement in the verifiable literature
+
+**Conclusion**: the AB = 0.85 value couldn't be substantiated against
+specific verifiable literature numbers. Setting it to 0.85 was post-hoc
+speculation that effectively calibrated to DESI's σ — a no-calibration
+policy violation.
+
+Reverted to f_AB = 1.0 for all tracers. Kept the infrastructure
+(`assembly_bias_factor` field in hod.yaml, multiplication in
+`_hod_halo_props`) so future literature-grounded values can be plugged in
+cleanly (e.g., a future DR2 paper measuring DESI ELG AB directly).
+
+**Final ELG2 state (with central_form fix only, no AB)**:
+- Tier-3 σ(DM/rd) F/D: 0.72 (vs 0.58 pre-fix, vs 0.97 with speculative AB)
+- Bundle-cov MCMC σ(DM/rd) F/D: 0.69
+
+The central_form bug fix is a clean ~14 percentage-point improvement
+backed by a legitimate fix (loader was dropping a yaml field). The
+AB = 0.85 chase was a sobering reminder that "literature-cited" values
+need actual literature verification before being committed.
+
+**Six-tracer bundle-cov MCMC summary (honest state, post-central_form-fix,
+AB=1.0)**:
+
+| Tracer | σ(DH) F/D | σ(DM) F/D | σ(DV) F/D | Note |
+|---|---|---|---|---|
+| BGS  | prior-lim | — | 3.25 | 2D AP unresolved; sparse-tracer |
+| LRG1 | 1.32 | 1.06 | — | overshoots (pipeline cov tighter than RascalC) |
+| LRG2 | 0.97 | 0.85 | — | **clean closure** |
+| LRG3+ELG1 | 1.17 | 1.28 | — | overshoots |
+| ELG2 | 0.80 | 0.69 | — | partial closure from central_form fix |
+| QSO  | prior-lim | — | 1.37 | DV-only AP |
+
+**Leading theory verdict**: "cov is the missing piece" is supported cleanly
+for LRG2 only. Other tracers have distinct mechanisms:
+- LRG1, LRG3+ELG1: pipeline cov happens to match RascalC well; no
+  meaningful gap to close
+- ELG2: ~30% residual after bundle cov; likely fibre-assignment cov
+  inflation not in pipeline (§29 thread) or selection effects
+- BGS, QSO: 2D AP fit + DV-only data → methodology gap, not cov gap
+
+This generalizes the §31g.bis LRG2-only finding to the full tracer set
+honestly: bundle-cov substitution is NOT a universal F/D-closure
+mechanism; LRG2's clean closure was tracer-specific.
+
 ### 31h. Files touched
 
 - `cov_substitution_diag.py` — NEW, three-Fisher diagnostic with `--source {bundle,ezmock}`; unit bug fixed in `_sigmas_from_cov_q`
@@ -1820,6 +1924,10 @@ Practical consequence: the "5/6 tracers, bundle cov ~4-15% wider than ezmock cov
 - `~/data/desi/bao_dr1/likelihoods/` — created, files moved
 - `~/data/desi/bao_dr1/likelihoods/covariance/` — created, EZmock cov VAC downloaded
 - `~/data/desi/bao_dr1/likelihoods/covariance_rascalc/` — NEW dir (§31g.sexus), six GCcomb RascalC analytic cov files downloaded from DESI DR1 VAC; verified identical to the bundle's `covariance/value` to machine precision for all six tracers (resolves §30e)
+- `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers
+- `hod.yaml` — added `assembly_bias_factor` field with default 1.0 for all tracers; ELG entry has policy-compliant 1.0 with verbose justification comment about why the speculative 0.85 was reverted
+- `util.py` — `_load_hod_configs` now passes through `central_form` (was silently dropped — real bug fix, particularly affected ELG narrow-band HOD) and optional float fields like `assembly_bias_factor`
+- `prep_covar.py` — `_hod_halo_props` now applies `params.get("assembly_bias_factor", 1.0)` multiplicatively to b1; infrastructure for future literature-grounded AB values
 - `CHANGELOG.md` — §31 entry
 
 ### 31i. Open follow-ups

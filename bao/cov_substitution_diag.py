@@ -193,6 +193,78 @@ def _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk):
     return W @ H
 
 
+def _build_H_block_fftlog(theory_ells, theory_s_per_ell, pipe_ells, k_centers,
+                          P_fid_per_ell=None):
+    """FFTLog version of _build_H_block — built linearly via basis-vector
+    evaluation using extrap='edge' (constant-value padding).
+
+    Why extrap='edge' instead of 'log': cosmoprimo's log-log extrapolation is
+    *nonlinear* in P (log of boundary values), so basis vectors with zero
+    tails crash it (log(0) → NaN). A finite-difference Jacobian at the
+    fiducial P is too noisy (cond → 10^20). 'edge' (constant padding) is
+    linear in P, basis-vector evaluation is well-defined, and the result
+    is a clean linear operator.
+
+    Per §31c, the hand-Riemann Hankel on the pipeline's narrow linear k-grid
+    [0.022, 0.30] catastrophically under-predicts ξ at the BAO peak (factor
+    ~25× suppression at s=98 Mpc/h). FFTLog with log-spaced quadrature
+    uses better integration weights than the linear Riemann sum and
+    handles boundary effects more gracefully via the padding.
+
+    P_fid_per_ell is kept for API compatibility but unused with extrap='edge'.
+    """
+    from cosmoprimo.fftlog import PowerToCorrelation
+
+    n_k = len(k_centers)
+    n_pipe = n_k * len(pipe_ells)
+    n_per = [len(s) for s in theory_s_per_ell]
+    n_theory_total = sum(n_per)
+
+    # Log-k grid for FFTLog, covering the pipeline's k range.
+    k_log = np.logspace(np.log10(k_centers[0]), np.log10(k_centers[-1]), 1024)
+    ffts = {ell: PowerToCorrelation(k_log, ell=ell) for ell in pipe_ells}
+
+    H_block = np.zeros((n_theory_total, n_pipe), dtype=np.float64)
+
+    for i_p, p_ell in enumerate(pipe_ells):
+        if p_ell not in theory_ells:
+            continue
+        i_th = theory_ells.index(p_ell)
+        s_th = theory_s_per_ell[i_th]
+        th_offset = sum(n_per[:i_th])
+        fft = ffts[p_ell]
+
+        # Build all basis-vector columns: P_lin[i] is the i-th basis vector.
+        # After np.interp to log-k, this is a triangular "tent" at k_centers[i].
+        basis_lin = np.eye(n_k)
+        basis_log = np.zeros((n_k, len(k_log)))
+        for ic in range(n_k):
+            basis_log[ic] = np.interp(k_log, k_centers, basis_lin[ic])
+        # extrap='edge' pads with boundary values (zero for tent basis vectors
+        # whose boundaries are zero) → linear in input, no NaN issues.
+        s_fft, xi_fft = fft(basis_log, extrap="edge")
+        s_fft = np.asarray(s_fft); xi_fft = np.asarray(xi_fft)
+        if s_fft.ndim == 2:
+            s_fft = s_fft[0]
+        order = np.argsort(s_fft)
+        s_fft_sorted = s_fft[order]
+        for ic in range(n_k):
+            xi_at_th = np.interp(s_th, s_fft_sorted, xi_fft[ic][order])
+            H_block[th_offset:th_offset + n_per[i_th], i_p * n_k + ic] = xi_at_th
+
+    return H_block
+
+
+def _build_M_fftlog(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers,
+                    P_fid_per_ell):
+    """M = W @ H_block built via FFTLog instead of hand-Riemann. See
+    _build_H_block_fftlog for motivation (§31c showed Riemann is broken
+    at s > 50 Mpc/h)."""
+    H = _build_H_block_fftlog(theory_ells, theory_s_per_ell, pipe_ells, k_centers,
+                              P_fid_per_ell)
+    return W @ H
+
+
 def _precision_from_cov_xi(cov_xi, M, regularize=1e-10):
     """precision_P = M^T (cov_xi + ε I)^{-1} M, with a tiny ridge for stability."""
     C = 0.5 * (cov_xi + cov_xi.T)
@@ -255,7 +327,7 @@ def _build_info(tracer_key, omega_m, hrdrag):
     )
 
 
-def run_one(tracer_key, omega_m, hrdrag, source="bundle"):
+def run_one(tracer_key, omega_m, hrdrag, source="bundle", hankel="riemann"):
     print(f"\n=== {tracer_key}  (source={source}) ===")
 
     # Pipeline ingredients
@@ -266,16 +338,28 @@ def run_one(tracer_key, omega_m, hrdrag, source="bundle"):
     pipe_ells = [int(l) for l in obs.ells]
     C_P_pipe = np.asarray(info_F0["cov_components"]["C_total"], dtype=np.float64)
 
+    # Fiducial P_ℓ(k) — needed for FFTLog M (Jacobian at this point).
+    info_F0["likelihood"](**info_F0["params"])
+    P_fid_per_ell = [np.asarray(obs.theory[i], dtype=np.float64) for i in range(len(pipe_ells))]
+
     # Cov source: local likelihood bundle (cov_ξ + W) or EZmock joint file
     # (cov_ξ only, no W). The §26 finding bounds the missing-W effect at <2%
     # on σ for LRG2, so dropping W is a clean approximation.
     if source == "bundle":
         cov_xi_dr1, W, theory_ells, theory_s_per_ell = _load_dr1(tracer_key)
-        M = _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk)
+        if hankel == "fftlog":
+            M = _build_M_fftlog(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers,
+                                P_fid_per_ell)
+        else:
+            M = _build_M(W, theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk)
     elif source == "ezmock":
         cov_xi_dr1, theory_ells, theory_s_per_ell = _load_ezmock_correlationrecon(
             tracer_key, keep_ells=pipe_ells)
-        M = _build_H_block(theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk)
+        if hankel == "fftlog":
+            M = _build_H_block_fftlog(theory_ells, theory_s_per_ell, pipe_ells, k_centers,
+                                       P_fid_per_ell)
+        else:
+            M = _build_H_block(theory_ells, theory_s_per_ell, pipe_ells, k_centers, dk)
     else:
         raise ValueError(f"unknown source {source!r}")
     print(f"  M shape: {M.shape}   C_P_pipe: {C_P_pipe.shape}   cov_ξ_DR1: {cov_xi_dr1.shape}")
@@ -321,6 +405,13 @@ def main():
                     help="Where to get cov_ξ: 'bundle' (local likelihood h5, "
                          "LRG2 & QSO only, cov+W) or 'ezmock' (public DR1 "
                          "EZmock joint cov file, all six tracers, cov only).")
+    ap.add_argument("--hankel", choices=["riemann", "fftlog"], default="riemann",
+                    help="Method for the P→ξ Hankel transform inside M. "
+                         "'riemann' (default for legacy comparison) uses a "
+                         "hand-sum on the pipeline's narrow linear k-grid — "
+                         "broken at s > 50 Mpc/h per §31c. 'fftlog' uses "
+                         "cosmoprimo's PowerToCorrelation with log-log "
+                         "extrapolation (the §31d fix).")
     args = ap.parse_args()
 
     print(f"Cov-substitution diagnostic @ Om={args.omega_m}, hrdrag={args.hrdrag}, source={args.source}")
@@ -335,7 +426,7 @@ def main():
     rows = []
     for tracer in args.tracers:
         try:
-            rows.append((tracer, run_one(tracer, args.omega_m, args.hrdrag, source=args.source)))
+            rows.append((tracer, run_one(tracer, args.omega_m, args.hrdrag, source=args.source, hankel=args.hankel)))
         except FileNotFoundError as exc:
             print(f"  [{tracer}] skipped: {exc}")
 

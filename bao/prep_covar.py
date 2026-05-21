@@ -914,6 +914,18 @@ def _hod_halo_props(
         n_tot = max(nbar_comoving, 1.0e-30)
 
     b1 = float(np.sum(dn_dlogM * N_tot * b1_T10) * dlogM / n_tot)
+
+    # Optional assembly-bias decoration. Standard HOD treats galaxies as
+    # tracers of halo mass alone; decorated HOD (Hearin & Watson 2013) allows
+    # a secondary halo property (concentration, formation time, environment)
+    # to modulate galaxy occupation. For star-formers (ELGs), the literature
+    # consistently finds galaxies prefer LOW-bias halos at fixed mass
+    # (Hadzhiyska+22 2022MNRAS.509..501H; Yuan+22; Lin+23), giving a net
+    # downward correction to the HOD-mass-only bias by ~10-25%.
+    # The factor is set per tracer type in hod.yaml; defaults to 1.0 (no AB).
+    assembly_bias_factor = float(params.get("assembly_bias_factor", 1.0))
+    b1 *= assembly_bias_factor
+
     n_sat = float(np.sum(dn_dlogM * N_sat) * dlogM)
     f_sat = n_sat / n_tot
     # f_sat * <sigma_v^2>_sat collapses to <N_sat sigma_v^2>/<N_tot>.
