@@ -235,9 +235,10 @@ def run_tracer(tracer, bb_powers=(-3, -2, -1, 0, 1), sigma_override=None):
     sig_qpar = float(np.sqrt(cov_qq[0, 0]))
     sig_qper = float(np.sqrt(cov_qq[1, 1]))
     template = info["template"]
+    z_eff_local = float(TRACER_CONFIGS[tracer]["z_eff"])
     DH_over_rd = float(template.DH_over_rd_fid)
     DM_over_rd = float(template.DM_over_rd_fid)
-    DV_over_rd = (DM_over_rd ** 2 * DH_over_rd) ** (1.0 / 3.0)
+    DV_over_rd = (z_eff_local * DM_over_rd ** 2 * DH_over_rd) ** (1.0 / 3.0)  # BAO definition includes z
     sig_DH = sig_qpar * DH_over_rd
     sig_DM = sig_qper * DM_over_rd
     grad = np.array([1.0 / 3.0, 2.0 / 3.0])

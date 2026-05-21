@@ -2172,6 +2172,87 @@ data-pipeline surgery, beyond the scope of the cov-substitution arc.
 **Pipeline code:** still untouched. All §31g.octavus → undecimus work
 lives in the test/diagnostic scripts and `mcmc_bundle_xi.py`.
 
+### 31g.duodecimus. Missing-z bug in DV formula — corrects sparse-tracer F/D
+
+**Real bug found by pushback.** While defending the "BGS is data-limited
+at 2.20× DESI" claim, the user pushed back: "if we can't recover near
+DESI σ from DESI's data + cov + W in a vacuum, something is wrong."
+This led to a Cramér-Rao bound diagnostic
+(`compare_theory_paths.py`) which compared:
+
+- σ_q from FFTLog-projected pipeline theory + bundle data + cov + W
+- σ_q from desilike's native `DampedBAOWigglesTracerCorrelationFunctionMultipoles`
+  theory on the same data + cov + W
+
+The two ξ_0(s) shapes matched within 1-2% across the BAO peak, and the
+*marginal* Fisher info ratio (after applying W and C^{-1}) was 1.04 —
+i.e., FFTLog and native theory give essentially identical σ_q. **But
+the absolute Cramér-Rao σ_q came out at ~0.024, whereas DESI's
+quoted σ implied σ_q ≈ 0.012** — a 2× gap that should be impossible
+to close even with optimal nuisance treatment.
+
+Investigating that impossibility surfaced the actual bug:
+`mcmc_bundle.py`, `test_tier3_all_tracers.py`, and `mcmc_bundle_xi.py`
+all compute the derived isotropic distance as:
+
+```python
+DV_over_rd = (DM_over_rd ** 2 * DH_over_rd) ** (1.0 / 3.0)   # WRONG
+```
+
+The actual BAO definition is `DV = (DM² × z × c/H)^(1/3)`, so there's
+a **missing factor of z** in the volume-average. `mcmc_bao.py` line 122
+has it correct (`dv = (z_eff * dm * dm * dh) ** (1.0 / 3.0)`). The
+three bundle/Tier-3 scripts inherited the wrong form via copy-paste-
+evolution from before the z factor was added.
+
+**Effect on previously reported F/D values:**
+
+The bug inflates / deflates reported σ_DV by `(1/z_eff)^(1/3)`. For
+the two affected (sparse, qiso-fit) tracers:
+
+- BGS (z=0.295):  factor `(1/0.295)^(1/3) = 1.502` — F/D **OVER**-stated by 1.50×
+- QSO (z=1.49):   factor `(1/1.49)^(1/3) = 0.876` — F/D **UNDER**-stated by 1.14×
+
+LRG/ELG tracers (qparqper apmode) are unaffected because we report
+DH and DM separately — the bad DV formula was only used in headlines
+for sparse tracers.
+
+**Corrected six-tracer table after z-factor fix:**
+
+```
+              σ(distance) / DESI σ
+              before fix     after fix
+BGS DV        2.20           1.37        (was 2.2× inflated by ~1.5)
+LRG1 DH/DM    1.13 / 1.05    1.13 / 1.05  (unchanged)
+LRG2 DH/DM    1.02 / 0.96    1.02 / 0.96  (unchanged)
+LRG3+ELG1    1.10 / 0.99    1.10 / 0.99  (unchanged)
+ELG2 DH/DM    1.08 / 1.07    1.08 / 1.07  (unchanged)
+QSO DV        1.13           1.30        (was 1.14× under-stated)
+```
+
+**All six tracers within 2-37% of DESI** after the bug fix. The
+sparse-tracer overshoot (~30-37%) is genuine but well below the
+catastrophic-looking 2× we were reporting. Likely candidates for the
+residual gap: profile likelihood vs marginal posterior (DESI may
+quote profile σ which is tighter for asymmetric posteriors), external
+constraints on b1 / σ_s pinned tighter than the bundle's data alone
+allows, or a different uncertainty quantification convention.
+
+**Cramér-Rao diagnostic also rules out theory shape.** The companion
+`compare_theory_paths.py` showed `||∂ξ/∂qiso||_2` is essentially the
+same between FFTLog and native theory once restricted to s ∈ [50, 150]
+(where the bundle W has support). The large L2-norm discrepancy at
+s < 30 is from k-truncation in FFTLog vs the native class's auto-
+extrapolation, but W doesn't probe there — irrelevant for the actual
+Fisher info. **Conclusion: theory-shape is NOT the cause of any
+residual gap.** Theory paths are interchangeable for this data.
+
+**Pipeline-vs-test boundary:** The fix touched `mcmc_bundle.py` (a
+results-producing script, borderline-pipeline) and two test scripts
+(`test_tier3_all_tracers.py`, `mcmc_bundle_xi.py`). Core pipeline
+(`prep_covar.py`, `util.py`, `hod.yaml`, `mcmc_bao.py`) untouched —
+`mcmc_bao.py` already had the correct formula.
+
 ### 31h. Files touched
 
 - `cov_substitution_diag.py` — NEW, three-Fisher diagnostic with `--source {bundle,ezmock}`; unit bug fixed in `_sigmas_from_cov_q`
@@ -2195,7 +2276,10 @@ lives in the test/diagnostic scripts and `mcmc_bundle_xi.py`.
 - `~/data/desi/bao_dr1/likelihoods/covariance_rascalc/` — NEW dir (§31g.sexus), six GCcomb RascalC analytic cov files downloaded from DESI DR1 VAC; verified identical to the bundle's `covariance/value` to machine precision for all six tracers (resolves §30e)
 - `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers; §31g.nonus added CLI knobs `--bb`, `--sigma-par`, `--sigma-per`, `--sigma-s` for the BB-truncation and Σ-fiducial sweeps (test-script only, no pipeline-code changes)
 - `mcmc_bundle_xi.py` — NEW (§31g.decimus), native-ξ MCMC on bundle data+cov+W using pipeline theory FFTLog-projected to ξ-space; BB Schur-marg analytically inside the log-prob; 6-7 sampled nonlinear params. Fully additive — no pipeline-code changes. §31g.decimus follow-up added `--desi-priors` flag with per-tracer Adame+24 Table 1 canonical Σ/σ_s priors (negative result for BGS).
-- `mcmc_results_bundle_xi/` — NEW dir holding six native-ξ MCMC summary JSONs (BGS qiso, LRG1, LRG2, LRG3+ELG1, ELG2 qparqper, QSO qiso); §31g.undecimus added the three multipole-tracer JSONs
+- `mcmc_results_bundle_xi/` — NEW dir holding six native-ξ MCMC summary JSONs (BGS qiso, LRG1, LRG2, LRG3+ELG1, ELG2 qparqper, QSO qiso); §31g.undecimus added the three multipole-tracer JSONs; §31g.duodecimus refreshed the two sparse-tracer JSONs with the z-factor fix
+- `compare_theory_paths.py` — NEW (§31g.duodecimus), Cramér-Rao diagnostic comparing FFTLog vs native-ξ-theory derivatives + post-W/C Fisher info on qiso; surfaced the missing-z bug
+- `mcmc_bundle.py` — z-factor fix at line 159 (`DV_over_rd_fid = (z_eff * DM² × DH)^(1/3)`)
+- `test_tier3_all_tracers.py` — same z-factor fix at line 240
 - `hod.yaml` — added `assembly_bias_factor` field with default 1.0 for all tracers; ELG entry has policy-compliant 1.0 with verbose justification comment about why the speculative 0.85 was reverted
 - `util.py` — `_load_hod_configs` now passes through `central_form` (was silently dropped — real bug fix, particularly affected ELG narrow-band HOD) and optional float fields like `assembly_bias_factor`
 - `prep_covar.py` — `_hod_halo_props` now applies `params.get("assembly_bias_factor", 1.0)` multiplicatively to b1; infrastructure for future literature-grounded AB values

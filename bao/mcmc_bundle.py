@@ -156,7 +156,8 @@ def run(tracer, nwalkers, max_iterations, burnin_frac, seed, alpha_low, alpha_hi
 
     DH_over_rd_fid = float(template.DH_over_rd_fid)
     DM_over_rd_fid = float(template.DM_over_rd_fid)
-    DV_over_rd_fid = (DM_over_rd_fid ** 2 * DH_over_rd_fid) ** (1.0 / 3.0)
+    z_eff_local = float(cfg["z_eff"])
+    DV_over_rd_fid = (z_eff_local * DM_over_rd_fid ** 2 * DH_over_rd_fid) ** (1.0 / 3.0)  # BAO definition includes z
 
     from desilike.samplers import EmceeSampler
     sampler_kwargs = dict(nwalkers=nwalkers, seed=seed)

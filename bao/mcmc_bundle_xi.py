@@ -283,9 +283,10 @@ def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
         print(f"    {p:<10} mean={m:7.4f}  std={s:7.4f}  fid={fid[p]:7.4f}", flush=True)
 
     template = info["template"]
+    z_eff_local = float(TRACER_CONFIGS[tracer]["z_eff"])
     DH = float(template.DH_over_rd_fid)
     DM = float(template.DM_over_rd_fid)
-    DV = (DM ** 2 * DH) ** (1.0 / 3.0)
+    DV = (z_eff_local * DM ** 2 * DH) ** (1.0 / 3.0)  # BAO definition includes z factor
 
     if apmode == "qiso":
         i_q = param_names.index("qiso")
