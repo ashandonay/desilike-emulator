@@ -1260,6 +1260,7 @@ def build_bao_likelihood(
     include_fog: bool = True,
     float_sigma_bao: bool = True,
     kmax_cov: float | None = None,
+    apmode: str = "qparqper",
 ) -> Dict:
     """Build the BAO Gaussian likelihood and return it with the fiducial-value bookkeeping
     needed by downstream consumers (Fisher, MCMC, profile likelihood).
@@ -1706,7 +1707,7 @@ def build_bao_likelihood(
     template = BAOPowerSpectrumTemplate(
         z=z,
         fiducial=("DESI", dict(theta_cosmo)),
-        apmode="qparqper",
+        apmode=apmode,
     )
 
     # BAO template matches DESI Y1/Y3 convention:

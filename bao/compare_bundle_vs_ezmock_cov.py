@@ -32,12 +32,20 @@ _LIK_DIR = _DR1_DIR / "likelihoods"
 _EZMOCK_DIR = _LIK_DIR / "covariance"
 
 _BUNDLES = {
-    "LRG2": "likelihood_correlation-recon-poles_LRG_GCcomb_z0.6-0.8.h5",
-    "QSO":  "likelihood_correlation-recon-poles_QSO_GCcomb_z0.8-2.1.h5",
+    "BGS":       "likelihood_correlation-recon-poles_BGS_BRIGHT-21.5_GCcomb_z0.1-0.4.h5",
+    "LRG1":      "likelihood_correlation-recon-poles_LRG_GCcomb_z0.4-0.6.h5",
+    "LRG2":      "likelihood_correlation-recon-poles_LRG_GCcomb_z0.6-0.8.h5",
+    "LRG3_ELG1": "likelihood_correlation-recon-poles_LRG+ELG_LOPnotqso_GCcomb_z0.8-1.1.h5",
+    "ELG2":      "likelihood_correlation-recon-poles_ELG_LOPnotqso_GCcomb_z1.1-1.6.h5",
+    "QSO":       "likelihood_correlation-recon-poles_QSO_GCcomb_z0.8-2.1.h5",
 }
 _EZMOCK_FILES = {
-    "LRG2": "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.6-0.8_thetacut0.05.h5",
-    "QSO":  "covariance_spectrum-poles+correlation-poles-recon_QSO_GCcomb_z0.8-2.1_thetacut0.05.h5",
+    "BGS":       "covariance_spectrum-poles+correlation-poles-recon_BGS_BRIGHT-21.5_GCcomb_z0.1-0.4_thetacut0.05.h5",
+    "LRG1":      "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.4-0.6_thetacut0.05.h5",
+    "LRG2":      "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.6-0.8_thetacut0.05.h5",
+    "LRG3_ELG1": "covariance_spectrum-poles+correlation-poles-recon_LRG_GCcomb_z0.8-1.1_thetacut0.05.h5",
+    "ELG2":      "covariance_spectrum-poles+correlation-poles-recon_ELG_LOPnotqso_GCcomb_z1.1-1.6_thetacut0.05.h5",
+    "QSO":       "covariance_spectrum-poles+correlation-poles-recon_QSO_GCcomb_z0.8-2.1_thetacut0.05.h5",
 }
 
 
@@ -192,7 +200,7 @@ def _plot(tracer, C_b, C_e, b_ells, b_s, info, out_path):
 
 def main():
     out_dir = Path(__file__).parent
-    for tracer in ["LRG2", "QSO"]:
+    for tracer in ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]:
         C_b, b_ells, b_s = _load_bundle(tracer)
         C_e_full, ez_ells, ez_s = _load_ezmock_corrrec_block(tracer)
         C_e = _slice_ezmock_to_bundle(C_e_full, ez_ells, ez_s, b_ells, b_s)
