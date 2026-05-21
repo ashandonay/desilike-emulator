@@ -169,7 +169,8 @@ def _chi2_marg(residual, C_inv, BB):
 
 def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
                   bb_powers=(-3, -2, -1, 0, 1),
-                  alpha_low=0.8, alpha_high=1.2):
+                  alpha_low=0.8, alpha_high=1.2,
+                  prior_centers=None, prior_widths_override=None):
     data = np.concatenate(bundle["obs_data"])
     n_data = data.size
     cov_sym = 0.5 * (bundle["cov"] + bundle["cov"].T)
@@ -190,9 +191,14 @@ def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
                 if q.name == p:
                     fid[p] = float(q.value); break
 
-    # Loose Gaussian priors on nuisances around fid (matches DESI's prior structure);
-    # uniform on q's.
+    # Loose Gaussian priors on nuisances; uniform on q's. Override via CLI:
+    # --desi-priors flips Σ/σ_s widths to DESI Adame+24 spec (~1 for Σ, 2 for σ_s).
     prior_widths = {"b1": 1.0, "dbeta": 0.5, "sigmas": 4.0, "sigmapar": 4.0, "sigmaper": 3.0}
+    if prior_widths_override:
+        prior_widths.update(prior_widths_override)
+    prior_means = {p: fid[p] for p in prior_widths if p in fid}
+    if prior_centers:
+        prior_means.update(prior_centers)
 
     sigma_hard_max = {"sigmas": 8.0, "sigmapar": 12.0, "sigmaper": 8.0}
     b1_hard = (0.2, 5.0)
@@ -210,7 +216,7 @@ def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
         lp = 0.0
         for p, w in prior_widths.items():
             if p in d:
-                lp += -0.5 * ((d[p] - fid[p]) / w) ** 2
+                lp += -0.5 * ((d[p] - prior_means.get(p, fid[p])) / w) ** 2
         return lp
 
     def log_prob(theta):
@@ -236,7 +242,8 @@ def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
 
 
 def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
-        alpha_low, alpha_high, save_chain):
+        alpha_low, alpha_high, save_chain,
+        prior_centers=None, prior_widths_override=None):
     print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode})\n{'=' * 70}", flush=True)
     info, wide_lik, wide_obs, k_lin = _build_wide_lik(tracer, apmode=apmode)
     bundle = _load_bundle(tracer)
@@ -244,6 +251,7 @@ def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
     log_prob, param_names, fid = make_log_prob(
         info, wide_lik, wide_obs, k_lin, bundle, apmode,
         alpha_low=alpha_low, alpha_high=alpha_high,
+        prior_centers=prior_centers, prior_widths_override=prior_widths_override,
     )
     ndim = len(param_names)
 
@@ -349,11 +357,38 @@ def main():
     ap.add_argument("--alpha-low", type=float, default=0.8)
     ap.add_argument("--alpha-high", type=float, default=1.2)
     ap.add_argument("--save-chain", action="store_true")
+    ap.add_argument("--desi-priors", action="store_true",
+                    help="Use DESI Adame+24 prior widths on Σ/σ_s and per-tracer "
+                         "canonical Σ centers (matches published likelihood definition)")
     args = ap.parse_args()
+
+    # DESI Adame+24 Table 1: post-recon canonical Σ + Gaussian prior widths.
+    # BGS uses larger Σ (harder to reconstruct).
+    DESI_PRIORS = {
+        "BGS":       {"centers": {"sigmapar": 8.0, "sigmaper": 4.5, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 1.0, "sigmaper": 1.0, "sigmas": 2.0}},
+        "LRG1":      {"centers": {"sigmapar": 6.0, "sigmaper": 3.0, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 1.0, "sigmaper": 1.0, "sigmas": 2.0}},
+        "LRG2":      {"centers": {"sigmapar": 6.0, "sigmaper": 3.0, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 1.0, "sigmaper": 1.0, "sigmas": 2.0}},
+        "LRG3_ELG1": {"centers": {"sigmapar": 6.0, "sigmaper": 3.0, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 1.0, "sigmaper": 1.0, "sigmas": 2.0}},
+        "ELG2":      {"centers": {"sigmapar": 6.0, "sigmaper": 3.0, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 1.0, "sigmaper": 1.0, "sigmas": 2.0}},
+        "QSO":       {"centers": {"sigmapar": 9.0, "sigmaper": 6.0, "sigmas": 2.0},
+                      "widths":  {"sigmapar": 2.0, "sigmaper": 2.0, "sigmas": 2.0}},
+    }
+
     for t in args.tracers:
+        pc_ = pw_ = None
+        if args.desi_priors and t in DESI_PRIORS:
+            pc_ = DESI_PRIORS[t]["centers"]
+            pw_ = DESI_PRIORS[t]["widths"]
+            print(f"[{t}] using DESI-spec priors: centers={pc_}, widths={pw_}")
         try:
             run(t, args.apmode, args.nwalkers, args.max_iterations, args.burnin_frac,
-                args.seed, args.alpha_low, args.alpha_high, args.save_chain)
+                args.seed, args.alpha_low, args.alpha_high, args.save_chain,
+                prior_centers=pc_, prior_widths_override=pw_)
         except Exception as e:
             print(f"[{t}] FAILED: {type(e).__name__}: {e}")
 

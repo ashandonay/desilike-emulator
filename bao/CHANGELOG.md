@@ -2063,6 +2063,23 @@ QSO DV          1.37          1.13           0.6687
    specific reconstruction-transfer/integral-constraint preprocessing.
    Documented as a known data-limited tracer, not pursued further.
 
+**Follow-up test (same section): DESI-spec priors on Σ/σ_s do not
+close BGS.** Added a `--desi-priors` CLI flag mapping each tracer to
+Adame+24 Table 1 canonical centers + widths (Σ_⊥, Σ_∥ widths ~1.0,
+σ_s width 2.0; BGS-specific centers 4.5/8.0/2.0 for post-recon).
+The chain confirms the priors are active: Σ_par std drops 2.87 →
+0.99, Σ_per std 2.05 → 0.99 — 3× tightening on the nuisances, as
+expected. But σ_qiso barely budges: 0.0274 → 0.0261 (~5%
+improvement), pushing σ_DV/D from 2.20 → 2.10. This is a clean
+negative result for the Σ-degeneracy hypothesis: BGS qiso is NOT
+primarily limited by Σ marginalization. The 26-point ξ_0 data + bundle
+cov + pipeline theory just doesn't have the Fisher information DESI's
+fit extracts. The residual ~110% overshoot lives in BGS data
+preprocessing (reconstruction transfer, integral-constraint, fiber-
+collision corrections) applied upstream of the fit, not in fit
+configuration. Pursuing this requires data-pipeline surgery (not the
+analysis pipeline), which is out of scope for the F/D-closure arc.
+
 **What this implies for the F/D narrative going forward:**
 
 The §31g.octavus six-tracer table should be read with a >10% Fisher-
@@ -2101,7 +2118,7 @@ new script.
 - `~/data/desi/bao_dr1/likelihoods/covariance/` — created, EZmock cov VAC downloaded
 - `~/data/desi/bao_dr1/likelihoods/covariance_rascalc/` — NEW dir (§31g.sexus), six GCcomb RascalC analytic cov files downloaded from DESI DR1 VAC; verified identical to the bundle's `covariance/value` to machine precision for all six tracers (resolves §30e)
 - `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers; §31g.nonus added CLI knobs `--bb`, `--sigma-par`, `--sigma-per`, `--sigma-s` for the BB-truncation and Σ-fiducial sweeps (test-script only, no pipeline-code changes)
-- `mcmc_bundle_xi.py` — NEW (§31g.decimus), native-ξ MCMC on bundle data+cov+W using pipeline theory FFTLog-projected to ξ-space; BB Schur-marg analytically inside the log-prob; 6-7 sampled nonlinear params. Fully additive — no pipeline-code changes.
+- `mcmc_bundle_xi.py` — NEW (§31g.decimus), native-ξ MCMC on bundle data+cov+W using pipeline theory FFTLog-projected to ξ-space; BB Schur-marg analytically inside the log-prob; 6-7 sampled nonlinear params. Fully additive — no pipeline-code changes. §31g.decimus follow-up added `--desi-priors` flag with per-tracer Adame+24 Table 1 canonical Σ/σ_s priors (negative result for BGS).
 - `mcmc_results_bundle_xi/` — NEW dir holding the three native-ξ MCMC summary JSONs (BGS qiso, LRG2 qparqper, QSO qiso)
 - `hod.yaml` — added `assembly_bias_factor` field with default 1.0 for all tracers; ELG entry has policy-compliant 1.0 with verbose justification comment about why the speculative 0.85 was reverted
 - `util.py` — `_load_hod_configs` now passes through `central_form` (was silently dropped — real bug fix, particularly affected ELG narrow-band HOD) and optional float fields like `assembly_bias_factor`
