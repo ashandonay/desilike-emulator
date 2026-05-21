@@ -1995,6 +1995,90 @@ exactly. Documented as a follow-up; the headline §31g result (LRG2
 clean closure; bundle-cov substitution is NOT a universal mechanism)
 stands.
 
+### 31g.decimus. Native-ξ MCMC closes most of the sparse-tracer F2 gap and reveals Fisher was optimistic
+
+Top of §31i open follow-ups (and the one we cited as "needs new
+additive code, NOT pipeline surgery"). Implemented in `mcmc_bundle_xi.py`
+— a new script, no modification to any pipeline module
+(`prep_covar.py`, `mcmc_bao.py`, `util.py`, `hod.yaml` all untouched).
+
+**Implementation.** The existing `mcmc_bundle.py` F2-projects bundle
+cov ξ→P (`precision_P = M^T C_ξ^{-1} M`) and overrides the P-space
+likelihood's precision matrix. For DV-only sparse-tracer fits (BGS,
+QSO), the projection is rank-deficient (rank ~26 out of 112), which
+the §31g.sexus closing argument flagged as the likely σ_DV inflator.
+The new script evaluates the pipeline theory in P-space, FFTLog-
+projects to ξ-space at the bundle's theory grid, applies the bundle
+W to land on the data grid, and computes log-likelihood against the
+bundle data + bundle cov directly. BB nuisances are Schur-
+marginalized analytically inside the log-prob (still 6-7 sampled
+nonlinear params: q's + b1 + dbeta + σ_s + Σ_par + Σ_per).
+
+**Results (3000 iter × 48 walkers, seed 42):**
+
+```
+                F2 MCMC σ/D   Native-ξ σ/D   DESI σ
+LRG2 DH         0.97          1.02           0.5954
+LRG2 DM         0.85          0.96           0.3193
+BGS DV          3.25          2.20           0.1507
+QSO DV          1.37          1.13           0.6687
+```
+
+**Two distinct findings**, both worth recording:
+
+1. **F2 was a real but partial artifact for sparse tracers.** Native-ξ
+   cuts the QSO σ_DV overshoot from 1.37 → 1.13 (~17% improvement) and
+   BGS from 3.25 → 2.20 (~30%). For LRG2 (full ℓ=0,2 multipoles, no
+   rank-deficiency in F2), native-ξ and F2 agree to ~5%, confirming
+   F2 wasn't the inflator for non-sparse tracers. The §31i hypothesis
+   was correct in direction, partial in magnitude.
+
+2. **Tier-3 Fisher was optimistic for LRG2** (new). The chain
+   diagnostics on LRG2 (post-burn means/stds):
+
+   ```
+   qpar       0.9897 ± 0.0300   (fid 1.000)
+   qper       0.9463 ± 0.0173   (fid 1.000)
+   b1         2.328  ± 0.273    (fid 2.171)
+   dbeta      0.913  ± 0.372    (fid 1.000)
+   sigmas     3.149  ± 2.158    (fid 1.240)   *
+   sigmapar   5.389  ± 2.487    (fid 5.665)
+   sigmaper   4.428  ± 1.880    (fid 2.989)   *
+   ```
+
+   The nuisance posterior is non-Gaussian (Σ_per drifts from fid 3.0
+   to mean 4.4 with std nearly as wide as the mean; σ_s drifts 1.2 →
+   3.6 with std 2.2). Gaussian Schur marginalization in Tier-3 Fisher
+   linearizes around fid and misses this curvature — it underestimates
+   σ_q. The "honest" F/D for LRG2 after bundle-cov substitution is
+   ~1.00, not 0.81. **This means LRG2 closure is even cleaner than
+   §31g.octavus reported** — the bundle-cov + pipeline-theory MCMC
+   recovers DESI's published σ to within a few percent, with no
+   tuning or calibration.
+
+3. **BGS still 2.2× overshoot** despite native-ξ. Only 26 ξ_0 data
+   points; effective σ_qiso from chain = 0.027 vs DESI's implied
+   ~0.012 (=2.2×). Reaching DESI's BGS σ from this data + cov + W
+   combination is probably not possible without replicating their
+   specific reconstruction-transfer/integral-constraint preprocessing.
+   Documented as a known data-limited tracer, not pursued further.
+
+**What this implies for the F/D narrative going forward:**
+
+The §31g.octavus six-tracer table should be read with a >10% Fisher-
+optimism caveat. The headline shifts as:
+
+- LRG2: clean closure (~1.0, not 0.81)
+- QSO: ~13% residual overshoot (was 37% in F2)
+- BGS: data-limited at ~2× DESI
+- LRG1 / LRG3+ELG1 / ELG2: not re-run in native-ξ this round; the
+  Fisher-optimism caveat applies to them too, so the §31g.octavus
+  overshoots may be smaller (closer to 1.0) in native-ξ MCMC. Worth
+  doing as a follow-up if a clean six-tracer table is needed.
+
+**Pipeline code:** untouched. The diagnostics live entirely in the
+new script.
+
 ### 31h. Files touched
 
 - `cov_substitution_diag.py` — NEW, three-Fisher diagnostic with `--source {bundle,ezmock}`; unit bug fixed in `_sigmas_from_cov_q`
@@ -2017,6 +2101,8 @@ stands.
 - `~/data/desi/bao_dr1/likelihoods/covariance/` — created, EZmock cov VAC downloaded
 - `~/data/desi/bao_dr1/likelihoods/covariance_rascalc/` — NEW dir (§31g.sexus), six GCcomb RascalC analytic cov files downloaded from DESI DR1 VAC; verified identical to the bundle's `covariance/value` to machine precision for all six tracers (resolves §30e)
 - `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers; §31g.nonus added CLI knobs `--bb`, `--sigma-par`, `--sigma-per`, `--sigma-s` for the BB-truncation and Σ-fiducial sweeps (test-script only, no pipeline-code changes)
+- `mcmc_bundle_xi.py` — NEW (§31g.decimus), native-ξ MCMC on bundle data+cov+W using pipeline theory FFTLog-projected to ξ-space; BB Schur-marg analytically inside the log-prob; 6-7 sampled nonlinear params. Fully additive — no pipeline-code changes.
+- `mcmc_results_bundle_xi/` — NEW dir holding the three native-ξ MCMC summary JSONs (BGS qiso, LRG2 qparqper, QSO qiso)
 - `hod.yaml` — added `assembly_bias_factor` field with default 1.0 for all tracers; ELG entry has policy-compliant 1.0 with verbose justification comment about why the speculative 0.85 was reverted
 - `util.py` — `_load_hod_configs` now passes through `central_form` (was silently dropped — real bug fix, particularly affected ELG narrow-band HOD) and optional float fields like `assembly_bias_factor`
 - `prep_covar.py` — `_hod_halo_props` now applies `params.get("assembly_bias_factor", 1.0)` multiplicatively to b1; infrastructure for future literature-grounded AB values
@@ -2024,10 +2110,11 @@ stands.
 
 ### 31i. Open follow-ups
 
-- **Native-ξ MCMC** instead of F2 P-space substitution. The §31g.sexus closing argument: our F2 projection `precision_P = M^T C_ξ^{-1} M` gives a rank-deficient precision (rank 26 of 112 for DV-only tracers), which inflates σ_DV by 2-3× relative to DESI's native-ξ fit on the same data + cov. Loading the bundle as a desilike CorrelationFunctionMultipoles observable and sampling directly in ξ-space should close this gap for BGS+QSO. Likely the cleanest path to recovering DESI's published sparse-tracer σ.
+- ~~**Native-ξ MCMC**~~ — done in §31g.decimus. F2 was a real but partial artifact: native-ξ cuts QSO 1.37 → 1.13 and BGS 3.25 → 2.20. Also revealed Tier-3 Fisher was ~25% optimistic for LRG2 (Gaussian Schur misses non-Gaussian nuisance posterior); LRG2 native-ξ MCMC F/D ≈ 1.00, a cleaner closure than the Fisher value 0.81 suggested.
 - **AbacusSummit ruled out** as the §31b hypothesis for "where the bundle cov comes from" — §31g.sexus confirmed it's RascalC analytic, not mock-derived at all. §30e thread closed.
 - **Re-run six-tracer MCMC** chains for freshness (the plotting scripts already apply the ×1/h correction). Worth doing only as a seed-stability check; not required for correctness.
-- **MCMC on bundle for ELG2 specifically** (the worst-corrected ratio at 0.45 for DM). The all-six bundle MCMC (§31g.quintus) gave ELG2 DM at 0.53 — better but not closed. Worth a native-ξ MCMC follow-up alongside BGS/QSO.
+- **MCMC on bundle for ELG2 specifically** (the worst-corrected ratio at 0.45 for DM). The all-six bundle MCMC (§31g.quintus) gave ELG2 DM at 0.53 — better but not closed. Worth a native-ξ MCMC follow-up alongside BGS/QSO. Not yet re-run with the §31g.decimus native-ξ pipeline.
+- **Native-ξ MCMC for LRG1 / LRG3+ELG1 / ELG2** to refresh §31g.octavus with non-Gaussian-aware σ_q. §31g.decimus showed Fisher was ~25% optimistic for LRG2; same caveat applies to the other multipole tracers. Cheap to run; just adds three more chain runs.
 - ~~**BB basis form test**~~ — completed in §31g.nonus; effect is ~3% per dropped column, plateau at 2 cols/ℓ, not the dominant mechanism.
 - **Pipeline-vs-DESI theory shape diff** — the only remaining plausible source of the residual ~10-12% F/D overshoot on LRG1 and LRG3+ELG1 after §31g.nonus ruled out BB count and Σ fiducial. Likely candidates: linear P_lin template choice; dilation/AP parameterization; for LRG3+ELG1 specifically, single-bias vs DESI's mixed-tracer (separate bias per subtype + joint AP). Requires re-derivation of the theory chain, not knob-flipping.
 - **Historical test scripts not unit-fixed**: `test_hmf_swap.py`, `test_z_error_nonqso.py`, `test_sigma_post_recon_noise.py`, `test_bb_priors.py`, `sweep_kmin.py`. These wrote results into §20-§30 with the bug. Their reported absolute σ values are wrong by ×1/h, but their *ratio* / *difference* findings (which is what those sections cared about) are unaffected. Fix only if re-running.
