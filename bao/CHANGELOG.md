@@ -2352,6 +2352,102 @@ the `bao-recon` α-cov, not the `correlation-recon-poles` data + cov +
 W → MCMC pathway, because the former encodes DESI's full fit
 configuration.
 
+### 31g.quartusdecimus. THE BB BASIS — full F/D closure for all six tracers
+
+User pushback after §31g.tertiusdecimus: "look through DESI papers to
+identify what the 'extra fit priors' could be." Fetched Adame+24
+(arXiv:2404.03000) Tables 5 and 6, sections 4.3.1–4.3.2.
+
+**The discovery.** DESI's ξ-space broadband basis is *much* smaller
+than our 5-power polynomial. From Adame+24 §4.3.2 eq 4.11–4.12, the
+ξ-space monopole BB is just:
+
+```
+D̃_0(s) = b_{0,0} + b_{0,2} (s · k_min/2π)²
+```
+
+Two terms per ℓ (`{s⁰, s²}`). For the quadrupole, two more
+Hankel-transformed cubic-spline terms B_{2,n}, but the basic
+polynomial structure is `{s⁰, s²}`.
+
+Our `mcmc_bundle_xi.py` and `test_tier3_all_tracers.py` were using
+5 powers per ℓ (`s⁻³, s⁻², s⁻¹, s⁰, s¹`). The divergent low-s powers
+(s⁻³, s⁻², s⁻¹) **do not exist in DESI's basis**.
+
+**Effect:** the extra BB freedom absorbs BAO peak signal that should
+have constrained α. Switching to DESI's `{s⁰, s²}` basis:
+
+```
+              σ_qiso       σ_qiso         %
+              5-term BB    DESI {s⁰,s²}   change
+BGS qiso      0.0257       0.0222         -14%
+QSO qiso      0.0334       0.0244         -27%
+LRG2 qpar     0.0300       0.0283         -6%
+LRG2 qper     0.0170       0.0172         ~0
+```
+
+**Final six-tracer closure** (vs desi_data.csv σ):
+
+```
+              5-term BB                DESI {s⁰,s²} BB
+              DH F/D   DM F/D          DH F/D   DM F/D
+BGS DV       (1.37)                   1.18
+LRG1         1.130    1.047           1.050    1.039
+LRG2         1.020    0.961           0.959    0.954
+LRG3+ELG1    1.095    0.986           1.050    0.979
+ELG2         1.079    1.067           0.994    1.071
+QSO DV       (1.30)                   0.947
+```
+
+**All six tracers within ±18% of DESI**, most within 5%. The
+"discrepancy" we'd been chasing all the way through §31 was
+fundamentally a **broadband basis mismatch**, not missing systematics,
+F2 rank-deficiency, theory shape, or extra DESI information.
+
+vs DESI's bao-recon stat-only (the proper internal α-cov reference):
+
+```
+              5-term BB     DESI {s⁰,s²}   bao-recon σ_q
+BGS  qiso     1.25          1.08           0.0205
+LRG2 qpar     1.07          1.01           0.0281
+LRG2 qper     1.01          1.02           0.0169
+QSO  qiso     1.45          1.06           0.0230
+```
+
+LRG2 matches DESI bao-recon to **1-2%**. BGS and QSO match to **6-8%**.
+
+**What this means for emulator forecasts:**
+
+Your `prep_covar.py` data-cov pipeline was always correct. The
+"misrepresentation" the user worried about was in the
+**downstream BAO fit's BB basis choice**, which is a property of the
+analysis methodology (test/fit scripts), not the data covariance
+pipeline. Changed defaults in `mcmc_bundle_xi.py` and
+`test_tier3_all_tracers.py` to `{0, 2}` to match DESI. Legacy 5-power
+basis remains available via `--bb=-3,-2,-1,0,1`.
+
+**Caveat for multipole tracers:** DESI's actual ℓ=2 BB includes
+Hankel-transformed cubic splines `B_{2,n}(s·Δ)` in addition to `{s⁰,s²}`
+(§4.3.2 eq 4.12). We approximate by using `{s⁰, s²}` for both ℓ.
+For LRG2 this matches bao-recon to 1-2%, so the spline contribution
+is small in practice. Worth implementing if sub-1% accuracy is needed,
+but for emulator forecasting the approximation is adequate.
+
+**The complete F/D-closure arc** (§31 cov-substitution investigation):
+
+1. §31a-§31f: bundle-vs-EZmock cov diagnostics, F2 substitution
+   mechanism — set up the framework
+2. §31g.octavus-undecimus: native-ξ MCMC, six-tracer table, Fisher-
+   optimism correction
+3. §31g.duodecimus: z-factor bug fix (DV formula was missing z)
+4. §31g.tertiusdecimus: native-ξ-theory vs FFTLog — ruled out theory
+   path
+5. **§31g.quartusdecimus (this section): BB basis was the answer**
+
+Pipeline data covariance (`prep_covar.py`) untouched throughout —
+verified correct at all stages. The closure was entirely in the
+analysis BB basis choice in the test/fit scripts.
+
 ### 31h. Files touched
 
 - `cov_substitution_diag.py` — NEW, three-Fisher diagnostic with `--source {bundle,ezmock}`; unit bug fixed in `_sigmas_from_cov_q`
@@ -2376,6 +2472,8 @@ configuration.
 - `test_tier3_all_tracers.py` — NEW (§31g.octavus), generalizes the Tier-3 Fisher to all six tracers; §31g.nonus added CLI knobs `--bb`, `--sigma-par`, `--sigma-per`, `--sigma-s` for the BB-truncation and Σ-fiducial sweeps (test-script only, no pipeline-code changes)
 - `mcmc_bundle_xi.py` — NEW (§31g.decimus), native-ξ MCMC on bundle data+cov+W using pipeline theory FFTLog-projected to ξ-space; BB Schur-marg analytically inside the log-prob; 6-7 sampled nonlinear params. Fully additive — no pipeline-code changes. §31g.decimus follow-up added `--desi-priors` flag with per-tracer Adame+24 Table 1 canonical Σ/σ_s priors (negative result for BGS).
 - `mcmc_bundle_native_theory.py` — NEW (§31g.tertiusdecimus), parallel to mcmc_bundle_xi.py but using `DampedBAOWigglesTracerCorrelationFunctionMultipoles` directly (no FFTLog from P-space). Showed FFTLog vs native is ~3% on marginal σ — theory path is NOT the source of the BGS sparse-tracer gap.
+- `mcmc_bundle_xi.py` — §31g.quartusdecimus changed default BB basis to `(0, 2)` (DESI Adame+24 §4.3.2 ξ-space basis). Legacy 5-power polynomial available via `--bb=-3,-2,-1,0,1`. This closes the F/D arc.
+- `test_tier3_all_tracers.py` — same default BB change (§31g.quartusdecimus).
 - `~/data/desi/bao_dr1/likelihoods/likelihood_bao-recon_stat-only_BGS_BRIGHT-21.5_GCcomb_z0.1-0.4.h5` — downloaded from DESI DR1 VAC (§31g.tertiusdecimus). DESI's post-marginalization α-cov directly; proper reference for "DESI's published σ" comparisons.
 - `mcmc_results_bundle_native/` — NEW dir holding native-theory MCMC results.
 - `mcmc_results_bundle_xi/` — NEW dir holding six native-ξ MCMC summary JSONs (BGS qiso, LRG1, LRG2, LRG3+ELG1, ELG2 qparqper, QSO qiso); §31g.undecimus added the three multipole-tracer JSONs; §31g.duodecimus refreshed the two sparse-tracer JSONs with the z-factor fix

@@ -145,7 +145,7 @@ def _xi_at_bundle_grid(wide_obs, k_lin, bundle, ells=(0, 2)):
     return np.concatenate([by_ell[e] for e in bundle["th_ells"]])
 
 
-def _bb_basis(obs_ells, obs_s, n_total, powers=(-3, -2, -1, 0, 1)):
+def _bb_basis(obs_ells, obs_s, n_total, powers=(0, 2)):
     cols = []
     cur = 0
     for _, s in zip(obs_ells, obs_s):
@@ -168,7 +168,7 @@ def _chi2_marg(residual, C_inv, BB):
 
 
 def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
-                  bb_powers=(-3, -2, -1, 0, 1),
+                  bb_powers=(0, 2),
                   alpha_low=0.8, alpha_high=1.2,
                   prior_centers=None, prior_widths_override=None):
     data = np.concatenate(bundle["obs_data"])
@@ -243,13 +243,15 @@ def make_log_prob(info, wide_lik, wide_obs, k_lin, bundle, apmode,
 
 def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
         alpha_low, alpha_high, save_chain,
-        prior_centers=None, prior_widths_override=None):
-    print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode})\n{'=' * 70}", flush=True)
+        prior_centers=None, prior_widths_override=None,
+        bb_powers=(0, 2)):
+    print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode}, BB powers={list(bb_powers)})\n{'=' * 70}", flush=True)
     info, wide_lik, wide_obs, k_lin = _build_wide_lik(tracer, apmode=apmode)
     bundle = _load_bundle(tracer)
 
     log_prob, param_names, fid = make_log_prob(
         info, wide_lik, wide_obs, k_lin, bundle, apmode,
+        bb_powers=bb_powers,
         alpha_low=alpha_low, alpha_high=alpha_high,
         prior_centers=prior_centers, prior_widths_override=prior_widths_override,
     )
@@ -361,7 +363,12 @@ def main():
     ap.add_argument("--desi-priors", action="store_true",
                     help="Use DESI Adame+24 prior widths on Σ/σ_s and per-tracer "
                          "canonical Σ centers (matches published likelihood definition)")
+    ap.add_argument("--bb", default="0,2",
+                    help="comma-separated BB powers per ℓ; default '0,2' = DESI Adame+24 "
+                         "ξ-space monopole basis (b_{0,0}+b_{0,2}s²). Use '-3,-2,-1,0,1' "
+                         "for the legacy 5-power polynomial basis.")
     args = ap.parse_args()
+    bb_powers = tuple(int(p.strip()) for p in args.bb.split(",") if p.strip())
 
     # DESI Adame+24 Table 1: post-recon canonical Σ + Gaussian prior widths.
     # BGS uses larger Σ (harder to reconstruct).
@@ -389,7 +396,7 @@ def main():
         try:
             run(t, args.apmode, args.nwalkers, args.max_iterations, args.burnin_frac,
                 args.seed, args.alpha_low, args.alpha_high, args.save_chain,
-                prior_centers=pc_, prior_widths_override=pw_)
+                prior_centers=pc_, prior_widths_override=pw_, bb_powers=bb_powers)
         except Exception as e:
             print(f"[{t}] FAILED: {type(e).__name__}: {e}")
 

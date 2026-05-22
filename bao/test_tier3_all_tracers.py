@@ -154,8 +154,10 @@ def _pred_at_params(wide_lik, wide_obs, k_lin, bundle, info, overrides):
     return bundle["W"] @ xi_th_vec
 
 
-def _bb_basis(obs_ells, obs_s, n_total, powers=(-3, -2, -1, 0, 1)):
-    """DESI Adame+24 BB basis: {s^-3, s^-2, s^-1, s^0, s^1} per ℓ by default."""
+def _bb_basis(obs_ells, obs_s, n_total, powers=(0, 2)):
+    """DESI Adame+24 ξ-space BB basis: {s^0, s^2} per ℓ by default
+    (b_{ℓ,0} + b_{ℓ,2}(s·k_min/2π)²; see Adame+24 §4.3.2, eq 4.11-4.12).
+    The legacy 5-power polynomial '-3,-2,-1,0,1' is also supported."""
     cols = []
     cur = 0
     for _, s in zip(obs_ells, obs_s):
@@ -189,7 +191,7 @@ def _schur_marginalize(F, idx_keep):
     return F_kk - F_km @ np.linalg.solve(F_mm, F_km.T)
 
 
-def run_tracer(tracer, bb_powers=(-3, -2, -1, 0, 1), sigma_override=None):
+def run_tracer(tracer, bb_powers=(0, 2), sigma_override=None):
     print(f"\n{'=' * 70}\n  {tracer}  (BB powers={list(bb_powers)})\n{'=' * 70}", flush=True)
     info, wide_lik, wide_obs, k_lin = _build_wide_lik(tracer)
     bundle = _load_bundle(tracer)
@@ -259,8 +261,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tracers", default="BGS,LRG1,LRG2,LRG3_ELG1,ELG2,QSO",
                     help="comma-separated list of tracers to run")
-    ap.add_argument("--bb", default="-3,-2,-1,0,1",
-                    help="comma-separated BB powers; default '-3,-2,-1,0,1' (5 cols/ℓ)")
+    ap.add_argument("--bb", default="0,2",
+                    help="comma-separated BB powers per ℓ; default '0,2' = DESI Adame+24 "
+                         "ξ-space basis (b_{ℓ,0}+b_{ℓ,2}s²; §4.3.2). Legacy 5-power: '-3,-2,-1,0,1'")
     ap.add_argument("--sigma-par", type=float, default=None,
                     help="override Σ_par fiducial (applies to all tracers in run)")
     ap.add_argument("--sigma-per", type=float, default=None,
