@@ -197,8 +197,14 @@ def make_log_prob(info, native, bundle, apmode, tracer,
             if p in fid:
                 fid[p] = float(val)
 
-    prior_widths = {"b1": 1.0, "dbeta": 0.5, "sigmas": 4.0, "sigmapar": 4.0, "sigmaper": 3.0}
-    sigma_hard_max = {"sigmas": 8.0, "sigmapar": 12.0, "sigmaper": 8.0}
+    # Prior config aligned with Fisher (`_bundle_fisher_sigmas`) + DESI Adame+24:
+    #   - Σ_par, Σ_⊥, σ_s: Gaussian σ=2 about fid (DESI Adame+24 §4.2.1 canonical)
+    #   - b1, dbeta: NO informative prior (only loose hard bounds for sampler safety)
+    #   - q: flat in [alpha_low, alpha_high]
+    # Hard bounds widened to be inactive at the 5σ level for the Σ params,
+    # matching Fisher's effectively-unbounded Gaussian-prior treatment.
+    prior_widths = {"sigmas": 2.0, "sigmapar": 2.0, "sigmaper": 2.0}
+    sigma_hard_max = {"sigmas": 20.0, "sigmapar": 25.0, "sigmaper": 20.0}
 
     def log_prior(theta):
         d = dict(zip(param_names, theta))
@@ -206,9 +212,9 @@ def make_log_prob(info, native, bundle, apmode, tracer,
             if q in d and not (alpha_low < d[q] < alpha_high):
                 return -np.inf
         for p, hi in sigma_hard_max.items():
-            if p in d and not (0.1 < d[p] < hi): return -np.inf
-        if "b1" in d and not (0.2 < d["b1"] < 5.0): return -np.inf
-        if "dbeta" in d and not (-1.5 < d["dbeta"] < 1.5): return -np.inf
+            if p in d and not (0.01 < d[p] < hi): return -np.inf
+        if "b1" in d and not (0.05 < d["b1"] < 10.0): return -np.inf
+        if "dbeta" in d and not (-5.0 < d["dbeta"] < 5.0): return -np.inf
         lp = 0.0
         for p, w in prior_widths.items():
             if p in d:
