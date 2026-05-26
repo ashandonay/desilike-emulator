@@ -38,7 +38,6 @@ warnings.filterwarnings("ignore")
 
 from plot_fisher_vs_desi_full import (
     _prod_fisher_sigmas, _bundle_fisher_sigmas, _recon_sigmas, _TRACERS,
-    _profile_sigmas,
 )
 from util import TRACER_CONFIGS
 
@@ -89,36 +88,28 @@ def _gather():
         recon = _recon_sigmas(t, prod)
         prod_mcmc = _load_prod_mcmc(t)
         bundle_mcmc = _load_bundle_mcmc(t)
-        profile = _profile_sigmas(t)
-        profile_diag = _profile_sigmas(t, cov_mode="diag")
-
         is_sparse = bundle.get("apmode") == "qiso"
         if is_sparse:
-            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc,
-                        profile, profile_diag):
+            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc):
                 src["DH_over_rs"] = float("nan")
                 src["DM_over_rs"] = float("nan")
         else:
-            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc,
-                        profile, profile_diag):
+            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc):
                 src["DV_over_rs"] = float("nan")
 
         out[t] = {"prod": prod, "bundle": bundle, "recon": recon,
                   "prod_mcmc": prod_mcmc, "bundle_mcmc": bundle_mcmc,
-                  "profile": profile, "profile_diag": profile_diag,
                   "sparse": is_sparse}
         for src_name, src in [("prod", prod), ("bundle", bundle), ("recon", recon),
-                              ("prod_mcmc", prod_mcmc), ("bundle_mcmc", bundle_mcmc),
-                              ("profile", profile), ("profile_diag", profile_diag)]:
-            print(f"  {src_name:<13} DH={src['DH_over_rs']:.4f}  DM={src['DM_over_rs']:.4f}  DV={src['DV_over_rs']:.4f}")
+                              ("prod_mcmc", prod_mcmc), ("bundle_mcmc", bundle_mcmc)]:
+            print(f"  {src_name:<12} DH={src['DH_over_rs']:.4f}  DM={src['DM_over_rs']:.4f}  DV={src['DV_over_rs']:.4f}")
     return out
 
 
 def _print_table(data):
-    print(f"\n=== DR1 σ: Fisher (P/B) + MCMC (Pm/Bm) + Profile (Pf) vs DESI bao-recon (D) ===")
-    header = (f"  {'tracer':<12} {'q':<6} {'σ_P':>8} {'σ_Pm':>8} {'σ_B':>8} "
-              f"{'σ_Bm':>8} {'σ_Pf':>8} {'σ_D':>8} "
-              f"{'P/D':>6} {'Pm/D':>6} {'B/D':>6} {'Bm/D':>6} {'Pf/D':>6}")
+    print(f"\n=== DR1 σ: Fisher (P/B) + MCMC (Pm/Bm) vs DESI bao-recon (D) ===")
+    header = (f"  {'tracer':<12} {'q':<6} {'σ_P':>9} {'σ_Pm':>9} {'σ_B':>9} "
+              f"{'σ_Bm':>9} {'σ_D':>9} {'P/D':>7} {'Pm/D':>7} {'B/D':>7} {'Bm/D':>7}")
     print(header)
     print("  " + "-" * (len(header) - 2))
     for t in _TRACERS:
@@ -128,11 +119,10 @@ def _print_table(data):
             if not np.isfinite(sD): continue
             sP  = d["prod"][q]; sB = d["bundle"][q]
             sPm = d["prod_mcmc"][q]; sBm = d["bundle_mcmc"][q]
-            sPf = d["profile"][q]
             r = lambda x: x / sD if sD > 0 else np.nan
             print(f"  {t:<12} {_QUANT_SHORT[q]:<6} "
-                  f"{sP:>8.4f} {sPm:>8.4f} {sB:>8.4f} {sBm:>8.4f} {sPf:>8.4f} {sD:>8.4f} "
-                  f"{r(sP):>6.3f} {r(sPm):>6.3f} {r(sB):>6.3f} {r(sBm):>6.3f} {r(sPf):>6.3f}")
+                  f"{sP:>9.4f} {sPm:>9.4f} {sB:>9.4f} {sBm:>9.4f} {sD:>9.4f} "
+                  f"{r(sP):>7.3f} {r(sPm):>7.3f} {r(sB):>7.3f} {r(sBm):>7.3f}")
 
 
 def _plot(data, out_path):
@@ -147,7 +137,7 @@ def _plot(data, out_path):
     for q, color, _ in _QUANTITIES:
         # Build per-source lists
         sources = {"recon": [], "prod": [], "bundle": [], "prod_mcmc": [],
-                   "bundle_mcmc": [], "profile": [], "profile_diag": []}
+                   "bundle_mcmc": []}
         for i, t in enumerate(tracers):
             for s in sources:
                 v = data[t][s][q]
@@ -179,14 +169,6 @@ def _plot(data, out_path):
         bmx, bmy = _xy("bundle_mcmc")
         ax.scatter(bmx, bmy, marker="s", s=130, facecolors="none",
                    edgecolors=color, linewidths=1.8, zorder=4)
-        # Chi² profile, bundle cov ("+" — same color as filled square)
-        prx, pry = _xy("profile")
-        ax.scatter(prx, pry, marker="+", s=120, color=color,
-                   linewidths=2.0, zorder=6)
-        # Chi² profile, diag/analytic cov ("x" overlay — same color as circle)
-        pdx, pdy = _xy("profile_diag")
-        ax.scatter(pdx, pdy, marker=(6, 2, 0), s=120, color=color,
-                   linewidths=2.0, zorder=6)
 
     source_handles = [
         Line2D([0], [0], marker="x", linestyle="", markersize=11,
@@ -203,12 +185,6 @@ def _plot(data, out_path):
         Line2D([0], [0], marker="s", linestyle="", markersize=11,
                markerfacecolor="none", markeredgecolor="gray", markeredgewidth=1.8,
                label="MCMC (bundle cov)"),
-        Line2D([0], [0], marker="+", linestyle="", markersize=11,
-               markeredgewidth=2.0, color="gray",
-               label=r"$\chi^2$ profile (bundle, nonlin)"),
-        Line2D([0], [0], marker=(6, 2, 0), linestyle="", markersize=11,
-               markeredgewidth=2.0, color="gray",
-               label=r"$\chi^2$ profile (diag cov, nonlin)"),
     ]
     quantity_handles = [
         Line2D([0], [0], marker="s", linestyle="", markersize=10,
