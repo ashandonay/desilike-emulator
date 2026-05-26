@@ -1,0 +1,28 @@
+{
+  "tracer": "BGS",
+  "dataset": "dr1",
+  "source": "bundle_F2_substitution",
+  "apmode": "qparqper",
+  "n_samples_post_burn": 224000,
+  "sigma_qpar": 0.11378211619861338,
+  "sigma_qper": 0.07891389715046362,
+  "sigma_DH_over_rd_mcmc": 2.9419228451875945,
+  "sigma_DM_over_rd_mcmc": 0.6535280285928621,
+  "sigma_DV_over_rd_mcmc": 0.3109379952274804,
+  "sigma_DH_over_rd_data": NaN,
+  "sigma_DM_over_rd_data": NaN,
+  "sigma_DV_over_rd_data": 0.1507417808704673,
+  "DH_over_rd_fid": 25.855757859629673,
+  "DM_over_rd_fid": 8.281532812234486,
+  "DV_over_rd_fid": 8.057498758073233,
+  "ratio_DH": NaN,
+  "ratio_DM": NaN,
+  "ratio_DV": 2.0627193962546455,
+  "alpha_prior": [
+    0.8,
+    1.2
+  ],
+  "seed": 8192,
+  "max_iterations": 5000,
+  "nwalkers": 64
+}

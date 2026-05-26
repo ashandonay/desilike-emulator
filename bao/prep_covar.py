@@ -1729,10 +1729,24 @@ def build_bao_likelihood(
     #     galaxy/ELG, 30 h^-1 Mpc for QSO).
     #   - model='fog-damping' : Beutler+17 model with FoG damping applied to
     #     the wiggle part, used in DESI Y1 BAO (Moon+23, Ross+24).
+    # BB basis: broadband='pcs' matches DESI Adame+24 §4.3.1 (BAO baseline).
+    # 'pcs' is a B-spline of order 3 (M_4 kernel) with compact support per node,
+    # placed at k-nodes spaced by kp = 2π/r_drag. Unlike the polynomial 'power'
+    # basis, the local kernels cannot mimic BAO-shaped oscillations, so they
+    # absorb broadband without eating the BAO peak signal. This is the correct
+    # choice for a pure BAO (not full-shape) analysis. CHANGELOG §33r switched
+    # from 'power' (which had artificially-loose σ via BAO-signal leakage into
+    # global polynomial BB terms) — verified by §33q ξ-space MCMC test that
+    # showed analogous BB-form sensitivity in BGS/QSO. Note: 'pcs' alone gives
+    # a TIGHTER σ than DESI for some tracers; the remaining gap is in the
+    # analytic Gaussian-only cov (no window-aware RascalC terms) and is the
+    # §34 work item.
+    bb_kwargs = {"broadband": "pcs"}
     if is_lya:
         theory = DampedBAOWigglesTracerPowerSpectrumMultipoles(
             template=template,
             model="fog-damping",
+            **bb_kwargs,
         )
     else:
         theory = DampedBAOWigglesTracerPowerSpectrumMultipoles(
@@ -1740,6 +1754,7 @@ def build_bao_likelihood(
             mode="recsym",
             smoothing_radius=float(cfg["smoothing_scale"]),
             model="fog-damping",
+            **bb_kwargs,
         )
 
     # Observable power-spectrum multipoles used in the Fisher forecast.

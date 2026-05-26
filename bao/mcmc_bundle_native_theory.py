@@ -145,28 +145,57 @@ def _predict(native, bundle, params):
     return bundle["W"] @ xi_flat
 
 
-def make_log_prob(info, native, bundle, apmode,
+# DESI Adame+24 canonical prior centers (used by BAOFit reductions)
+_DESI_CANONICAL_CENTERS = {
+    "BGS":       {"sigmapar": 8.0, "sigmaper": 3.0, "sigmas": 2.0},
+    "QSO":       {"sigmapar": 9.0, "sigmaper": 3.0, "sigmas": 2.0},
+    "LRG1":      {"sigmapar": 9.0, "sigmaper": 4.5, "sigmas": 2.0},
+    "LRG2":      {"sigmapar": 9.0, "sigmaper": 4.5, "sigmas": 2.0},
+    "LRG3_ELG1": {"sigmapar": 8.5, "sigmaper": 4.5, "sigmas": 2.0},
+    "ELG2":      {"sigmapar": 8.5, "sigmaper": 4.5, "sigmas": 2.0},
+}
+
+
+def make_log_prob(info, native, bundle, apmode, tracer,
                   bb_powers=(-3, -2, -1, 0, 1),
-                  alpha_low=0.8, alpha_high=1.2):
+                  alpha_low=0.8, alpha_high=1.2,
+                  desi_canonical_priors=False,
+                  freeze_nuisance=False,
+                  bb_basis="default"):
+    if bb_basis == "desi_adame24":
+        bb_powers = (0, 2)
     data = np.concatenate(bundle["obs_data"])
     n_data = data.size
     cov_sym = 0.5 * (bundle["cov"] + bundle["cov"].T)
     C_inv = np.linalg.inv(cov_sym)
     BB = _bb_basis(bundle["obs_ells"], bundle["obs_s"], n_data, powers=bb_powers)
 
-    if apmode == "qiso":
+    if freeze_nuisance:
+        if apmode == "qiso":
+            param_names = ["qiso", "b1"]
+        else:
+            param_names = ["qpar", "qper", "b1"]
+    elif apmode == "qiso":
         param_names = ["qiso", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
     else:
         param_names = ["qpar", "qper", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
 
+    # Build fid for ALL relevant params (sampled or pinned), so freeze_nuisance can pin to fid.
+    full_names = ["qiso", "qpar", "qper", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
     fid = {}
-    for p in param_names:
+    for p in full_names:
         if p in info["params"]:
             fid[p] = float(info["params"][p])
         else:
             for q in info["likelihood"].all_params:
                 if q.name == p:
                     fid[p] = float(q.value); break
+
+    if desi_canonical_priors:
+        overrides = _DESI_CANONICAL_CENTERS.get(tracer, {})
+        for p, val in overrides.items():
+            if p in fid:
+                fid[p] = float(val)
 
     prior_widths = {"b1": 1.0, "dbeta": 0.5, "sigmas": 4.0, "sigmapar": 4.0, "sigmaper": 3.0}
     sigma_hard_max = {"sigmas": 8.0, "sigmapar": 12.0, "sigmaper": 8.0}
@@ -177,20 +206,26 @@ def make_log_prob(info, native, bundle, apmode,
             if q in d and not (alpha_low < d[q] < alpha_high):
                 return -np.inf
         for p, hi in sigma_hard_max.items():
-            if not (0.1 < d[p] < hi): return -np.inf
-        if not (0.2 < d["b1"] < 5.0): return -np.inf
-        if not (-1.5 < d["dbeta"] < 1.5): return -np.inf
+            if p in d and not (0.1 < d[p] < hi): return -np.inf
+        if "b1" in d and not (0.2 < d["b1"] < 5.0): return -np.inf
+        if "dbeta" in d and not (-1.5 < d["dbeta"] < 1.5): return -np.inf
         lp = 0.0
         for p, w in prior_widths.items():
             if p in d:
                 lp += -0.5 * ((d[p] - fid[p]) / w) ** 2
         return lp
 
+    # All nuisances we want to pin to fid when frozen (or pass-through when sampled).
+    all_nuisances = ["dbeta", "sigmas", "sigmapar", "sigmaper"]
+
     def log_prob(theta):
         lp = log_prior(theta)
         if not np.isfinite(lp):
             return -np.inf
         params = {**info["params"]}
+        for nu in all_nuisances:
+            if nu not in params and nu in fid:
+                params[nu] = fid[nu]
         for name, val in zip(param_names, theta):
             params[name] = float(val)
         try:
@@ -207,11 +242,21 @@ def make_log_prob(info, native, bundle, apmode,
 
 
 def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
-        alpha_low, alpha_high):
-    print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode}, NATIVE ξ-theory)\n{'=' * 70}", flush=True)
+        alpha_low, alpha_high, desi_canonical_priors=False,
+        freeze_nuisance=False, bb_basis="default"):
+    tags = []
+    if desi_canonical_priors: tags.append("DESI canonical Σ priors")
+    if freeze_nuisance: tags.append("Σ/σ_s/dbeta FROZEN to fid")
+    if bb_basis != "default": tags.append(f"BB={bb_basis}")
+    tag = f" [{', '.join(tags)}]" if tags else ""
+    print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode}, NATIVE ξ-theory){tag}\n{'=' * 70}", flush=True)
     info, native, bundle = _build_native_theory(tracer, apmode)
     log_prob, param_names, fid = make_log_prob(
-        info, native, bundle, apmode, alpha_low=alpha_low, alpha_high=alpha_high)
+        info, native, bundle, apmode, tracer,
+        alpha_low=alpha_low, alpha_high=alpha_high,
+        desi_canonical_priors=desi_canonical_priors,
+        freeze_nuisance=freeze_nuisance,
+        bb_basis=bb_basis)
     ndim = len(param_names)
     rng = np.random.default_rng(seed)
     p0 = np.empty((nwalkers, ndim), dtype=np.float64)
@@ -274,6 +319,12 @@ def run(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
         "ratio_DH": _r(sig_DH, desi_DH), "ratio_DM": _r(sig_DM, desi_DM), "ratio_DV": _r(sig_DV, desi_DV),
     }
     suffix = "" if apmode == "qparqper" else f"_{apmode}"
+    if desi_canonical_priors:
+        suffix += "_desipriors"
+    if freeze_nuisance:
+        suffix += "_frozen"
+    if bb_basis != "default":
+        suffix += f"_bb{bb_basis}"
     out_path = _OUT_DIR / f"{tracer}_dr1_native_theory{suffix}.json"
     out_path.write_text(json.dumps(result, indent=2))
     return result
@@ -289,11 +340,20 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--alpha-low", type=float, default=0.8)
     ap.add_argument("--alpha-high", type=float, default=1.2)
+    ap.add_argument("--desi-canonical-priors", action="store_true",
+                    help="Override Σ_par,Σ_⊥,σ_s prior centers to Adame+24 canonical values")
+    ap.add_argument("--freeze-nuisance", action="store_true",
+                    help="Pin Σ_par,Σ_⊥,σ_s,dbeta to fid (only q,b1 are sampled)")
+    ap.add_argument("--bb-basis", choices=["default", "desi_adame24"], default="default",
+                    help="BB basis: 'default' (powers=-3,-2,-1,0,1) or 'desi_adame24' (powers=0,2)")
     args = ap.parse_args()
     for t in args.tracers:
         try:
             run(t, args.apmode, args.nwalkers, args.max_iterations,
-                args.burnin_frac, args.seed, args.alpha_low, args.alpha_high)
+                args.burnin_frac, args.seed, args.alpha_low, args.alpha_high,
+                desi_canonical_priors=args.desi_canonical_priors,
+                freeze_nuisance=args.freeze_nuisance,
+                bb_basis=args.bb_basis)
         except Exception as e:
             print(f"[{t}] FAILED: {type(e).__name__}: {e}")
 

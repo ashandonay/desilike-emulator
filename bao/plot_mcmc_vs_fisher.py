@@ -30,7 +30,7 @@ from util import TRACER_CONFIGS
 _DR1_AREA = 7500.0
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
 _MCMC_DIR = Path(__file__).resolve().parent / "mcmc_results"
-_DESI_FID = {"Om": 0.3153, "hrdrag": 99.53}
+_DESI_FID = {"Om": 0.3152, "hrdrag": 99.08}  # match mcmc_bao.py default cosmology so Fisher and MCMC use the same fid
 
 
 def _load_dr1_ntracers():
@@ -101,12 +101,11 @@ def main():
             continue
         # Fisher
         fish = _fisher_sigmas(tb, N)
-        # MCMC. JSON files were written before the prep_covar unit fix, so
-        # sigma_*_over_rd_mcmc values were computed with the dimensionally
-        # mixed `template.DH_fid / info["rd"]` form and are deflated by 1/h.
-        # Multiply by 1/h_fid to get the correct dimensionless σ(DH/rd).
-        # (Re-running the chains would also work, but this is exact.)
-        _h_corr = 1.0 / pc._H_FID
+        # MCMC: JSONs were re-generated post-§31g.duodecimus z-factor/unit
+        # fix, so sigma_*_over_rd_mcmc values are already dimensionally
+        # correct (use mcmc_bao.py's DH_fid_over_rd directly). No 1/h
+        # correction needed.
+        _h_corr = 1.0
         mcmc_path = _MCMC_DIR / f"{tb}_dr1.json"
         if not mcmc_path.exists():
             print(f"[skip] {tb}: missing {mcmc_path}")

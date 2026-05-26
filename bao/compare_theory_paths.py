@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 warnings.filterwarnings("ignore")
 
 import prep_covar  # noqa: E402
-from util import TRACER_CONFIGS  # noqa: E402
+from util import TRACER_CONFIGS, dr1_ntracers  # noqa: E402
 from cosmoprimo.fftlog import PowerToCorrelation  # noqa: E402
 from desilike.observables.galaxy_clustering import (  # noqa: E402
     TracerPowerSpectrumMultipolesObservable,
@@ -70,7 +70,7 @@ def main():
         {**prep_covar.PARAM_DEFAULTS, "Om": 0.3153, "hrdrag": 99.53})
 
     info = prep_covar.build_bao_likelihood(
-        N_tracers=300_000, theta_cosmo=theta, hrdrag=hrdrag_eff,
+        N_tracers=dr1_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag_eff,
         tracer_bin=tracer, zrange=cfg["zrange"], z_eff=z_eff,
         area=_DR1_AREA, apmode="qiso",
     )

@@ -1,2 +1,5 @@
 *.png
 *.csv
+__pycache__/
+*.log
+notebooks/

@@ -156,6 +156,31 @@ def get_tracer_config(tracer_bin: str) -> Dict[str, object]:
     return cfg
 
 
+_DR1_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1"}
+_DR1_NTRACERS_CACHE: Dict[str, float] = {}
+
+
+def dr1_ntracers(tracer_bin: str) -> float:
+    """Return DR1 'passed' N_tracers for ``tracer_bin`` from desi_data.csv.
+
+    The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
+    pipeline configuration that compares predictions against DR1 bundle data
+    must use the actual DR1 sample size for that tracer — not a generic
+    default. Using a mismatched N silently shifts the HOD-weighted b1 and
+    invalidates downstream b1/f_AB calibration.
+    """
+    if not _DR1_NTRACERS_CACHE:
+        import pandas as pd
+        path = Path.home() / "data" / "desi" / "bao_dr1" / "desi_data.csv"
+        df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
+        _DR1_NTRACERS_CACHE.update({r["tracer"]: float(r["passed"]) for _, r in df.iterrows()})
+    key = _DR1_NAME_MAP.get(tracer_bin, tracer_bin)
+    if key not in _DR1_NTRACERS_CACHE:
+        raise KeyError(f"No DR1 N_tracers for {tracer_bin!r} (looked up as {key!r}). "
+                       f"Available: {sorted(_DR1_NTRACERS_CACHE)}")
+    return _DR1_NTRACERS_CACHE[key]
+
+
 def build_model(analysis: str, architecture: str, **kwargs) -> nn.Module:
     """Instantiate a model from ARCHITECTURE_REGISTRY using the YAML ``architecture`` field."""
     if analysis not in ARCHITECTURE_REGISTRY:
