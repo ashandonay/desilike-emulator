@@ -230,9 +230,13 @@ def _bundle_fisher_sigmas(tracer):
     cov = 0.5 * (bundle["cov"] + bundle["cov"].T)
     C_inv = np.linalg.inv(cov)
 
-    # Parameter set: q's first, then nuisances.
+    # Parameter set: q's first, then nuisances. For qiso (sparse tracers,
+    # ξ₀-only) drop dbeta — matches desilike's auto-fix when ells=(0,) and
+    # DESI Adame+24's sparse-tracer analysis. RSD info isn't in ξ₀ data, so
+    # keeping dbeta free injects a spurious correlation that biases the
+    # Schur-marginalized qiso uncertainty.
     nl_params = (
-        ("qiso", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper")
+        ("qiso", "b1", "sigmas", "sigmapar", "sigmaper")
         if apmode == "qiso"
         else ("qpar", "qper", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper")
     )
@@ -302,6 +306,158 @@ def _bundle_fisher_sigmas(tracer):
     return {"DH_over_rs": sig_DH, "DM_over_rs": sig_DM, "DV_over_rs": sig_DV,
             "DH_over_rd_fid": DH, "DM_over_rd_fid": DM, "DV_over_rd_fid": DV,
             "apmode": apmode, "cov_q": cov_q}
+
+
+# ---------------------------------------------------------------------------
+# Chi² profile curvature — captures nonlinearity in q that Fisher linearization
+# misses. Computes chi²(q) scan with nuisances + BB Schur-marginalized at each
+# q point, fits a quadratic at the minimum.
+# ---------------------------------------------------------------------------
+def _profile_sigmas(tracer):
+    cfg = TRACER_CONFIGS[tracer]
+    sample = {**prep_covar.PARAM_DEFAULTS, **_FID}
+    theta, hrdrag = prep_covar._to_bao_cosmo_params(sample)
+    apmode = "qiso" if tracer in ("BGS", "QSO") else "qparqper"
+    info = prep_covar.build_bao_likelihood(
+        N_tracers=_get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
+        tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
+        area=_AREA, apmode=apmode,
+    )
+    info["likelihood"](**info["params"])
+    tmpl = info["template"]
+    bundle = load_bundle(tracer)
+    native = DampedBAOWigglesTracerCorrelationFunctionMultipoles(
+        s=bundle["th_s"][0], ells=tuple(bundle["th_ells"]),
+        template=tmpl, mode="recsym",
+        smoothing_radius=float(cfg["smoothing_scale"]), model="fog-damping",
+    )
+    base = {k: float(info["params"][k]) for k in ("b1", "sigmapar", "sigmaper", "sigmas") if k in info["params"]}
+    bb_zero = {p.name: 0.0 for p in native.all_params if (p.name.startswith("al") or p.name.startswith("bl"))}
+    base.update(bb_zero)
+    native_pnames = {p.name for p in native.all_params}
+    fid_full = {"qpar": 1.0, "qper": 1.0, "qiso": 1.0, "dbeta": 1.0, **base}
+
+    def predict(overrides):
+        params = {**fid_full, **overrides}
+        p_filt = {k: v for k, v in params.items() if k in native_pnames}
+        native(**p_filt)
+        xi = np.asarray(native.corr)
+        xi_flat = np.concatenate([xi[i] for i in range(xi.shape[0])])
+        return bundle["W"] @ xi_flat
+
+    data = np.concatenate(bundle["obs_data"])
+    n_data = data.size
+    cov_sym = 0.5 * (bundle["cov"] + bundle["cov"].T)
+    C_inv = np.linalg.inv(cov_sym)
+    BB = bb_basis(bundle["obs_ells"], bundle["obs_s"], n_data, powers=(0, 2))
+    A_bb = BB.T @ C_inv @ BB
+
+    # Nuisance set matches Fisher's nl_params (minus q) — Schur-marg at each q point.
+    nuis = (
+        ["b1", "sigmas", "sigmapar", "sigmaper"]
+        if apmode == "qiso"
+        else ["b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
+    )
+    steps = {"b1": 0.05, "dbeta": 0.05, "sigmas": 0.05, "sigmapar": 0.1, "sigmaper": 0.1}
+    prior_idx = {"sigmas": 1 / 4.0, "sigmapar": 1 / 4.0, "sigmaper": 1 / 4.0}
+
+    def chi2_marg_at_q(q_overrides):
+        """chi² with (nuisances + BB) Schur-marg at this q point.
+
+        Computes Jacobian of nuisances ONLY at this q (q held fixed), then
+        analytically marginalizes the nuisance + BB linear sub-problem.
+        """
+        # Local Jacobian of nuisances at this q
+        J_n = np.zeros((n_data, len(nuis)))
+        for i, p in enumerate(nuis):
+            J_n[:, i] = (predict({**q_overrides, p: fid_full[p] + steps[p]})
+                         - predict({**q_overrides, p: fid_full[p] - steps[p]})) / (2 * steps[p])
+        # Residual at fid nuisances
+        r = data - predict(q_overrides)
+        # Stack nuisance + BB and Schur-marginalize
+        M = np.concatenate([J_n, BB], axis=1)
+        A_full = M.T @ C_inv @ M
+        # Σ priors on the nuisance block diagonal
+        for i, p in enumerate(nuis):
+            if p in prior_idx:
+                A_full[i, i] += prior_idx[p]
+        b_full = M.T @ C_inv @ r
+        chi2_full = float(r @ C_inv @ r)
+        chi2_m = chi2_full - float(b_full @ np.linalg.solve(A_full, b_full))
+        return chi2_m
+
+    DH = float(tmpl.DH_over_rd_fid)
+    DM = float(tmpl.DM_over_rd_fid)
+    DV = float(tmpl.DV_over_rd_fid)
+
+    if apmode == "qiso":
+        # Sparse tracer likelihood is often asymmetric (ξ₀-only data with sharp
+        # BAO feature) — local parabola underestimates the true posterior width.
+        # Use Δχ²=1 half-width: find q's where chi² = chi²_min + 1, take half
+        # the interval. This is the canonical "1σ profile-likelihood" σ and
+        # accounts for tail asymmetry the way a marginal-posterior MCMC does.
+        qs = np.linspace(0.90, 1.10, 41)
+        c2 = np.array([chi2_marg_at_q({"qiso": float(q)}) for q in qs])
+        c2 -= c2.min()
+        imin = int(np.argmin(c2))
+        # Interpolate Δχ²=1 crossings on each side
+        def _cross(q_arr, c_arr, idx_start, direction):
+            if direction == "left":
+                rng = range(idx_start, -1, -1)
+            else:
+                rng = range(idx_start, len(q_arr))
+            for i in rng:
+                if c_arr[i] >= 1.0:
+                    j = i + (1 if direction == "left" else -1)
+                    if 0 <= j < len(q_arr):
+                        t = (1.0 - c_arr[j]) / (c_arr[i] - c_arr[j])
+                        return q_arr[j] + t * (q_arr[i] - q_arr[j])
+                    return q_arr[i]
+            return float("nan")
+        q_lo = _cross(qs, c2, imin, "left")
+        q_hi = _cross(qs, c2, imin, "right")
+        if not (np.isfinite(q_lo) and np.isfinite(q_hi)):
+            # Fall back to parabolic fit
+            lo, hi = max(0, imin - 2), min(len(qs), imin + 3)
+            p = np.polyfit(qs[lo:hi], c2[lo:hi], 2)
+            sig_q = float(1.0 / np.sqrt(2.0 * p[0]))
+        else:
+            sig_q = 0.5 * (q_hi - q_lo)
+        sig_DV = sig_q * DV
+        sig_DH = sig_q * DH; sig_DM = sig_q * DM
+    else:
+        # 2D scan: 7×7 grid covers ~±2σ in each direction
+        qpars = np.linspace(0.96, 1.04, 7)
+        qpers = np.linspace(0.96, 1.04, 7)
+        c2 = np.zeros((len(qpars), len(qpers)))
+        for i, qp in enumerate(qpars):
+            for j, qq in enumerate(qpers):
+                c2[i, j] = chi2_marg_at_q({"qpar": float(qp), "qper": float(qq)})
+        # Fit 2D quadratic: chi² = a*x² + b*y² + c*x*y + ... around minimum
+        # Use least-squares on the full grid with quadratic basis.
+        i_min, j_min = np.unravel_index(np.argmin(c2), c2.shape)
+        # Build local 3×3 stencil for Hessian
+        i0 = max(1, min(len(qpars) - 2, i_min))
+        j0 = max(1, min(len(qpers) - 2, j_min))
+        x = qpars[i0 - 1:i0 + 2]; y = qpers[j0 - 1:j0 + 2]
+        Z = c2[i0 - 1:i0 + 2, j0 - 1:j0 + 2]
+        # Hessian by finite differences at (i0, j0)
+        hxx = (Z[2, 1] - 2 * Z[1, 1] + Z[0, 1]) / (x[1] - x[0]) ** 2
+        hyy = (Z[1, 2] - 2 * Z[1, 1] + Z[1, 0]) / (y[1] - y[0]) ** 2
+        hxy = (Z[2, 2] - Z[2, 0] - Z[0, 2] + Z[0, 0]) / (4.0 * (x[1] - x[0]) * (y[1] - y[0]))
+        # chi² Hessian = 2 * F_q (since chi² = -2 log L)
+        H = 0.5 * np.array([[hxx, hxy], [hxy, hyy]])
+        cov_q = np.linalg.inv(H)
+        sig_qpar = float(np.sqrt(cov_q[0, 0]))
+        sig_qper = float(np.sqrt(cov_q[1, 1]))
+        sig_DH = sig_qpar * DH
+        sig_DM = sig_qper * DM
+        var_lnDV = (cov_q[0, 0] / 9.0) + (4.0 * cov_q[1, 1] / 9.0) + (4.0 * cov_q[0, 1] / 9.0)
+        sig_DV = float(np.sqrt(max(var_lnDV, 0.0))) * DV
+
+    return {"DH_over_rs": sig_DH, "DM_over_rs": sig_DM, "DV_over_rs": sig_DV,
+            "DH_over_rd_fid": DH, "DM_over_rd_fid": DM, "DV_over_rd_fid": DV,
+            "apmode": apmode}
 
 
 # ---------------------------------------------------------------------------

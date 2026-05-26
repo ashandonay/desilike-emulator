@@ -176,7 +176,13 @@ def make_log_prob(info, native, bundle, apmode, tracer,
         else:
             param_names = ["qpar", "qper", "b1"]
     elif apmode == "qiso":
-        param_names = ["qiso", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
+        # ξ₀-only data cannot constrain RSD. Match desilike's auto-fix
+        # for ells=(0,) (bao.py:85): drop dbeta from the parameter space
+        # entirely. Otherwise its weak window-induced coupling to ξ₀ inflates
+        # qiso's Schur-marginalized uncertainty in the Fisher comparison
+        # without changing the true posterior on qiso. DESI Adame+24 takes
+        # the same approach for sparse/qiso fits.
+        param_names = ["qiso", "b1", "sigmas", "sigmapar", "sigmaper"]
     else:
         param_names = ["qpar", "qper", "b1", "dbeta", "sigmas", "sigmapar", "sigmaper"]
 
@@ -199,12 +205,16 @@ def make_log_prob(info, native, bundle, apmode, tracer,
 
     # Prior config aligned with Fisher (`_bundle_fisher_sigmas`) + DESI Adame+24:
     #   - Σ_par, Σ_⊥, σ_s: Gaussian σ=2 about fid (DESI Adame+24 §4.2.1 canonical)
-    #   - b1, dbeta: NO informative prior (only loose hard bounds for sampler safety)
+    #   - b1, dbeta: NO informative prior; hard bounds set wide enough to be
+    #     fully inactive at >10σ from any posterior in this analysis.
     #   - q: flat in [alpha_low, alpha_high]
-    # Hard bounds widened to be inactive at the 5σ level for the Σ params,
-    # matching Fisher's effectively-unbounded Gaussian-prior treatment.
+    # Goal: MCMC posterior σ should differ from Fisher σ only via non-Gaussianity
+    # of the likelihood, NOT via the prior shape. So bounds are sized to never
+    # truncate the posterior tails. Earlier dbeta bound [-5, 5] was active for
+    # sparse tracers (qiso, ξ₀-only) where the data weakly constrains RSD;
+    # widened to [-50, 50] makes it inactive while keeping the sampler stable.
     prior_widths = {"sigmas": 2.0, "sigmapar": 2.0, "sigmaper": 2.0}
-    sigma_hard_max = {"sigmas": 20.0, "sigmapar": 25.0, "sigmaper": 20.0}
+    sigma_hard_max = {"sigmas": 50.0, "sigmapar": 50.0, "sigmaper": 50.0}
 
     def log_prior(theta):
         d = dict(zip(param_names, theta))
@@ -212,9 +222,11 @@ def make_log_prob(info, native, bundle, apmode, tracer,
             if q in d and not (alpha_low < d[q] < alpha_high):
                 return -np.inf
         for p, hi in sigma_hard_max.items():
-            if p in d and not (0.01 < d[p] < hi): return -np.inf
-        if "b1" in d and not (0.05 < d["b1"] < 10.0): return -np.inf
-        if "dbeta" in d and not (-5.0 < d["dbeta"] < 5.0): return -np.inf
+            # Σ positivity is a physical requirement (negative damping = nonsense);
+            # 1e-3 floor is for numerical safety, never active in practice.
+            if p in d and not (1e-3 < d[p] < hi): return -np.inf
+        if "b1" in d and not (0.05 < d["b1"] < 20.0): return -np.inf
+        if "dbeta" in d and not (-50.0 < d["dbeta"] < 50.0): return -np.inf
         lp = 0.0
         for p, w in prior_widths.items():
             if p in d:
