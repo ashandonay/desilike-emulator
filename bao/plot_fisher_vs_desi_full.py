@@ -313,7 +313,13 @@ def _bundle_fisher_sigmas(tracer):
 # misses. Computes chi²(q) scan with nuisances + BB Schur-marginalized at each
 # q point, fits a quadratic at the minimum.
 # ---------------------------------------------------------------------------
-def _profile_sigmas(tracer):
+def _profile_sigmas(tracer, cov_mode="bundle"):
+    """Chi² profile σ. cov_mode:
+       'bundle'  — full bundle RascalC ξ-cov (default; matches MCMC).
+       'diag'    — diagonal-only bundle cov (no window/sample-variance
+                   off-diagonals). Proxy for 'analytic Gaussian-only ξ-cov'
+                   to isolate the cov-shape effect from the linearization
+                   effect."""
     cfg = TRACER_CONFIGS[tracer]
     sample = {**prep_covar.PARAM_DEFAULTS, **_FID}
     theta, hrdrag = prep_covar._to_bao_cosmo_params(sample)
@@ -348,6 +354,8 @@ def _profile_sigmas(tracer):
     data = np.concatenate(bundle["obs_data"])
     n_data = data.size
     cov_sym = 0.5 * (bundle["cov"] + bundle["cov"].T)
+    if cov_mode == "diag":
+        cov_sym = np.diag(np.diag(cov_sym))
     C_inv = np.linalg.inv(cov_sym)
     BB = bb_basis(bundle["obs_ells"], bundle["obs_s"], n_data, powers=(0, 2))
     A_bb = BB.T @ C_inv @ BB
