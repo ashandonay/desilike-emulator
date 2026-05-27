@@ -180,9 +180,14 @@ def _prod_fisher_sigmas(tracer):
 # ---------------------------------------------------------------------------
 # Bundle-cov Fisher (native ξ-theory + DESI Σ priors + DESI BB Schur-marg)
 # ---------------------------------------------------------------------------
-def _bundle_fisher_sigmas(tracer):
+def _bundle_fisher_sigmas(tracer, cov_override=None):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from bundle-cov Fisher
-    using native ξ-theory."""
+    using native ξ-theory.
+
+    cov_override: optional ndarray to substitute for bundle['cov']. Used by
+    diagnostics that band/zero portions of the bundle cov to probe which
+    off-diagonal structure is driving σ_q. Must match bundle data-vector shape.
+    """
     cfg = TRACER_CONFIGS[tracer]
     sample = {**prep_covar.PARAM_DEFAULTS, **_FID}
     theta, hrdrag = prep_covar._to_bao_cosmo_params(sample)
@@ -222,7 +227,8 @@ def _bundle_fisher_sigmas(tracer):
         xi_flat = np.concatenate([xi[i] for i in range(xi.shape[0])])
         return bundle["W"] @ xi_flat
 
-    cov = 0.5 * (bundle["cov"] + bundle["cov"].T)
+    cov_src = bundle["cov"] if cov_override is None else cov_override
+    cov = 0.5 * (cov_src + cov_src.T)
     C_inv = np.linalg.inv(cov)
 
     # Parameter set: q's first, then nuisances. For qiso (sparse tracers,
