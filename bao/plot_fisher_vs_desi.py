@@ -82,8 +82,25 @@ def _load_bundle_mcmc(tracer):
     }
 
 
+_Q_KEY = {"DH_over_rs": "DH", "DM_over_rs": "DM", "DV_over_rs": "DV"}
+
+
+def _load_chain_noise():
+    p = _HERE / "seed_sweep" / "sigma_of_sigma.json"
+    if not p.exists():
+        return {}
+    raw = json.loads(p.read_text())
+    out = {}
+    for tracer, by_cov in raw.items():
+        out[tracer] = {}
+        for cov, by_q in by_cov.items():
+            out[tracer][cov] = {q: (entry["mean"], entry["std"]) for q, entry in by_q.items()}
+    return out
+
+
 def _gather():
     out = {}
+    noise = _load_chain_noise()
     for t in _TRACERS:
         print(f"== {t} ==", flush=True)
         prod = _prod_fisher_sigmas(t)
@@ -92,16 +109,36 @@ def _gather():
         prod_mcmc = _load_prod_mcmc(t)
         bundle_mcmc = _load_bundle_mcmc(t)
         is_sparse = bundle.get("apmode") == "qiso"
+
+        # If seed-sweep results exist, replace MCMC σ with the seed-mean
+        # and collect per-quantity σ-of-σ for error bars.
+        prod_mcmc_err = {q: 0.0 for q, _, _ in _QUANTITIES}
+        bundle_mcmc_err = {q: 0.0 for q, _, _ in _QUANTITIES}
+        for q, _, _ in _QUANTITIES:
+            qk = _Q_KEY[q]
+            if t in noise and "prod" in noise[t] and qk in noise[t]["prod"]:
+                mu, sd = noise[t]["prod"][qk]
+                prod_mcmc[q] = mu
+                prod_mcmc_err[q] = sd
+            if t in noise and "bundle" in noise[t] and qk in noise[t]["bundle"]:
+                mu, sd = noise[t]["bundle"][qk]
+                bundle_mcmc[q] = mu
+                bundle_mcmc_err[q] = sd
+
         if is_sparse:
-            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc):
+            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc,
+                        prod_mcmc_err, bundle_mcmc_err):
                 src["DH_over_rs"] = float("nan")
                 src["DM_over_rs"] = float("nan")
         else:
-            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc):
+            for src in (recon, prod, bundle, prod_mcmc, bundle_mcmc,
+                        prod_mcmc_err, bundle_mcmc_err):
                 src["DV_over_rs"] = float("nan")
 
         out[t] = {"prod": prod, "bundle": bundle, "recon": recon,
                   "prod_mcmc": prod_mcmc, "bundle_mcmc": bundle_mcmc,
+                  "prod_mcmc_err": prod_mcmc_err,
+                  "bundle_mcmc_err": bundle_mcmc_err,
                   "sparse": is_sparse}
         for src_name, src in [("prod", prod), ("bundle", bundle), ("recon", recon),
                               ("prod_mcmc", prod_mcmc), ("bundle_mcmc", bundle_mcmc)]:
@@ -142,28 +179,49 @@ def _plot(data, out_path):
 
         sources = {"recon": [], "prod": [], "bundle": [], "prod_mcmc": [],
                    "bundle_mcmc": []}
+        errors = {"prod_mcmc": [], "bundle_mcmc": []}
         for i, t in enumerate(tracers):
             for s in sources:
                 v = data[t][s][q]
                 if np.isfinite(v):
                     sources[s].append((i, v))
+            for s in errors:
+                err_key = s + "_err"
+                if err_key in data[t]:
+                    e = data[t][err_key][q]
+                    if np.isfinite(e):
+                        errors[s].append((i, e))
 
         def _xy(name):
             if not sources[name]: return [], []
             xs, ys = zip(*sources[name])
             return list(xs), list(ys)
 
+        def _err(name):
+            if not errors[name]: return []
+            return [e for _, e in errors[name]]
+
         c_ana, c_bun = "tab:blue", "tab:orange"
         px, py = _xy("prod")
         ax.scatter(px, py, marker="o", s=70, color=c_ana,
                    edgecolor="black", linewidth=0.5, zorder=4)
         pmx, pmy = _xy("prod_mcmc")
+        pme = _err("prod_mcmc")
+        if pme:
+            ax.errorbar(pmx, pmy, yerr=pme, fmt="none",
+                        ecolor=c_ana, elinewidth=1.5, capsize=4, capthick=1.5,
+                        zorder=3)
         ax.scatter(pmx, pmy, marker="o", s=130, facecolors="none",
                    edgecolors=c_ana, linewidths=1.8, zorder=4)
         bx, by = _xy("bundle")
         ax.scatter(bx, by, marker="s", s=70, color=c_bun,
                    edgecolor="black", linewidth=0.5, zorder=4)
         bmx, bmy = _xy("bundle_mcmc")
+        bme = _err("bundle_mcmc")
+        if bme:
+            ax.errorbar(bmx, bmy, yerr=bme, fmt="none",
+                        ecolor=c_bun, elinewidth=1.5, capsize=4, capthick=1.5,
+                        zorder=3)
         ax.scatter(bmx, bmy, marker="s", s=130, facecolors="none",
                    edgecolors=c_bun, linewidths=1.8, zorder=4)
         dx, dy = _xy("recon")

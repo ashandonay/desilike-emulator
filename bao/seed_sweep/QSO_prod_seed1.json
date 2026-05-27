@@ -1,0 +1,22 @@
+{
+  "tracer_bin": "QSO",
+  "dataset": "dr1",
+  "z_eff": 1.484,
+  "n_samples_post_burn": 268800,
+  "mean_qpar": 1.0070771624552017,
+  "mean_qper": 1.0016665124086588,
+  "sigma_qpar": 0.054041145648123755,
+  "sigma_qper": 0.034970756789406275,
+  "sigma_DH_over_rd_mcmc": 0.696017645319952,
+  "sigma_DM_over_rd_mcmc": 1.0587548207332054,
+  "sigma_DV_over_rd_mcmc": 0.5820310772153182,
+  "sigma_DH_over_rd_data": NaN,
+  "sigma_DM_over_rd_data": NaN,
+  "sigma_DV_over_rd_data": 0.6686815318221373,
+  "alpha_prior": [
+    0.8,
+    1.2
+  ],
+  "DH_fid_over_rd": 12.8794021106049,
+  "DM_fid_over_rd": 30.27543347457481
+}

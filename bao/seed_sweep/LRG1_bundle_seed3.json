@@ -1,0 +1,14 @@
+{
+  "tracer": "LRG1",
+  "apmode": "qparqper",
+  "source": "bundle_native_xi_theory",
+  "sig_DH": 0.6201325613195351,
+  "sig_DM": 0.2562416982224528,
+  "sig_DV": 0.1525141310444459,
+  "desi_DH": 0.6107116799276071,
+  "desi_DM": 0.2519250364691846,
+  "desi_DV": NaN,
+  "ratio_DH": 1.0154260704380906,
+  "ratio_DM": 1.0171347072675572,
+  "ratio_DV": NaN
+}

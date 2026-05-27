@@ -1,0 +1,14 @@
+{
+  "tracer": "BGS",
+  "apmode": "qiso",
+  "source": "bundle_native_xi_theory",
+  "sig_DH": 0.561019053676306,
+  "sig_DM": 0.17969296148782907,
+  "sig_DV": 0.1748318634786674,
+  "desi_DH": NaN,
+  "desi_DM": NaN,
+  "desi_DV": 0.1507417808704673,
+  "ratio_DH": NaN,
+  "ratio_DM": NaN,
+  "ratio_DV": 1.1598102561153947
+}
