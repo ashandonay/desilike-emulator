@@ -1,36 +1,31 @@
-"""Unified DR1 σ comparison: production Fisher vs bundle-cov Fisher vs DESI references.
+"""DR1 σ source helpers — library module, no main entry point.
 
-Produces one table with four σ columns per (tracer, quantity):
+Provides per-tracer σ(DH/rd, DM/rd, DV/rd) from each of the sources used
+in the comparison plot (plot_fisher_vs_desi.py):
 
-  σ_prod   — production Fisher (analytic cov + Σ priors), current hod.yaml,
-             NO substitutions. Reuses prep_covar.run_fisher.
+  _prod_fisher_sigmas(tracer)   — production Fisher (analytic cov + Σ priors,
+                                  current hod.yaml). Reuses prep_covar.run_fisher.
 
-  σ_bundle — Fisher with DESI bundle cov + W substituted, NATIVE ξ-theory
-             (DampedBAOWigglesTracerCorrelationFunctionMultipoles, no FFTLog),
-             DESI Σ priors (N(loc=pipeline_fid, σ=2) per Adame+24 §4.2.1),
-             DESI {s⁰, s²} BB Schur-marginalized.
+  _bundle_fisher_sigmas(tracer) — Fisher with DESI bundle cov + W substituted,
+                                  NATIVE ξ-theory (no FFTLog), DESI Σ priors
+                                  (N(loc=pipeline_fid, σ=2) per Adame+24 §4.2.1),
+                                  DESI {s⁰, s²} BB Schur-marginalized.
 
-  σ_csv    — DESI DR1 published σ from ~/data/desi/bao_dr1/desi_data.csv
-             (cosmology-style; uses DESI's own fid (D/rd)).
+  _read_mcmc_prod(tracer)       — cached production MCMC posterior σ.
+  _read_mcmc_bundle(tracer)     — cached bundle-cov MCMC posterior σ.
 
-  σ_recon  — DESI DR1 σ_q from bao-recon stat-only .h5 files, converted to
-             σ(D/rd) using OUR pipeline's fiducial (D/rd) values. This is
-             the cleanest per-tracer post-marg α-cov reference.
+  _recon_sigmas(tracer, fid)    — DESI DR1 σ_q from bao-recon stat-only .h5
+                                  converted to σ(D/rd) using OUR pipeline's
+                                  fiducial (D/rd) (post-marg α-cov reference).
 
-Output:
-  bao/fisher_vs_desi_comparison_dr1.csv   (one row per (tracer, quantity))
-  bao/fisher_vs_desi_comparison_dr1.png   (scatter plot per tracer)
-
-No cached data is used.
+  _csv_sigma(df, tracer, q)     — DESI DR1 published σ from desi_data.csv.
 """
 from __future__ import annotations
 import os, sys, warnings
-os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 from pathlib import Path
 
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -331,104 +326,3 @@ def _recon_sigmas(tracer, fid):
             "DV_over_rs": float(np.sqrt(max(var_lnDV, 0.0))) * DV}
 
 
-# ---------------------------------------------------------------------------
-# Main: assemble the table
-# ---------------------------------------------------------------------------
-def main():
-    df_csv = _read_desi_csv()
-    rows = []
-
-    for tracer in _TRACERS:
-        print(f"== {tracer} ==", flush=True)
-        prod = _prod_fisher_sigmas(tracer)
-        print(f"  σ_prod  DH={prod['DH_over_rs']:.4f} DM={prod['DM_over_rs']:.4f} DV={prod['DV_over_rs']:.4f}", flush=True)
-        bundle = _bundle_fisher_sigmas(tracer)
-        print(f"  σ_bundle DH={bundle['DH_over_rs']:.4f} DM={bundle['DM_over_rs']:.4f} DV={bundle['DV_over_rs']:.4f}  (apmode={bundle['apmode']})", flush=True)
-        mcmc_prod = _read_mcmc_prod(tracer)
-        print(f"  σ_mcmc_prod   DH={mcmc_prod['DH_over_rs']:.4f} DM={mcmc_prod['DM_over_rs']:.4f} DV={mcmc_prod['DV_over_rs']:.4f}", flush=True)
-        mcmc = _read_mcmc_bundle(tracer)
-        print(f"  σ_mcmc_bundle DH={mcmc['DH_over_rs']:.4f} DM={mcmc['DM_over_rs']:.4f} DV={mcmc['DV_over_rs']:.4f}", flush=True)
-        recon = _recon_sigmas(tracer, prod)
-        print(f"  σ_recon DH={recon['DH_over_rs']:.4f} DM={recon['DM_over_rs']:.4f} DV={recon['DV_over_rs']:.4f}", flush=True)
-
-        # Decide which quantities to report per tracer.
-        if tracer in ("BGS", "QSO"):
-            quantities = ["DV_over_rs"]
-        else:
-            quantities = ["DH_over_rs", "DM_over_rs"]
-
-        for q in quantities:
-            sigma_csv = _csv_sigma(df_csv, tracer, q)
-            row = {
-                "tracer": tracer, "quantity": q,
-                "sigma_prod_Fisher":   prod[q],
-                "sigma_prod_MCMC":     mcmc_prod[q],
-                "sigma_bundle_Fisher": bundle[q],
-                "sigma_bundle_MCMC":   mcmc[q],
-                "sigma_csv":    sigma_csv,
-                "sigma_recon":  recon[q],
-            }
-            ref = row["sigma_recon"] if (row["sigma_recon"] and row["sigma_recon"] > 0) else sigma_csv
-            # Ratios vs bao-recon (preferred per-tracer reference; falls back to csv if missing).
-            for k in ("sigma_prod_Fisher", "sigma_prod_MCMC", "sigma_bundle_Fisher", "sigma_bundle_MCMC"):
-                row[f"r_{k.replace('sigma_', '')}"] = (row[k] / ref) if (ref and ref > 0 and np.isfinite(row[k])) else float("nan")
-            rows.append(row)
-
-    out = pd.DataFrame(rows)
-    out_csv = Path(__file__).resolve().parent / "fisher_vs_desi_comparison_dr1.csv"
-    out.to_csv(out_csv, index=False, float_format="%.4f")
-    print(f"\nSaved {out_csv}")
-    print()
-    print(out.to_string(index=False))
-
-    # Plot
-    fig, ax = plt.subplots(figsize=(13, 7))
-    qcolor = {"DH_over_rs": "C0", "DM_over_rs": "C1", "DV_over_rs": "C2"}
-    qlabel = {"DH_over_rs": r"$\sigma(D_H/r_d)$",
-              "DM_over_rs": r"$\sigma(D_M/r_d)$",
-              "DV_over_rs": r"$\sigma(D_V/r_d)$"}
-    marker = {"sigma_prod_Fisher": "o", "sigma_prod_MCMC": "^",
-              "sigma_bundle_Fisher": "s", "sigma_bundle_MCMC": "v",
-              "sigma_csv": "x", "sigma_recon": "D"}
-    fill = {"sigma_prod_Fisher": "full", "sigma_prod_MCMC": "full",
-            "sigma_bundle_Fisher": "full", "sigma_bundle_MCMC": "full",
-            "sigma_csv": "none", "sigma_recon": "none"}
-    label_of = {"sigma_prod_Fisher": "Fisher (prod analytic cov)",
-                "sigma_prod_MCMC":   "MCMC (prod analytic cov)",
-                "sigma_bundle_Fisher": "Fisher (bundle cov + native θ)",
-                "sigma_bundle_MCMC":   "MCMC (bundle cov + native θ)",
-                "sigma_csv": "DESI desi_data.csv",
-                "sigma_recon": "DESI bao-recon file"}
-
-    xpos = {t: i for i, t in enumerate(_TRACERS)}
-    seen = set()
-    for _, row in out.iterrows():
-        x = xpos[row["tracer"]]
-        q = row["quantity"]
-        for col in ("sigma_prod_Fisher", "sigma_prod_MCMC", "sigma_bundle_Fisher", "sigma_bundle_MCMC", "sigma_csv", "sigma_recon"):
-            v = row[col]
-            if not np.isfinite(v):
-                continue
-            key = (col, q)
-            lab = f"{label_of[col]} {qlabel[q]}" if key not in seen else None
-            seen.add(key)
-            mfc = qcolor[q] if fill[col] == "full" else "none"
-            ax.scatter([x], [v], s=110, marker=marker[col],
-                       facecolors=mfc, edgecolors=qcolor[q],
-                       linewidths=1.8, label=lab, zorder=3)
-    ax.set_xticks(list(xpos.values()))
-    ax.set_xticklabels([t.replace("_", "+") for t in _TRACERS])
-    ax.set_ylabel(r"$\sigma$")
-    ax.set_xlabel("Tracer bin")
-    ax.set_title("BAO σ — production Fisher, bundle-cov Fisher (native θ), DESI csv, DESI bao-recon\n"
-                 f"Current hod.yaml lit-AB at Om={_FID['Om']}, hrdrag={_FID['hrdrag']}")
-    ax.legend(loc="upper left", fontsize=8, ncol=2)
-    ax.grid(alpha=0.3)
-    out_png = Path(__file__).resolve().parent / "fisher_vs_desi_comparison_dr1.png"
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=120, bbox_inches="tight")
-    print(f"Saved {out_png}")
-
-
-if __name__ == "__main__":
-    main()
