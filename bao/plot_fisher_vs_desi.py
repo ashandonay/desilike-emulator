@@ -202,50 +202,50 @@ def _plot(data, out_path):
             return [e for _, e in errors[name]]
 
         c_ana, c_bun = "tab:blue", "tab:orange"
+        dx, dy = _xy("recon")
+        ax.scatter(dx, dy, marker="x", s=40, color="black",
+                   linewidths=1.5, zorder=2)
         px, py = _xy("prod")
-        ax.scatter(px, py, marker="o", s=70, color=c_ana,
-                   edgecolor="black", linewidth=0.5, zorder=4)
+        ax.scatter(px, py, marker="o", s=20, color=c_ana,
+                   linewidth=0, zorder=4)
         pmx, pmy = _xy("prod_mcmc")
         pme = _err("prod_mcmc")
         if pme:
             ax.errorbar(pmx, pmy, yerr=pme, fmt="none",
                         ecolor=c_ana, elinewidth=1.5, capsize=4, capthick=1.5,
                         zorder=3)
-        ax.scatter(pmx, pmy, marker="o", s=130, facecolors="none",
-                   edgecolors=c_ana, linewidths=1.8, zorder=4)
+        ax.scatter(pmx, pmy, marker="^", s=20, color=c_ana,
+                   linewidth=0, zorder=4)
         bx, by = _xy("bundle")
-        ax.scatter(bx, by, marker="s", s=70, color=c_bun,
-                   edgecolor="black", linewidth=0.5, zorder=4)
+        ax.scatter(bx, by, marker="s", s=20, color=c_bun,
+                   linewidth=0, zorder=4)
         bmx, bmy = _xy("bundle_mcmc")
         bme = _err("bundle_mcmc")
         if bme:
             ax.errorbar(bmx, bmy, yerr=bme, fmt="none",
                         ecolor=c_bun, elinewidth=1.5, capsize=4, capthick=1.5,
                         zorder=3)
-        ax.scatter(bmx, bmy, marker="s", s=130, facecolors="none",
-                   edgecolors=c_bun, linewidths=1.8, zorder=4)
-        dx, dy = _xy("recon")
-        ax.scatter(dx, dy, marker="x", s=130, color="black",
-                   linewidths=2.8, zorder=10)
+        ax.scatter(bmx, bmy, marker="D", s=16, color=c_bun,
+                   linewidth=0, zorder=4)
 
         ax.set_ylabel(ylabel)
         ax.set_ylim(0.0, 0.9)
         ax.grid(alpha=0.25, linestyle="--", linewidth=0.7, axis="y")
 
     source_handles = [
-        Line2D([0], [0], marker="x", linestyle="", markersize=11,
-               markeredgewidth=2.8, color="black", label="DESI (bao-recon)"),
-        Line2D([0], [0], marker="o", linestyle="", markersize=8,
-               markerfacecolor="tab:blue", markeredgecolor="black",
+        Line2D([0], [0], marker="x", linestyle="", markersize=6,
+               markeredgewidth=1.5, color="black", label="DESI (bao-recon)"),
+        Line2D([0], [0], marker="o", linestyle="", markersize=7,
+               markerfacecolor="tab:blue", markeredgecolor="none",
                label="Fisher (analytic cov)"),
-        Line2D([0], [0], marker="o", linestyle="", markersize=11,
-               markerfacecolor="none", markeredgecolor="tab:blue", markeredgewidth=1.8,
+        Line2D([0], [0], marker="^", linestyle="", markersize=7,
+               markerfacecolor="tab:blue", markeredgecolor="none",
                label="MCMC (analytic cov)"),
-        Line2D([0], [0], marker="s", linestyle="", markersize=8,
-               markerfacecolor="tab:orange", markeredgecolor="black",
+        Line2D([0], [0], marker="s", linestyle="", markersize=7,
+               markerfacecolor="tab:orange", markeredgecolor="none",
                label="Fisher (bundle cov)"),
-        Line2D([0], [0], marker="s", linestyle="", markersize=11,
-               markerfacecolor="none", markeredgecolor="tab:orange", markeredgewidth=1.8,
+        Line2D([0], [0], marker="D", linestyle="", markersize=6,
+               markerfacecolor="tab:orange", markeredgecolor="none",
                label="MCMC (bundle cov)"),
     ]
     axes[0].legend(handles=source_handles, loc="upper left",
