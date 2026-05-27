@@ -130,12 +130,13 @@ def _plot(data, out_path):
     display = [_DISPLAY.get(t, t) for t in tracers]
     x = np.arange(len(tracers), dtype=float)
 
-    fig, ax = plt.subplots(figsize=(12, 6.5), constrained_layout=True)
-    for xi in x:
-        ax.axvline(xi, color="gray", alpha=0.25, linewidth=0.6)
+    fig, axes = plt.subplots(3, 1, figsize=(11, 11), sharex=True,
+                             constrained_layout=True)
 
-    for q, color, _ in _QUANTITIES:
-        # Build per-source lists
+    for ax, (q, _, ylabel) in zip(axes, _QUANTITIES):
+        for xi in x:
+            ax.axvline(xi, color="gray", alpha=0.25, linewidth=0.6)
+
         sources = {"recon": [], "prod": [], "bundle": [], "prod_mcmc": [],
                    "bundle_mcmc": []}
         for i, t in enumerate(tracers):
@@ -149,62 +150,51 @@ def _plot(data, out_path):
             xs, ys = zip(*sources[name])
             return list(xs), list(ys)
 
-        # DESI bao-recon (cross)
-        dx, dy = _xy("recon")
-        ax.scatter(dx, dy, marker="x", s=110, color=color,
-                   linewidths=2.5, zorder=5)
-        # Production Fisher (filled circle)
+        c_ana, c_bun = "tab:blue", "tab:orange"
         px, py = _xy("prod")
-        ax.scatter(px, py, marker="o", s=70, color=color,
+        ax.scatter(px, py, marker="o", s=70, color=c_ana,
                    edgecolor="black", linewidth=0.5, zorder=4)
-        # Production MCMC (open circle, slightly larger)
         pmx, pmy = _xy("prod_mcmc")
         ax.scatter(pmx, pmy, marker="o", s=130, facecolors="none",
-                   edgecolors=color, linewidths=1.8, zorder=4)
-        # Bundle Fisher (filled square)
+                   edgecolors=c_ana, linewidths=1.8, zorder=4)
         bx, by = _xy("bundle")
-        ax.scatter(bx, by, marker="s", s=70, color=color,
+        ax.scatter(bx, by, marker="s", s=70, color=c_bun,
                    edgecolor="black", linewidth=0.5, zorder=4)
-        # Bundle MCMC (open square, slightly larger)
         bmx, bmy = _xy("bundle_mcmc")
         ax.scatter(bmx, bmy, marker="s", s=130, facecolors="none",
-                   edgecolors=color, linewidths=1.8, zorder=4)
+                   edgecolors=c_bun, linewidths=1.8, zorder=4)
+        dx, dy = _xy("recon")
+        ax.scatter(dx, dy, marker="x", s=130, color="black",
+                   linewidths=2.8, zorder=10)
+
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(0.0, 0.9)
+        ax.grid(alpha=0.25, linestyle="--", linewidth=0.7, axis="y")
 
     source_handles = [
         Line2D([0], [0], marker="x", linestyle="", markersize=11,
-               markeredgewidth=2.5, color="gray", label="DESI (bao-recon)"),
+               markeredgewidth=2.8, color="black", label="DESI (bao-recon)"),
         Line2D([0], [0], marker="o", linestyle="", markersize=8,
-               markerfacecolor="gray", markeredgecolor="black",
+               markerfacecolor="tab:blue", markeredgecolor="black",
                label="Fisher (analytic cov)"),
         Line2D([0], [0], marker="o", linestyle="", markersize=11,
-               markerfacecolor="none", markeredgecolor="gray", markeredgewidth=1.8,
+               markerfacecolor="none", markeredgecolor="tab:blue", markeredgewidth=1.8,
                label="MCMC (analytic cov)"),
         Line2D([0], [0], marker="s", linestyle="", markersize=8,
-               markerfacecolor="gray", markeredgecolor="black",
+               markerfacecolor="tab:orange", markeredgecolor="black",
                label="Fisher (bundle cov)"),
         Line2D([0], [0], marker="s", linestyle="", markersize=11,
-               markerfacecolor="none", markeredgecolor="gray", markeredgewidth=1.8,
+               markerfacecolor="none", markeredgecolor="tab:orange", markeredgewidth=1.8,
                label="MCMC (bundle cov)"),
     ]
-    quantity_handles = [
-        Line2D([0], [0], marker="s", linestyle="", markersize=10,
-               markerfacecolor=color, markeredgecolor="none", label=label)
-        for _, color, label in _QUANTITIES
-    ]
-    leg_src = ax.legend(handles=source_handles, loc="upper left",
-                        bbox_to_anchor=(0.0, 1.0),
-                        title="Source", fontsize=9, title_fontsize=10)
-    ax.add_artist(leg_src)
-    ax.legend(handles=quantity_handles, loc="upper left",
-              bbox_to_anchor=(0.0, 0.62),
-              title="Quantity", fontsize=9, title_fontsize=10)
+    axes[0].legend(handles=source_handles, loc="upper left",
+                   bbox_to_anchor=(1.01, 1.0),
+                   title="Source", fontsize=9, title_fontsize=10)
 
-    ax.set_xticks(x)
-    ax.set_xticklabels(display, rotation=20)
-    ax.set_xlabel("Tracer bin")
-    ax.set_ylabel(r"$\sigma$")
-    ax.grid(alpha=0.25, linestyle="--", linewidth=0.7, axis="y")
-    ax.set_title(
+    axes[-1].set_xticks(x)
+    axes[-1].set_xticklabels(display, rotation=20)
+    axes[-1].set_xlabel("Tracer bin")
+    axes[0].set_title(
         f"BAO σ — Fisher + MCMC vs DESI bao-recon  |  DR1  |  "
         f"Om={_FID_OM:.4g}, hrdrag={_FID_HRDRAG:.4g}",
         fontsize=12,
