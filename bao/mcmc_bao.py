@@ -25,6 +25,11 @@ warnings.filterwarnings("ignore")
 
 import prep_covar as pc
 from util import TRACER_CONFIGS
+# Reference σ comes from the bao-recon stat-only files, via the SAME helper the
+# comparison plot uses, so the JSON ratios and the plot stay consistent. (Do NOT
+# use desi_data.csv — its published σ includes the systematic budget, e.g. QSO
+# is ~11% larger than stat-only; we forecast stat-only.)
+from fisher_sigmas import _recon_sigmas
 
 
 _DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
@@ -39,15 +44,6 @@ def _get_nominal_ntracers(dataset: str, tracer_key: str) -> float:
     n_by_tracer = {row["tracer"]: float(row["passed"]) for _, row in df.iterrows()}
     name_map = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
     return n_by_tracer[name_map.get(tracer_key, tracer_key)]
-
-
-def _get_data_std(dataset: str, tracer_key: str) -> dict:
-    desi_dir = Path.home() / "data" / "desi" / f"bao_{dataset}"
-    df = pd.read_csv(desi_dir / "desi_data.csv")
-    name_map = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
-    tname = name_map.get(tracer_key, tracer_key)
-    sub = df[df["tracer"] == tname]
-    return {row["quantity"]: float(row["std"]) for _, row in sub.iterrows()}
 
 
 def run(
@@ -68,7 +64,6 @@ def run(
     zrange = tuple(cfg["zrange"])
     area = _DATASET_AREAS[dataset.lower()]
     n_tracers = _get_nominal_ntracers(dataset, tracer_bin)
-    data_std = _get_data_std(dataset, tracer_bin)
 
     theta_cosmo, hrdrag_eff = pc._to_bao_cosmo_params(
         {**pc.PARAM_DEFAULTS, "Om": omega_m, "hrdrag": hrdrag}
@@ -92,6 +87,18 @@ def run(
     # (DH_fid is Mpc/h, info["rd"] is proper Mpc) and underreports σ by 1/h.
     DH_fid_over_rd = float(template.DH_over_rd_fid)
     DM_fid_over_rd = float(template.DM_over_rd_fid)
+    DV_fid_over_rd = float(template.DV_over_rd_fid)
+
+    # DESI reference σ: bao-recon stat-only, converted to σ(D/rd) with our fid
+    # (same conversion as fisher_sigmas._recon_sigmas → matches the plot exactly).
+    data_std = _recon_sigmas(
+        tracer_bin,
+        {
+            "DH_over_rd_fid": DH_fid_over_rd,
+            "DM_over_rd_fid": DM_fid_over_rd,
+            "DV_over_rd_fid": DV_fid_over_rd,
+        },
+    )
 
     # Restrict qpar, qper to a uniform box — this is the prior-truncation we want MCMC to see.
     likelihood.all_params["qpar"].update(
