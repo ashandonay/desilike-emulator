@@ -1273,6 +1273,7 @@ def build_bao_likelihood(
     float_sigma_bao: bool = True,
     kmax_cov: float | None = None,
     apmode: str = "qparqper",
+    lean: bool = False,
 ) -> Dict:
     """Build the BAO Gaussian likelihood and return it with the fiducial-value bookkeeping
     needed by downstream consumers (Fisher, MCMC, profile likelihood).
@@ -1722,6 +1723,21 @@ def build_bao_likelihood(
         apmode=apmode,
     )
 
+    if lean:
+        # Config-space σ-generator path (config_covar.py): only the fiducial
+        # template + nuisance values are consumed downstream — the Grieb ξ-cov
+        # and native ξ-theory are built there, not here. Skip the desilike
+        # observable / Fourier Gaussian covariance / likelihood assembly, which
+        # is ~2.2 s/cosmology of pure waste for this path (profiled). This early
+        # return is inert unless lean=True, so the production Fourier pipeline is
+        # byte-for-byte unchanged.
+        return {
+            "template": template,
+            "params": params,
+            "rd": hrdrag / _H_FID,
+            "z_eff": z,
+        }
+
     # BAO template matches DESI Y1/Y3 convention:
     #   - mode='recsym' : reconstructed with randoms also shifted (DESI standard).
     #     Lyα QSO is pre-recon so mode='' (no reconstruction template).
@@ -1775,6 +1791,7 @@ def build_bao_likelihood(
     )
     gauss_cov_obj = covariance(**params)
     C_gauss_arr = np.array(np.asarray(gauss_cov_obj), dtype=np.float64, copy=True)
+
     C_full = C_gauss_arr.copy()
     cov_components: Dict[str, np.ndarray] = {"C_gauss": C_gauss_arr}
 
