@@ -8,7 +8,7 @@ Covariance (``--cov``):
 
 Output (``--out``):
   money : one seed (seeds[0]), all --tracers, both covs ->
-          xi_money_mcmc.json   {tracer: {cov: {DH,DM,DV}}}
+          mcmc_config.json   {tracer: {cov: {DH,DM,DV}}}
           (consumed by plot_xi_money.py for the scatter points)
   sweep : all --seeds, per tracer ->
           seed_sweep_xi/{tracer}.json   {cov: {seed: {DH,DM,DV}}}
@@ -107,7 +107,7 @@ def main():
     ap.add_argument("--cov", choices=["gaussxi", "bundle", "both"], default="both")
     ap.add_argument("--seeds", nargs="+", type=int, default=[42])
     ap.add_argument("--out", choices=["money", "sweep"], default="money",
-                    help="money: 1 seed, all tracers -> xi_money_mcmc.json; "
+                    help="money: 1 seed, all tracers -> mcmc_config.json; "
                          "sweep: all seeds, per tracer -> seed_sweep_xi/{tracer}.json")
     args = ap.parse_args()
     covs = ["gaussxi", "bundle"] if args.cov == "both" else [args.cov]
@@ -129,8 +129,8 @@ def main():
                 rec[label] = _sigmas(_run_chain(log_prob, names, fid, seed), names, apmode, tmpl, z)
                 print(f"[{t} {label}] {rec[label]}")
             out[t] = rec
-        (_HERE / "xi_money_mcmc.json").write_text(json.dumps(out, indent=2))
-        print("\nwrote xi_money_mcmc.json")
+        (_HERE / "mcmc_config.json").write_text(json.dumps(out, indent=2))
+        print("\nwrote mcmc_config.json")
     else:  # sweep
         odir = _HERE / "seed_sweep_xi"
         odir.mkdir(exist_ok=True)

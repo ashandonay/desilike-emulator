@@ -13,7 +13,7 @@ Per (tracer, quantity), up to five markers:
 
   config  (default) : ξ(s) Grieb Gaussian cov (analytic) vs DESI bundle ξ-cov.
                       Fisher via config_space.bundle_fisher_sigmas (live);
-                      MCMC from xi_money_mcmc.json (prefers seed_sweep_xi/).
+                      MCMC from mcmc_config.json (prefers seed_sweep_xi/).
   fourier            : P(k) analytic Gaussian Fisher (analytic) vs the same
                       bundle ξ-cov substituted as a Fourier precision (bundle).
                       Fisher live; MCMC from mcmc_results_fourier/.
@@ -157,7 +157,7 @@ def _fourier_bundle_fisher(tracer):
 #                              mcmc_bun, *_err, sparse}}
 # ---------------------------------------------------------------------------
 def _gather_config():
-    mcmc_raw = json.loads((_HERE / "xi_money_mcmc.json").read_text())
+    mcmc_raw = json.loads((_HERE / "mcmc_config.json").read_text())
     out = {}
     for t in _TRACERS:
         print(f"== {t} (config) ==", flush=True)

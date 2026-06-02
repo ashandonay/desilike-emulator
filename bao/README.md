@@ -133,7 +133,7 @@ python mcmc_fourier.py --tracers LRG2 QSO --cov analytic --dataset dr1
 python mcmc_fourier.py --cov bundle        # DR1 RascalC cov_ξ substituted as precision
 
 # config — native-ξ theory + Grieb/bundle cov (config_space §4)
-python mcmc_config.py --out money          # 1 seed, all tracers  → xi_money_mcmc.json
+python mcmc_config.py --out money          # 1 seed, all tracers  → mcmc_config.json
 python mcmc_config.py --out sweep --tracers LRG1 --seeds 42 43 44 45 46
                                            # → seed_sweep_xi/LRG1.json  (chain-noise)
 ```
@@ -142,7 +142,7 @@ python mcmc_config.py --out sweep --tracers LRG1 --seeds 42 43 44 45 46
   `bundle` = DESI DR1 cov_ξ substituted via `precision = Mᵀ cov_ξ⁻¹ M`, `M = W·H_Hankel`.
   `--apmode auto` → `qiso` for BGS/QSO. Writes `mcmc_results_fourier/`.
   Needs `nwalkers ≥ 2·ndim` (default 64).
-- `mcmc_config.py --out {money|sweep}`: `money` writes `xi_money_mcmc.json`
+- `mcmc_config.py --out {money|sweep}`: `money` writes `mcmc_config.json`
   (one combined file, single seed); `sweep` writes per-tracer
   `seed_sweep_xi/{tracer}.json` over `--seeds` (for chain-noise error bars).
   Both consumed by `plot_fisher_vs_desi.py` / `aggregate_seed_sweep.py`.
@@ -155,7 +155,7 @@ published σ folds in the systematic budget); see `reference_sigmas.py`.
 `plot_fisher_vs_desi.py --space {config|fourier}` draws the 3-panel money plot
 (σ_DH/rd, σ_DM/rd, σ_DV/rd) comparing, per tracer, Fisher and MCMC in both the
 analytic and bundle covariance against DESI bao-recon. It computes the Fisher
-series live and loads the MCMC series (config: `xi_money_mcmc.json`, preferring
+series live and loads the MCMC series (config: `mcmc_config.json`, preferring
 `seed_sweep_xi/`; fourier: `mcmc_results_fourier/`). Writes `money_{space}_dr1.png`.
 
 The Fourier-frame **bundle** Fisher substitutes the DESI bundle ξ-cov as a Fourier
