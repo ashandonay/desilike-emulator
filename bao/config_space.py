@@ -1,21 +1,22 @@
-"""Config-space (ξ) BAO pipeline — the direct analog of prep_covar.py's Fourier
+"""Config-space (ξ) BAO pipeline — the direct analog of core.py's Fourier
 machinery, consolidated into one module so the two frames can be read side by side.
 
-Frame map (config here  ↔  Fourier in prep_covar):
+Frame map (config here  ↔  Fourier in core):
 
     load_bundle / bb_basis            ↔  observable + BB setup inside build_bao_likelihood
     build_native_theory_*             ↔  the P-space theory in build_bao_likelihood
     gaussian_xi_multipole_cov         ↔  the FKP Gaussian cov (cov_engine="desilike")
       + gaussxi_cov_on_bundle_grid       (Grieb 2016 double-Bessel; config-native)
     bundle_fisher_sigmas              ↔  run_fisher / get_bao_fisher_covariance
-    make_log_prob / run_mcmc          ↔  (no Fourier MCMC analog; reference is mcmc_bao.py)
+    make_log_prob / run_mcmc          ↔  mcmc_fourier.py (the Fourier-space MCMC);
+                                          driven for config space by mcmc_config.py
 
 Space-agnostic DESI / Fourier *reference* σ (bao-recon, desi_data.csv, production
 Fisher) live in reference_sigmas.py — they are what BOTH frames are compared against.
 
-What this module shares with prep_covar: ONLY the cosmology mapping
+What this module shares with core: ONLY the cosmology mapping
 (`_to_bao_cosmo_params`), the fiducial template, and the fiducial nuisance values
-returned by `build_bao_likelihood`. It never uses prep_covar's Fourier covariance,
+returned by `build_bao_likelihood`. It never uses core's Fourier covariance,
 theory, FKP/V_eff machinery, or SSC — the covariance comes from the DESI bundle or
 the Grieb config-cov here.
 
@@ -41,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 warnings.filterwarnings("ignore")
 
-import prep_covar
+import core
 from util import TRACER_CONFIGS
 from desilike.theories.galaxy_clustering import (
     DampedBAOWigglesTracerCorrelationFunctionMultipoles,
@@ -142,7 +143,7 @@ def _get_desi_std(tracer):
 
 # ===========================================================================
 # §2  Config-space Gaussian covariance (Grieb 2016, double-Bessel)
-#     ↔ the FKP P-space Gaussian cov in prep_covar (cov_engine="desilike")
+#     ↔ the FKP P-space Gaussian cov in core (cov_engine="desilike")
 # ===========================================================================
 def _cross_ell_sign(la: int, lb: int) -> float:
     """Real value of i^{la-lb} for even multipoles."""
@@ -353,8 +354,8 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     the survey-window-convolved cov on the observable grid.
     """
     cfg = TRACER_CONFIGS[tracer]
-    theta, hrdrag = prep_covar._to_bao_cosmo_params({**prep_covar.PARAM_DEFAULTS, **_FID})
-    cosmo = prep_covar.get_cosmo(("DESI", dict(theta)))
+    theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
+    cosmo = core.get_cosmo(("DESI", dict(theta)))
     slices = load_nz_slices(
         tracer_bin=tracer, cosmo=cosmo, area_deg2=_AREA,
         N_design=float(_get_ntracers(tracer)),
@@ -446,7 +447,7 @@ def _validate_shotnoise_limit(verbose: bool = True) -> bool:
 
 
 # ===========================================================================
-# §3  Native ξ-theory + Fisher  (↔ prep_covar.run_fisher / get_bao_fisher_covariance)
+# §3  Native ξ-theory + Fisher  (↔ fourier_space.run_fisher / get_bao_fisher_covariance)
 # ===========================================================================
 def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from native-ξ Fisher.
@@ -465,9 +466,9 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None):
         # lean=True: skip the desilike observable/Fourier-cov/likelihood build.
         # This path uses only the template + fiducial nuisance values; the ξ-cov
         # and native ξ-theory are built below. ~6.7× faster per cosmology.
-        theta, hrdrag = prep_covar._to_bao_cosmo_params(
-            {**prep_covar.PARAM_DEFAULTS, **_FID})
-        info = prep_covar.build_bao_likelihood(
+        theta, hrdrag = core._to_bao_cosmo_params(
+            {**core.PARAM_DEFAULTS, **_FID})
+        info = core.build_bao_likelihood(
             N_tracers=_get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
             tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
             area=_AREA, apmode=apmode, lean=True,
@@ -621,12 +622,17 @@ class XiSigmaGenerator:
 
         # FKP volume/n̄ at the FIDUCIAL frame (frame-fixed, like the window —
         # NOT varied per cosmology; see the §3.5 header note).
-        theta_fid, _ = prep_covar._to_bao_cosmo_params(
-            {**prep_covar.PARAM_DEFAULTS, **_FID})
-        cosmo_fid = prep_covar.get_cosmo(("DESI", dict(theta_fid)))
+        theta_fid, _ = core._to_bao_cosmo_params(
+            {**core.PARAM_DEFAULTS, **_FID})
+        cosmo_fid = core.get_cosmo(("DESI", dict(theta_fid)))
+        self._N_fid = float(_get_ntracers(tracer))
         self.slices = load_nz_slices(
             tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_AREA,
-            N_design=float(_get_ntracers(tracer)))
+            N_design=self._N_fid)
+        # n̄ is exactly linear in N_design (load_nz_slices: nbar = N·frac/V_shell
+        # at the fixed frame), so the cov shot-noise term can be rebuilt for any
+        # sampled N_tracers by rescaling — no pandas re-read, no geometry recompute.
+        self._nbar_per_N = np.asarray(self.slices.nbar, dtype=np.float64) / self._N_fid
 
         # Theory s-grid + window: the windowed (theory-grid) cov is what feeds
         # the Fisher, so only that grid's Bessel basis is needed.
@@ -642,32 +648,78 @@ class XiSigmaGenerator:
         # Cosmology-independent Bessel basis on (s_th, K_WIDE, ds_th): built ONCE.
         self.jbar_cache = build_jbar_cache(self.th_ells, K_WIDE, s_th, self.ds_th)
 
-    def windowed_cov(self, info):
+    def _slices_for_N(self, N_tracers):
+        """FKP slices rescaled to a sampled N_tracers (n̄ ∝ N_tracers). The
+        frame-fixed geometry (z_mid, V_shell) is unchanged; only n̄ moves, which
+        sets the cov shot-noise floor. None → the fiducial-N slices."""
+        if N_tracers is None:
+            return self.slices
+        return NZSlices(z_mid=self.slices.z_mid,
+                        nbar=self._nbar_per_N * float(N_tracers),
+                        V=self.slices.V)
+
+    def windowed_cov(self, info, N_tracers=None):
         """Grieb windowed Gaussian cov C = W @ C_theory @ Wᵀ via the cached
         Bessel basis. Only the windowed cov is built (the obs-grid cov isn't
-        used by the Fisher)."""
+        used by the Fisher). N_tracers rescales the n̄-dependent shot-noise."""
         P_wide = _wide_Pell(self.tracer, info)
         C_theory = gaussian_xi_multipole_cov(
             s=self.s_th, ells_obs=tuple(self.th_ells), k=K_WIDE,
-            P_ells_in=P_wide, ells_in=(0, 2, 4), slices=self.slices,
+            P_ells_in=P_wide, ells_in=(0, 2, 4), slices=self._slices_for_N(N_tracers),
             ds=self.ds_th, jbar_cache=self.jbar_cache)
         C = self.W @ C_theory @ self.W.T
         return 0.5 * (C + C.T)
 
-    def sigma_triplet(self, **cosmo_overrides):
-        """θ → {DH_over_rs, DM_over_rs, DV_over_rs, ...}. Pass cosmology as
-        keyword overrides on PARAM_DEFAULTS, e.g. ``sigma_triplet(Om=0.31,
-        hrdrag=99.5)``; no args → fiducial."""
-        sample = {**prep_covar.PARAM_DEFAULTS, **_FID, **cosmo_overrides}
-        theta_cosmo, hrdrag = prep_covar._to_bao_cosmo_params(sample)
-        info = prep_covar.build_bao_likelihood(
-            N_tracers=_get_ntracers(self.tracer), theta_cosmo=theta_cosmo,
+    def sigma_triplet(self, N_tracers=None, **cosmo_overrides):
+        """(N_tracers, θ) → {DH_over_rs, DM_over_rs, DV_over_rs, ...}. Pass the
+        tracer count and cosmology as keyword overrides on PARAM_DEFAULTS, e.g.
+        ``sigma_triplet(N_tracers=1e6, Om=0.31, hrdrag=99.5)``; no args → the DR1
+        fiducial. N_tracers feeds BOTH the nuisance fids (Σ_par/⊥, σ_s via n̄) and
+        the cov shot-noise; the window and survey frame stay fixed."""
+        N = float(N_tracers) if N_tracers is not None else self._N_fid
+        sample = {**core.PARAM_DEFAULTS, **_FID, **cosmo_overrides}
+        theta_cosmo, hrdrag = core._to_bao_cosmo_params(sample)
+        info = core.build_bao_likelihood(
+            N_tracers=N, theta_cosmo=theta_cosmo,
             hrdrag=hrdrag, tracer_bin=self.tracer, zrange=self.cfg["zrange"],
             z_eff=float(self.cfg["z_eff"]), area=_AREA, apmode=self.apmode,
             lean=True)
-        cov = self.windowed_cov(info)
+        cov = self.windowed_cov(info, N_tracers=N)
         return bundle_fisher_sigmas(self.tracer, cov_override=cov,
                                     info=info, bundle=self.bundle)
+
+
+# Unified distance-error target (shared with the Fourier path; see
+# core.SIGMA_TARGET_NAMES). The config worker emits it natively.
+XI_SIGMA_TARGET_NAMES = ["sigma_DH_over_rd", "sigma_DM_over_rd", "sigma_DV_over_rd"]
+
+# Per-worker-process generator cache: building an XiSigmaGenerator loads the DESI
+# bundle + builds the Bessel basis (the costly one-time setup), so each spawn
+# worker constructs it once for its tracer and reuses it across all samples.
+_XI_GEN_CACHE: Dict[str, "XiSigmaGenerator"] = {}
+
+
+def _worker_xi_sigma(args_tuple):
+    """Config-space worker for the unified emulator generator. Maps a sample
+    {N_tracers + cosmo} to the distance-error triplet via a cached per-process
+    XiSigmaGenerator. Top-level + picklable for the spawn Pool. Returns
+    (sample, target_vals, tb_str) — tb_str None on success."""
+    sample, tracer = args_tuple
+    try:
+        gen = _XI_GEN_CACHE.get(tracer)
+        if gen is None:
+            gen = XiSigmaGenerator(tracer)
+            _XI_GEN_CACHE[tracer] = gen
+        N_tracers = sample.get("N_tracers")
+        cosmo_overrides = {k: v for k, v in sample.items() if k != "N_tracers"}
+        s = gen.sigma_triplet(N_tracers=N_tracers, **cosmo_overrides)
+        target_vals = [s["DH_over_rs"], s["DM_over_rs"], s["DV_over_rs"]]
+        if not all(np.isfinite(v) for v in target_vals):
+            return None, None, "non-finite target values"
+        return sample, target_vals, None
+    except Exception:
+        import traceback
+        return None, None, traceback.format_exc()
 
 
 # ===========================================================================
@@ -679,9 +731,9 @@ def build_native_theory_mcmc(tracer, apmode):
     Uses the same fiducial (_FID) as the Fisher / Grieb-cov path.
     """
     cfg = TRACER_CONFIGS[tracer]
-    theta, hrdrag_eff = prep_covar._to_bao_cosmo_params(
-        {**prep_covar.PARAM_DEFAULTS, **_FID})
-    info = prep_covar.build_bao_likelihood(
+    theta, hrdrag_eff = core._to_bao_cosmo_params(
+        {**core.PARAM_DEFAULTS, **_FID})
+    info = core.build_bao_likelihood(
         N_tracers=_get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag_eff,
         tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
         area=_AREA, apmode=apmode,
@@ -955,7 +1007,6 @@ def _mcmc_cli():
 
 if __name__ == "__main__":
     # Default __main__ runs the cheap shot-noise normalization self-check.
-    # The heavy MCMC CLI is reachable via mcmc_bundle_native_theory.py (shim)
-    # or by calling _mcmc_cli().
+    # The heavy config-space MCMC CLI lives in mcmc_config.py.
     ok = _validate_shotnoise_limit()
     sys.exit(0 if ok else 1)
