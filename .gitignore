@@ -3,3 +3,7 @@
 __pycache__/
 *.log
 notebooks/
+
+# autoresearch tool generated artifacts
+autoresearch/results.tsv
+autoresearch/worktrees/
