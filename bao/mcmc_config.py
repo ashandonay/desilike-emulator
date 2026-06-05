@@ -6,22 +6,22 @@ Covariance (``--cov``):
   bundle  : DESI DR1 RascalC bundle cov.
   both    : run both (default) — the cov is the only thing that differs.
 
-Output (``--out``):
-  money : one seed (seeds[0]), all --tracers, both covs ->
-          mcmc_config.json   {tracer: {cov: {DH,DM,DV}}}
-          (consumed by plot_xi_money.py for the scatter points)
-  sweep : all --seeds, per tracer ->
-          seed_sweep_xi/{tracer}.json   {cov: {seed: {DH,DM,DV}}}
-          (consumed by aggregate_seed_sweep.py and plot_xi_money.py error bars)
+Output (one run writes both artifacts):
+  seed_sweep_xi/{tracer}.json   {cov: {seed: {DH,DM,DV}}}   — the full per-tracer
+          sweep over --seeds (consumed by comparison_plots.py for error bars).
+  mcmc_config.json   {tracer: {cov: {DH,DM,DV}}}            — the seed[0] slice
+          across all tracers (consumed by comparison_plots.py for the scatter
+          points). Only (re)written when --tracers covers all tracers; a partial
+          run writes just the per-tracer sweep files and skips the combined file.
 
 Sparse tracers (BGS, QSO) use the isotropic qiso fit (DH/DM reported NaN; DV is
 the constrained quantity). The Fourier-space analog is mcmc_fourier.py.
 
 Usage (from bao/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
-        ~/miniconda3/envs/emulator/bin/python mcmc_config.py --out money
-    # seed sweep for one tracer:
-    ... mcmc_config.py --out sweep --tracers LRG1 --seeds 42 43 44 45 46
+        ~/miniconda3/envs/emulator/bin/python mcmc_config.py
+    # seed sweep for one tracer (skips mcmc_config.json, partial --tracers):
+    ... mcmc_config.py --tracers LRG1 --seeds 42 43 44 45 46
 """
 from __future__ import annotations
 
@@ -106,47 +106,39 @@ def main():
     ap.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
     ap.add_argument("--cov", choices=["gaussxi", "bundle", "both"], default="both")
     ap.add_argument("--seeds", nargs="+", type=int, default=[42])
-    ap.add_argument("--out", choices=["money", "sweep"], default="money",
-                    help="money: 1 seed, all tracers -> mcmc_config.json; "
-                         "sweep: all seeds, per tracer -> seed_sweep_xi/{tracer}.json")
     args = ap.parse_args()
     covs = ["gaussxi", "bundle"] if args.cov == "both" else [args.cov]
 
-    if args.out == "money":
-        seed = args.seeds[0]
-        out = {"_meta": {
-            "source": "mcmc_config.py --out money (config_space native-ξ MCMC, single seed)",
-            "settings": f"SEED={seed}, NW={NW}, NIT={NIT}, BURN={BURN}, bb_basis={BB_BASIS}",
-            "note": "gaussxi = analytic Grieb cov; bundle = DESI RascalC. qiso (BGS,QSO): DV only.",
-        }}
-        for t in args.tracers:
-            info, native, bundle, cov_map, tmpl, z, apmode = _build(t)
-            rec = {}
-            for label in covs:
-                bundle["cov"] = cov_map[label]
-                log_prob, names, fid = M.make_log_prob(info, native, bundle, apmode, t,
-                                                       bb_basis=BB_BASIS)
-                rec[label] = _sigmas(_run_chain(log_prob, names, fid, seed), names, apmode, tmpl, z)
-                print(f"[{t} {label}] {rec[label]}")
-            out[t] = rec
-        (_HERE / "mcmc_config.json").write_text(json.dumps(out, indent=2))
+    odir = _HERE / "seed_sweep_xi"
+    odir.mkdir(exist_ok=True)
+    seed0 = args.seeds[0]
+    combined = {"_meta": {
+        "source": "mcmc_config.py (config_space native-ξ MCMC, seed[0] slice of the seed sweep)",
+        "settings": f"SEED={seed0}, NW={NW}, NIT={NIT}, BURN={BURN}, bb_basis={BB_BASIS}",
+        "note": "gaussxi = analytic Grieb cov; bundle = DESI RascalC. qiso (BGS,QSO): DV only.",
+    }}
+    for t in args.tracers:
+        info, native, bundle, cov_map, tmpl, z, apmode = _build(t)
+        sweep = {label: {} for label in covs}
+        for label in covs:
+            bundle["cov"] = cov_map[label]
+            log_prob, names, fid = M.make_log_prob(info, native, bundle, apmode, t,
+                                                   bb_basis=BB_BASIS)
+            for seed in args.seeds:
+                res = _sigmas(_run_chain(log_prob, names, fid, seed), names, apmode, tmpl, z)
+                sweep[label][str(seed)] = res
+                print(f"[{t} {label} seed={seed}] {res}")
+        (odir / f"{t}.json").write_text(json.dumps(sweep, indent=2))
+        print(f"wrote seed_sweep_xi/{t}.json")
+        # seed[0] slice across tracers feeds the combined comparison-plot file
+        combined[t] = {label: sweep[label][str(seed0)] for label in covs}
+
+    if set(args.tracers) == set(_TRACERS):
+        (_HERE / "mcmc_config.json").write_text(json.dumps(combined, indent=2))
         print("\nwrote mcmc_config.json")
-    else:  # sweep
-        odir = _HERE / "seed_sweep_xi"
-        odir.mkdir(exist_ok=True)
-        for t in args.tracers:
-            info, native, bundle, cov_map, tmpl, z, apmode = _build(t)
-            out = {label: {} for label in covs}
-            for label in covs:
-                bundle["cov"] = cov_map[label]
-                log_prob, names, fid = M.make_log_prob(info, native, bundle, apmode, t,
-                                                       bb_basis=BB_BASIS)
-                for seed in args.seeds:
-                    res = _sigmas(_run_chain(log_prob, names, fid, seed), names, apmode, tmpl, z)
-                    out[label][str(seed)] = res
-                    print(f"[{t} {label} seed={seed}] {res}")
-            (odir / f"{t}.json").write_text(json.dumps(out, indent=2))
-            print(f"wrote seed_sweep_xi/{t}.json")
+    else:
+        print(f"\nskipped mcmc_config.json (partial --tracers; need all "
+              f"{len(_TRACERS)} tracers to regenerate)")
 
 
 if __name__ == "__main__":

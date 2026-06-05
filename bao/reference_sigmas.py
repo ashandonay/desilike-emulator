@@ -8,7 +8,6 @@ compared against; they belong to neither frame.
                                   converted to σ(D/rd) using OUR fiducial (D/rd).
   _read_bao_recon(tracer)       — raw σ_q (and cov) from the bao-recon file.
   _read_desi_csv / _csv_sigma   — DESI DR1 published σ from desi_data.csv.
-  _read_mcmc_prod / _bundle     — cached MCMC posterior σ (production / bundle).
 """
 from __future__ import annotations
 import os, sys, json, warnings
@@ -38,38 +37,10 @@ _NAME_MAP_TO_DATA = {"LRG3_ELG1": "LRG3+ELG1"}
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
 _LIK_DIR = _DR1_DIR / "likelihoods"
 
-_MCMC_BUNDLE_DIR = Path(__file__).resolve().parent / "mcmc_results_bundle_native"
-_MCMC_PROD_DIR   = Path(__file__).resolve().parent / "mcmc_results"
-_MCMC_SUFFIX = {"BGS": "_qiso", "QSO": "_qiso"}  # sparse tracers use qiso file
-
-
 def _get_ntracers(tracer):
     df = pd.read_csv(_DR1_DIR / "desi_data.csv")[["tracer", "passed"]].drop_duplicates("tracer")
     n_by = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
     return n_by[_NAME_MAP_TO_DATA.get(tracer, tracer)]
-
-
-def _read_mcmc_bundle(tracer):
-    """Native-theory MCMC on bundle data+cov+W (bundle substitution)."""
-    suffix = _MCMC_SUFFIX.get(tracer, "")
-    p = _MCMC_BUNDLE_DIR / f"{tracer}_dr1_native_theory{suffix}.json"
-    if not p.exists():
-        return {"DH_over_rs": float("nan"), "DM_over_rs": float("nan"), "DV_over_rs": float("nan")}
-    d = json.loads(p.read_text())
-    return {"DH_over_rs": float(d.get("sig_DH", float("nan"))),
-            "DM_over_rs": float(d.get("sig_DM", float("nan"))),
-            "DV_over_rs": float(d.get("sig_DV", float("nan")))}
-
-
-def _read_mcmc_prod(tracer):
-    """Pure-pipeline MCMC (analytic cov, no substitution) — from mcmc_bao.py."""
-    p = _MCMC_PROD_DIR / f"{tracer}_dr1.json"
-    if not p.exists():
-        return {"DH_over_rs": float("nan"), "DM_over_rs": float("nan"), "DV_over_rs": float("nan")}
-    d = json.loads(p.read_text())
-    return {"DH_over_rs": float(d.get("sigma_DH_over_rd_mcmc", float("nan"))),
-            "DM_over_rs": float(d.get("sigma_DM_over_rd_mcmc", float("nan"))),
-            "DV_over_rs": float(d.get("sigma_DV_over_rd_mcmc", float("nan")))}
 
 
 _BAO_RECON_FILE = {
@@ -80,6 +51,25 @@ _BAO_RECON_FILE = {
     "ELG2":      "likelihood_bao-recon_stat-only_ELG_LOPnotqso_GCcomb_z1.1-1.6.h5",
     "QSO":       "likelihood_bao-recon_stat-only_QSO_GCcomb_z0.8-2.1.h5",
 }
+# Matching stat+systematics files (same reduction, same fiducial). The σ ratio
+# syst/stat-only is DESI's measured systematic budget; see DESI_SYST_INFLATION.
+_BAO_RECON_SYST_FILE = {t: f.replace("stat-only", "syst") for t, f in _BAO_RECON_FILE.items()}
+
+# DESI DR1 systematic-error inflation σ_tot/σ_stat per tracer per distance,
+# measured as σ(bao-recon_syst)/σ(bao-recon_stat-only) (the syst file IS σ_stat⊕sys,
+# so this ratio already folds in the quadrature). Clamped to ≥1 (systematics only
+# inflate; sub-noise negatives → 1.0, e.g. ELG2 D_H). Isotropic tracers (BGS, QSO)
+# carry the single qiso factor on all three (DH/DM/DV are degenerate projections).
+# Regenerate with `python reference_sigmas.py --regen-syst` (needs the _syst .h5).
+DESI_SYST_INFLATION = {
+    "BGS":       {"DH_over_rs": 1.0071, "DM_over_rs": 1.0071, "DV_over_rs": 1.0071},
+    "LRG1":      {"DH_over_rs": 1.0428, "DM_over_rs": 1.0020, "DV_over_rs": 1.0241},
+    "LRG2":      {"DH_over_rs": 1.0063, "DM_over_rs": 1.0122, "DV_over_rs": 1.0243},
+    "LRG3_ELG1": {"DH_over_rs": 1.0538, "DM_over_rs": 1.0306, "DV_over_rs": 1.0598},
+    "ELG2":      {"DH_over_rs": 1.0000, "DM_over_rs": 1.0653, "DV_over_rs": 1.0623},
+    "QSO":       {"DH_over_rs": 1.0056, "DM_over_rs": 1.0056, "DV_over_rs": 1.0056},
+}
+_SIGMA_KEYS = ("DH_over_rs", "DM_over_rs", "DV_over_rs")  # SIGMA_TARGET_NAMES order
 
 
 # ---------------------------------------------------------------------------
@@ -164,21 +154,88 @@ def _prod_fisher_sigmas(tracer):
 # ---------------------------------------------------------------------------
 # bao-recon σ converter
 # ---------------------------------------------------------------------------
-def _recon_sigmas(tracer, fid):
-    """Convert bao-recon σ_q to σ(D/rd) using OUR fid (D/rd) values."""
-    rec = _read_bao_recon(tracer)
-    if rec is None:
-        return {"DH_over_rs": float("nan"), "DM_over_rs": float("nan"), "DV_over_rs": float("nan")}
+def _triplet_from_recon_cov(path, fid):
+    """σ(D/rd) triplet from a bao-recon .h5 (stat-only or syst), using OUR fid (D/rd).
+
+    1×1 (qiso): σ scales DH/DM/DV identically. 2×2 (qpar,qper): DH←qpar, DM←qper,
+    and DV from the full ln-cov combination (incl. off-diagonal).
+    """
+    nan = {k: float("nan") for k in _SIGMA_KEYS}
+    if not Path(path).exists():
+        return nan
+    with h5py.File(path, "r") as h:
+        cov = np.atleast_2d(np.asarray(h["covariance/value"][...]))
     DH = fid["DH_over_rd_fid"]; DM = fid["DM_over_rd_fid"]; DV = fid["DV_over_rd_fid"]
-    if "qiso" in rec:
-        s = rec["qiso"]
+    if cov.shape == (1, 1):
+        s = float(np.sqrt(cov[0, 0]))
         return {"DH_over_rs": s * DH, "DM_over_rs": s * DM, "DV_over_rs": s * DV}
-    sp = rec["qpar"]; sq = rec["qper"]
-    # DV from (qpar, qper) is degenerate here without the cov off-diag from the recon file.
-    # We re-read the off-diag to compute σ(DV/rd) correctly.
-    p = _LIK_DIR / _BAO_RECON_FILE[tracer]
-    with h5py.File(p, "r") as h:
-        cov = np.asarray(h["covariance/value"][...])
+    sp = float(np.sqrt(cov[0, 0])); sq = float(np.sqrt(cov[1, 1]))
     var_lnDV = (cov[0, 0] / 9.0) + (4.0 * cov[1, 1] / 9.0) + (4.0 * cov[0, 1] / 9.0)
     return {"DH_over_rs": sp * DH, "DM_over_rs": sq * DM,
             "DV_over_rs": float(np.sqrt(max(var_lnDV, 0.0))) * DV}
+
+
+def _recon_sigmas(tracer, fid):
+    """Convert bao-recon stat-only σ_q to σ(D/rd) using OUR fid (D/rd) values."""
+    return _triplet_from_recon_cov(_LIK_DIR / _BAO_RECON_FILE[tracer], fid)
+
+
+# ---------------------------------------------------------------------------
+# DESI systematic-error layer (post-emulator)
+# ---------------------------------------------------------------------------
+def apply_desi_syst(sigma_triplet, tracer, ratios=None):
+    """Inflate emulator σ_stat → σ_tot with DESI's measured per-tracer systematic
+    budget (`DESI_SYST_INFLATION`): σ_tot[q] = R[tracer][q] · σ_stat[q].
+
+    This is a fixed, fiducial-calibrated diagonal scaling applied AFTER the emulator;
+    it does not vary with cosmology/N_tracers and does not touch the training data.
+    The clean cosmology-varying quantity (σ_stat) is what the emulator predicts.
+
+    `sigma_triplet` is either a dict keyed by {DH,DM,DV}_over_rs, or an array-like of
+    shape (..., 3) in SIGMA_TARGET_NAMES order [DH, DM, DV]. Returns the same type.
+    Unknown tracers / missing quantities scale by 1.0 (no-op).
+    """
+    R = (ratios or DESI_SYST_INFLATION).get(tracer, {})
+    if isinstance(sigma_triplet, dict):
+        return {k: sigma_triplet[k] * float(R.get(k, 1.0)) for k in sigma_triplet}
+    factors = np.array([float(R.get(k, 1.0)) for k in _SIGMA_KEYS])
+    return np.asarray(sigma_triplet, dtype=float) * factors
+
+
+def compute_syst_inflation(tracer):
+    """Recompute R[q] = σ(bao-recon_syst)/σ(bao-recon_stat-only) from the .h5 files
+    (the (D/rd)_fid cancels in the ratio). Clamped to ≥1. Returns None if either
+    file is missing."""
+    unit = {"DH_over_rd_fid": 1.0, "DM_over_rd_fid": 1.0, "DV_over_rd_fid": 1.0}
+    stat = _triplet_from_recon_cov(_LIK_DIR / _BAO_RECON_FILE[tracer], unit)
+    syst = _triplet_from_recon_cov(_LIK_DIR / _BAO_RECON_SYST_FILE[tracer], unit)
+    if any(np.isnan(stat[k]) or np.isnan(syst[k]) for k in _SIGMA_KEYS):
+        return None
+    R = {k: max(syst[k] / stat[k], 1.0) for k in _SIGMA_KEYS}
+    if tracer in ("BGS", "QSO"):  # degenerate: single qiso factor on all three
+        R = {k: R["DV_over_rs"] for k in _SIGMA_KEYS}
+    return R
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="DESI reference σ utilities")
+    ap.add_argument("--regen-syst", action="store_true",
+                    help="recompute DESI_SYST_INFLATION from the bao-recon .h5 files and "
+                         "print it as a paste-ready dict (compare against the frozen table)")
+    args = ap.parse_args()
+    if args.regen_syst:
+        print("DESI_SYST_INFLATION = {")
+        for t in _TRACERS:
+            R = compute_syst_inflation(t)
+            if R is None:
+                print(f'    # "{t}": missing _syst or stat-only .h5 — skipped')
+                continue
+            frozen = DESI_SYST_INFLATION.get(t, {})
+            drift = max((abs(R[k] - frozen.get(k, R[k])) for k in _SIGMA_KEYS), default=0.0)
+            flag = "" if drift < 5e-4 else f"   # DRIFT {drift:.4f} vs frozen"
+            cells = ", ".join(f'"{k}": {R[k]:.4f}' for k in _SIGMA_KEYS)
+            print(f'    "{t}": {{{cells}}},{flag}')
+        print("}")
+    else:
+        ap.print_help()

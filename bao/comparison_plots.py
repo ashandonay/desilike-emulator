@@ -1,30 +1,27 @@
-"""Money plot — BAO σ: Fisher + MCMC vs DESI bao-recon (DR1), EITHER frame.
+"""Unified BAO comparison plots — forecast σ, ξ-covariance, and theory ξ.
 
-Three stacked panels (σ_DH/rd, σ_DM/rd, σ_DV/rd) sharing the tracer x-axis.
-Per (tracer, quantity), up to five markers:
+Three plots, selected by a positional subcommand (default: forecast):
 
-  - black x        : DESI bao-recon σ (post-marg α-cov × OUR fid (D/rd))
-  - blue circle    : Fisher, analytic cov
-  - blue triangle  : MCMC,   analytic cov
-  - orange square  : Fisher, bundle cov   (DESI DR1 RascalC ξ-cov substituted)
-  - orange diamond : MCMC,   bundle cov
+  comparison_plots.py [forecast]   Fisher + MCMC σ vs DESI bao-recon, EITHER frame
+                                   (--space config|fourier). Three stacked panels
+                                   σ(DH/rd, DM/rd, DV/rd); markers = estimator×cov.
+  comparison_plots.py cov          Grieb Gaussian vs DESI bundle RascalC covariance
+                                   (--matrix corr|cov|both). 3×N grid: Gaussian /
+                                   bundle / (Gaussian − bundle).
+  comparison_plots.py theory       pipeline native ξ-theory vs bundle data (2×3).
+                                   s²·ξ_ℓ: data, theory (BB=0), theory + best-fit BB.
 
-`--space` selects the frame; the four model series are computed in that frame:
-
-  config  (default) : ξ(s) Grieb Gaussian cov (analytic) vs DESI bundle ξ-cov.
-                      Fisher via config_space.bundle_fisher_sigmas (live);
-                      MCMC from mcmc_config.json (prefers seed_sweep_xi/).
-  fourier            : P(k) analytic Gaussian Fisher (analytic) vs the same
-                      bundle ξ-cov substituted as a Fourier precision (bundle).
-                      Fisher live; MCMC from mcmc_results_fourier/.
-
-DESI publishes DV for sparse tracers (qiso: BGS, QSO) and (DH, DM) for multipole
-tracers (qparqper: LRG/ELG); the unused channels are masked. Reference σ is the
-per-tracer bao-recon stat-only h5 (NOT desi_data.csv — see reference_sigmas.py).
+All three share the single fiducial config_space._FID and the validated pipeline
+functions (build_bao_likelihood, gaussxi_cov_on_bundle_grid, bundle_fisher_sigmas,
+build_native_theory_mcmc / _predict). For the α_SN covariance analysis see
+alpha_sn_check.py.
 
 Usage (from bao/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
-        ~/miniconda3/envs/emulator/bin/python plot_fisher_vs_desi.py --space config
+        ~/miniconda3/envs/emulator/bin/python comparison_plots.py            # forecast
+    ... comparison_plots.py forecast --space fourier
+    ... comparison_plots.py cov --matrix both
+    ... comparison_plots.py theory
 """
 from __future__ import annotations
 import argparse, json, os, sys, warnings
@@ -48,6 +45,9 @@ import reference_sigmas as rs
 from util import TRACER_CONFIGS
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
+_HERE = Path(__file__).resolve().parent
+
+# forecast
 _DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
 _QUANTITIES = [
     ("DH_over_rs", r"$\sigma(D_H/r_d)$"),
@@ -56,18 +56,17 @@ _QUANTITIES = [
 ]
 _QUANT_SHORT = {"DH_over_rs": "DH/rd", "DM_over_rs": "DM/rd", "DV_over_rs": "DV/rd"}
 _MCMC_KEY = {"DH_over_rs": "DH", "DM_over_rs": "DM", "DV_over_rs": "DV"}
-_FID = {"Om": 0.3152, "hrdrag": 99.08}
-_AREA = 7500.0
-_HERE = Path(__file__).resolve().parent
+# theory
+_BB_POWERS = (0, 2)  # DESI Adame+24 broadband basis (matches the forecast BB)
 
 
 def _is_sparse(tracer):
     return tracer in core._ISO_TRACERS
 
 
-# ---------------------------------------------------------------------------
-# MCMC loaders (one per frame)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# forecast — Fisher + MCMC σ vs DESI bao-recon (config or fourier frame)
+# ===========================================================================
 def _mcmc_config(tracer, mcmc_raw, which):
     """Config-space MCMC σ. Prefer the seed sweep (mean ± σ-of-σ); fall back to
     the single-seed cache (err=0). which ∈ {gaussxi (analytic), bundle}."""
@@ -101,21 +100,18 @@ def _mcmc_fourier(tracer, cov):
     return point, {q: 0.0 for q, _ in _QUANTITIES}
 
 
-# ---------------------------------------------------------------------------
-# Fourier bundle-cov Fisher: substitute the DESI bundle ξ-cov as the Fourier
-# likelihood precision (precision = Mᵀ cov_ξ⁻¹ M, M = W·H_Hankel — same path as
-# mcmc_fourier.py --cov bundle), then take the marginalized q-Fisher.
-# ---------------------------------------------------------------------------
 def _fourier_bundle_fisher(tracer):
+    """Fisher with the DESI bundle ξ-cov substituted as the Fourier precision
+    (precision = Mᵀ cov_ξ⁻¹ M, M = W·H_Hankel — same path as mcmc_fourier --cov bundle)."""
     from mcmc_fourier import _load_bundle, _build_M, _precision_from_cov_xi
 
     cfg = TRACER_CONFIGS[tracer]
     apmode = "qiso" if _is_sparse(tracer) else "qparqper"
-    theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
+    theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
     info = core.build_bao_likelihood(
         N_tracers=rs._get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
         tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
-        area=_AREA, apmode=apmode)
+        area=cc._AREA, apmode=apmode)
     lik = info["likelihood"]
     lik(**info["params"])
 
@@ -152,10 +148,6 @@ def _fourier_bundle_fisher(tracer):
             "DH_over_rd_fid": DH, "DM_over_rd_fid": DM, "DV_over_rd_fid": DV}
 
 
-# ---------------------------------------------------------------------------
-# Per-frame gather → {tracer: {recon, fisher_ana, mcmc_ana, fisher_bun,
-#                              mcmc_bun, *_err, sparse}}
-# ---------------------------------------------------------------------------
 def _gather_config():
     mcmc_raw = json.loads((_HERE / "mcmc_config.json").read_text())
     out = {}
@@ -163,11 +155,11 @@ def _gather_config():
         print(f"== {t} (config) ==", flush=True)
         cfg = TRACER_CONFIGS[t]
         apmode = "qiso" if _is_sparse(t) else "qparqper"
-        theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
+        theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
         info = core.build_bao_likelihood(
             N_tracers=cc._get_ntracers(t), theta_cosmo=theta, hrdrag=hrdrag,
             tracer_bin=t, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
-            area=_AREA, apmode=apmode)
+            area=cc._AREA, apmode=apmode)
         info["likelihood"](**info["params"])
         bundle = cc.load_bundle(t)
 
@@ -214,7 +206,6 @@ def _assemble(t, recon, fisher_ana, mcmc_ana, fisher_bun, mcmc_bun,
     return d
 
 
-# ---------------------------------------------------------------------------
 def _print_table(data, space):
     print(f"\n=== DR1 {space}-space σ: Fisher(Fa/Fb) + MCMC(Ma/Mb) vs DESI (D) ===")
     header = (f"  {'tracer':<11} {'q':<6} {'σ_Fa':>8} {'σ_Ma':>8} {'σ_Fb':>8} "
@@ -234,7 +225,7 @@ def _print_table(data, space):
                   f"{r(sFa):>6.3f} {r(sMa):>6.3f} {r(sFb):>6.3f} {r(sMb):>6.3f}")
 
 
-def _plot(data, out_path, space):
+def _plot_forecast(data, out_path, space):
     tracers = list(_TRACERS)
     display = [_DISPLAY.get(t, t) for t in tracers]
     x = np.arange(len(tracers), dtype=float)
@@ -305,16 +296,189 @@ def _plot(data, out_path, space):
     print(f"\nSaved plot to: {out_path}")
 
 
+def run_forecast(space):
+    data = _gather_config() if space == "config" else _gather_fourier()
+    _print_table(data, space)
+    _plot_forecast(data, _HERE / f"forecast_comparison_{space}_dr1.png", space)
+
+
+# ===========================================================================
+# cov — analytic Grieb Gaussian vs DESI bundle (RascalC) covariance
+# ===========================================================================
+def _corr(C):
+    d = np.sqrt(np.clip(np.diag(C), 1e-300, None))
+    return C / np.outer(d, d)
+
+
+def _covs(tracer):
+    """(Cg, Cb): Grieb Gaussian and DESI bundle cov on the bundle observable grid."""
+    cfg = TRACER_CONFIGS[tracer]
+    apmode = "qiso" if _is_sparse(tracer) else "qparqper"
+    theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
+    info = core.build_bao_likelihood(
+        N_tracers=cc._get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
+        tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
+        area=cc._AREA, apmode=apmode, lean=True)
+    bundle = cc.load_bundle(tracer)
+    Cb = 0.5 * (np.asarray(bundle["cov"]) + np.asarray(bundle["cov"]).T)
+    _, Cg = cc.gaussxi_cov_on_bundle_grid(tracer, info, bundle)  # windowed, matches Cb grid
+    Cg = 0.5 * (Cg + Cg.T)
+    return Cg, Cb
+
+
+def _plot_cov(covs, matrix, out_path):
+    tracers = list(covs.keys())
+    ncol = len(tracers)
+    fig, axes = plt.subplots(3, ncol, figsize=(2.6 * ncol, 8.2),
+                             squeeze=False, constrained_layout=True)
+    row_labels = ["Grieb Gaussian", "DESI bundle (RascalC)", "Gaussian − bundle"]
+
+    im = None
+    for j, t in enumerate(tracers):
+        Cg, Cb = covs[t]
+        if matrix == "corr":
+            A, B = _corr(Cg), _corr(Cb)
+            scale = None
+        else:  # cov: per-tracer normalization so the column is self-comparable
+            scale = max(float(np.max(np.abs(Cg))), float(np.max(np.abs(Cb))), 1e-300)
+            A, B = Cg / scale, Cb / scale
+        for i, M in enumerate([A, B, A - B]):
+            ax = axes[i, j]
+            im = ax.imshow(M, cmap="seismic", vmin=-1, vmax=1, origin="upper")
+            ax.set_xticks([]); ax.set_yticks([])
+            if i == 0:
+                ax.set_title(t if scale is None else f"{t}\nscale={scale:.1e}", fontsize=10)
+            if j == 0:
+                ax.set_ylabel(row_labels[i], fontsize=10)
+
+    label = "correlation" if matrix == "corr" else "C / max|C| (per tracer)"
+    fig.colorbar(im, ax=axes, shrink=0.5, label=label)
+    fig.suptitle(
+        f"BAO ξ-covariance: analytic Grieb Gaussian vs DESI bundle RascalC "
+        f"(DR1, {matrix})", fontsize=13)
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+    print(f"wrote {out_path}")
+
+
+def run_cov(matrix, tracers):
+    covs = {}
+    for t in tracers:
+        print(f"building covs for {t} ...", flush=True)
+        covs[t] = _covs(t)
+    for m in (["corr", "cov"] if matrix == "both" else [matrix]):
+        _plot_cov(covs, m, _HERE / f"cov_comparison_{m}_dr1.png")
+
+
+# ===========================================================================
+# theory — pipeline native ξ-theory vs DESI bundle data
+#
+# The pipeline includes broadband (BB) as Schur-MARGINALIZED nuisance params,
+# not fixed values. The dashed (BB=0) curve is the raw theory shape; the gap to
+# the data is the broadband the pipeline marginalizes away. The solid curve adds
+# the maximum-likelihood BB (the visual stand-in for marginalization). The
+# reported χ²/dof is AFTER marginalizing BB — only the BAO/shape residual.
+# ===========================================================================
+def _predict_tracer(tracer):
+    """(bundle, pred, b1): pipeline native ξ theory (BB=0) windowed to the bundle grid."""
+    apmode = "qiso" if _is_sparse(tracer) else "qparqper"
+    info, native, bundle = cc.build_native_theory_mcmc(tracer, apmode)
+    pred = cc._predict(native, bundle, info["params"])
+    return bundle, pred, float(info["params"]["b1"])
+
+
+def _best_fit_bb(data, pred, C_inv, BB):
+    A = BB.T @ C_inv @ BB
+    b = BB.T @ C_inv @ (data - pred)
+    return BB @ np.linalg.solve(A, b)
+
+
+def _chi2_marg(data, pred, C_inv, BB):
+    A = BB.T @ C_inv @ BB
+    b = BB.T @ C_inv @ (data - pred)
+    chi2_full = float((data - pred) @ C_inv @ (data - pred))
+    return chi2_full - float(b @ np.linalg.solve(A, b))
+
+
+def run_theory(tracers):
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    axes = axes.flatten()
+    colors = {"0": "C0", "2": "C3", "4": "C2"}
+
+    for i, tracer in enumerate(tracers):
+        ax = axes[i]
+        try:
+            bundle, pred, b1 = _predict_tracer(tracer)
+        except Exception as e:  # keep the grid intact if one tracer fails
+            ax.text(0.5, 0.5, f"{tracer}\nFAILED: {e}", ha="center", va="center",
+                    transform=ax.transAxes)
+            ax.set_title(tracer)
+            continue
+
+        data = np.concatenate(bundle["obs_data"])
+        cov = 0.5 * (bundle["cov"] + bundle["cov"].T)
+        err = np.sqrt(np.diag(cov))
+        C_inv = np.linalg.inv(cov)
+        BB = cc.bb_basis(bundle["obs_ells"], bundle["obs_s"], data.size, powers=_BB_POWERS)
+        chi2_m = _chi2_marg(data, pred, C_inv, BB)
+        dof = data.size - BB.shape[1]
+        pred_bb = pred + _best_fit_bb(data, pred, C_inv, BB)
+
+        idx = 0
+        for j, ell in enumerate(bundle["obs_ells"]):
+            s = np.asarray(bundle["obs_s"][j]); s2 = s ** 2
+            n = len(s); c = colors[str(ell)]; sl = slice(idx, idx + n)
+            ax.errorbar(s, s2 * data[sl], yerr=s2 * err[sl], fmt="o", ms=3, capsize=2,
+                        color=c, alpha=0.8, zorder=3, label=f"data ℓ={ell}")
+            ax.plot(s, s2 * pred[sl], "--", color=c, lw=1.5, alpha=0.7,
+                    label=f"theory ℓ={ell}")
+            ax.plot(s, s2 * pred_bb[sl], "-", color=c, lw=2, alpha=0.9,
+                    label=f"theory+BB ℓ={ell}")
+            idx += n
+
+        ax.set_xlabel(r"$s$ [$h^{-1}$ Mpc]")
+        ax.set_ylabel(r"$s^2 \xi(s)$ [$h^{-2}$ Mpc$^2$]")
+        ax.set_title(f"{tracer}   b1 = {b1:.2f}\n"
+                     f"χ²(BB-marg)/dof = {chi2_m:.1f}/{dof} = {chi2_m / dof:.2f}")
+        ax.legend(fontsize=7, loc="best")
+        ax.grid(alpha=0.3)
+        ax.axhline(0, color="k", lw=0.5, alpha=0.3)
+
+    fig.suptitle("Pipeline native ξ-theory vs DESI DR1 bundle data\n"
+                 "(dashed = theory, BB=0; solid = theory + best-fit DESI broadband)",
+                 fontsize=12)
+    fig.tight_layout()
+    out = _HERE / "theory_comparison_dr1.png"
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--space", choices=["config", "fourier"], default="config",
-                    help="Covariance frame for the four model series.")
-    args = ap.parse_args()
+    sub = ap.add_subparsers(dest="command")
 
-    data = _gather_config() if args.space == "config" else _gather_fourier()
-    _print_table(data, args.space)
-    _plot(data, _HERE / f"money_{args.space}_dr1.png", args.space)
+    pf = sub.add_parser("forecast", help="Fisher + MCMC σ vs DESI bao-recon (default)")
+    pf.add_argument("--space", choices=["config", "fourier"], default="config",
+                    help="Covariance frame for the four model series.")
+
+    pc = sub.add_parser("cov", help="Grieb Gaussian vs bundle RascalC covariance")
+    pc.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
+    pc.add_argument("--matrix", choices=["corr", "cov", "both"], default="corr",
+                    help="correlation, per-tracer-normalized covariance, or both")
+
+    pt = sub.add_parser("theory", help="pipeline native ξ-theory vs bundle data")
+    pt.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
+
+    args = ap.parse_args()
+    cmd = args.command or "forecast"
+    if cmd == "forecast":
+        run_forecast(getattr(args, "space", "config"))
+    elif cmd == "cov":
+        run_cov(args.matrix, args.tracers)
+    elif cmd == "theory":
+        run_theory(args.tracers)
 
 
 if __name__ == "__main__":

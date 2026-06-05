@@ -1,8 +1,26 @@
-# prep_covar.py — Changelog of investigation and changes
+# BAO forecast pipeline — Changelog of investigation and changes
 
 Running log of attempts to make the BAO Fisher forecast pipeline
 fully cosmology-driven (no DESI-derived inputs, no fudge factors) and
 to close residuals against the published DESI Y1/Y3 σ(DM), σ(DH).
+
+> **Renames (current names ← historical names used in entries below).** This is a
+> dated log, so older entries keep the filenames they used at the time. Current
+> mapping:
+> - `prep_covar.py` → consolidated into `core.py` (+ `fourier_space.py`,
+>   `config_space.py`) on 2026-06-01.
+> - `plot_fisher_vs_desi.py` (and `plot_fisher_vs_desi_v2.py`) → `forecast_comparison.py`
+>   → folded into `comparison_plots.py` (subcommand `forecast`), which also absorbed
+>   `cov_comparison.py` (→ `cov`) and `theory_comparison.py` (→ `theory`).
+> - `plot_pipeline_theory_vs_bundle_production.py` (theory-ξ plot, removed 2026-06-01)
+>   → recovered as `comparison_plots.py theory`.
+> - "money plot" → "forecast comparison plot"; output
+>   `money_{space}_dr1.png` → `forecast_comparison_{space}_dr1.png` (filename kept).
+> - `mcmc_config.py` `--out {money|sweep}` flag removed — one run now writes both
+>   `seed_sweep_xi/{tracer}.json` and (for full-tracer runs) `mcmc_config.json`.
+> - α_SN / Grieb-cov channels: `alpha_sn_check.py` now reuses
+>   `config_space.per_mode_sigma2(return_channels=True)` + `xi_cov_from_sigma2`
+>   (was a private reimplementation).
 
 ## 1. Bias-convention fix (σ8 round-trip removed)
 

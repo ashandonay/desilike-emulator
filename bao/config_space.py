@@ -8,7 +8,7 @@ Frame map (config here  ↔  Fourier in core):
     gaussian_xi_multipole_cov         ↔  the FKP Gaussian cov (cov_engine="desilike")
       + gaussxi_cov_on_bundle_grid       (Grieb 2016 double-Bessel; config-native)
     bundle_fisher_sigmas              ↔  run_fisher / get_bao_fisher_covariance
-    make_log_prob / run_mcmc          ↔  mcmc_fourier.py (the Fourier-space MCMC);
+    make_log_prob                     ↔  mcmc_fourier.py (the Fourier-space MCMC);
                                           driven for config space by mcmc_config.py
 
 Space-agnostic DESI / Fourier *reference* σ (bao-recon, desi_data.csv, production
@@ -26,7 +26,7 @@ The original scattered scripts had drifted to two slightly different fids (the M
 builder sat at h·r_d 99.53, ~0.45% off); they are now reconciled onto _FID.
 """
 from __future__ import annotations
-import os, sys, argparse, json, warnings
+import os, sys, json, warnings
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 os.environ.setdefault("MPLBACKEND", "Agg")
 from pathlib import Path
@@ -35,7 +35,6 @@ from typing import Dict, Sequence, Tuple
 import h5py
 import numpy as np
 import pandas as pd
-import emcee
 from numpy.polynomial.legendre import leggauss
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -74,9 +73,6 @@ _NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1"}
 # (dk=1e-3) is safe even on the fine theory s-grid and ~5× cheaper than Nk=1e4,
 # which matters for the cosmology-varying emulator cov build.
 K_WIDE = np.linspace(1e-4, 2.0, 2000)
-
-_OUT_DIR = Path(__file__).resolve().parent / "mcmc_results_bundle_native"
-_OUT_DIR.mkdir(exist_ok=True)
 
 # DESI correlation-recon-poles bundles: (filename, z_eff).
 _BUNDLES = {
@@ -135,12 +131,6 @@ def _get_ntracers(tracer):
     return {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}[_NAME_MAP.get(tracer, tracer)]
 
 
-def _get_desi_std(tracer):
-    df = pd.read_csv(_DR1_DIR / "desi_data.csv")
-    sub = df[df["tracer"] == _NAME_MAP.get(tracer, tracer)]
-    return {row["quantity"]: float(row["std"]) for _, row in sub.iterrows()}
-
-
 # ===========================================================================
 # §2  Config-space Gaussian covariance (Grieb 2016, double-Bessel)
 #     ↔ the FKP P-space Gaussian cov in core (cov_engine="desilike")
@@ -163,12 +153,18 @@ def per_mode_sigma2(
     slices: NZSlices,
     P_FKP: float = P_FKP_DEFAULT,
     n_mu: int = 64,
-) -> Dict[Tuple[int, int], np.ndarray]:
+    return_channels: bool = False,
+):
     """Per-mode multipole variance sigma^2_{l,l'}(k) (Grieb Eq. 19).
 
     Identical angular/FKP structure to fkp_analytic_cov.fkp_analytic_cov, but
     WITHOUT the k-shell bin_factor (that is supplied by the Bessel transform
     in gaussian_xi_multipole_cov). Returns a dict of (la, lb) -> (Nk,) arrays.
+
+    If ``return_channels`` is True, returns the three physical channels
+    ``(sv, cross, shot)`` — sample-variance (∝P²), cross (∝P) and pure-shot
+    (∝P⁰) — as separate (la, lb) dicts instead of their sum. Used by the α_SN
+    analysis (alpha_sn_check.py), which rescales only the shot channel.
     """
     k = np.asarray(k, dtype=np.float64)
     P_ells_in = np.asarray(P_ells_in, dtype=np.float64)
@@ -189,17 +185,22 @@ def per_mode_sigma2(
         P_kmu += L[ell][:, None] * P_ells_in[i_ell][None, :]
 
     sigma2: Dict[Tuple[int, int], np.ndarray] = {}
+    sv: Dict[Tuple[int, int], np.ndarray] = {}
+    cross: Dict[Tuple[int, int], np.ndarray] = {}
+    shot: Dict[Tuple[int, int], np.ndarray] = {}
     for la in ells_obs:
         for lb in ells_obs:
             LaLb = L[la] * L[lb]
             mean_LLP2 = 0.5 * np.sum((LaLb * mu_w)[:, None] * P_kmu ** 2, axis=0)
             mean_LLP = 0.5 * np.sum((LaLb * mu_w)[:, None] * P_kmu, axis=0)
             mean_LL = 0.5 * float(np.sum(LaLb * mu_w))
-            sigma2[(la, lb)] = (
-                (2 * la + 1) * (2 * lb + 1) * 2.0 / I22 ** 2 * (
-                    mean_LLP2 * I44 + 2.0 * mean_LLP * I34 + mean_LL * I24
-                )
-            )
+            pre = (2 * la + 1) * (2 * lb + 1) * 2.0 / I22 ** 2
+            sv[(la, lb)] = pre * mean_LLP2 * I44       # sample variance (∝ P²)
+            cross[(la, lb)] = pre * 2.0 * mean_LLP * I34   # cross (∝ P)
+            shot[(la, lb)] = pre * mean_LL * I24       # pure shot (∝ P⁰)
+            sigma2[(la, lb)] = sv[(la, lb)] + cross[(la, lb)] + shot[(la, lb)]
+    if return_channels:
+        return sv, cross, shot
     return sigma2
 
 
@@ -265,6 +266,26 @@ def gaussian_xi_multipole_cov(
     (Nell*Ns, Nell*Ns) covariance, block-ordered by ells_obs (matching the
     desilike / bundle xi data-vector stacking: all s for l=0, then l=2, ...).
     """
+    sigma2 = per_mode_sigma2(k, P_ells_in, ells_in, ells_obs, slices,
+                             P_FKP=P_FKP, n_mu=n_mu)
+    return xi_cov_from_sigma2(s, ells_obs, k, sigma2, ds=ds, jbar_cache=jbar_cache)
+
+
+def xi_cov_from_sigma2(
+    s: np.ndarray,
+    ells_obs: Sequence[int],
+    k: np.ndarray,
+    sigma2: Dict[Tuple[int, int], np.ndarray],
+    ds: float | np.ndarray | None = None,
+    jbar_cache: Dict[int, np.ndarray] | None = None,
+) -> np.ndarray:
+    """Bessel double-transform a per-mode σ²_{ℓℓ'}(k) (from per_mode_sigma2) into
+    the ξ-multipole covariance on the s-grid, block-ordered by ells_obs.
+
+    Separating per_mode_sigma2 from this transform lets callers transform single
+    channels (e.g. the α_SN shot-noise rescaling in alpha_sn_check.py) and
+    recombine; gaussian_xi_multipole_cov is just per_mode_sigma2 + this.
+    """
     s = np.asarray(s, dtype=np.float64)
     k = np.asarray(k, dtype=np.float64)
     Ns = s.size
@@ -278,13 +299,9 @@ def gaussian_xi_multipole_cov(
     else:
         dk[:] = 0.005
 
-    sigma2 = per_mode_sigma2(k, P_ells_in, ells_in, ells_obs, slices,
-                             P_FKP=P_FKP, n_mu=n_mu)
-
-    # Bin-averaged (or point) spherical Bessel j_l(k s): (Ns, Nk) per ell.
-    # These depend ONLY on (ell, k, s, ds) — all fixed across cosmologies — so a
-    # generator sweeping many cosmologies passes a precomputed jbar_cache (see
-    # build_jbar_cache) and this expensive step is skipped entirely.
+    # Bin-averaged (or point) spherical Bessel j_l(k s): (Ns, Nk) per ell. These
+    # depend ONLY on (ell, k, s, ds) — fixed across cosmologies — so a sweep passes
+    # a precomputed jbar_cache (build_jbar_cache) and skips this expensive step.
     if jbar_cache is None:
         j_cache = {ell: _binavg_spherical_jn(ell, k, s, ds) for ell in set(ells_obs)}
     else:
@@ -304,9 +321,8 @@ def gaussian_xi_multipole_cov(
             block = sign * inv2pi2 * (ja * integrand_w) @ jb.T  # (Ns, Ns)
             C[ia * Ns:(ia + 1) * Ns, ib * Ns:(ib + 1) * Ns] = block
 
-    # Enforce symmetry (kills tiny asymmetries from the la<->lb sign/measure).
-    C = 0.5 * (C + C.T)
-    return C
+    # Symmetrize (kills tiny asymmetries from the la<->lb sign/measure).
+    return 0.5 * (C + C.T)
 
 
 def build_jbar_cache(ells, k, s, ds):
@@ -886,123 +902,6 @@ def make_log_prob(info, native, bundle, apmode, tracer,
         return lp - 0.5 * chi2
 
     return log_prob, param_names, fid
-
-
-def run_mcmc(tracer, apmode, nwalkers, max_iterations, burnin_frac, seed,
-             alpha_low, alpha_high, desi_canonical_priors=False,
-             freeze_nuisance=False, bb_basis="default"):
-    tags = []
-    if desi_canonical_priors: tags.append("DESI canonical Σ priors")
-    if freeze_nuisance: tags.append("Σ/σ_s/dbeta FROZEN to fid")
-    if bb_basis != "default": tags.append(f"BB={bb_basis}")
-    tag = f" [{', '.join(tags)}]" if tags else ""
-    print(f"\n{'=' * 70}\n  {tracer}  (apmode={apmode}, NATIVE ξ-theory){tag}\n{'=' * 70}", flush=True)
-    info, native, bundle = build_native_theory_mcmc(tracer, apmode)
-    log_prob, param_names, fid = make_log_prob(
-        info, native, bundle, apmode, tracer,
-        alpha_low=alpha_low, alpha_high=alpha_high,
-        desi_canonical_priors=desi_canonical_priors,
-        freeze_nuisance=freeze_nuisance,
-        bb_basis=bb_basis)
-    ndim = len(param_names)
-    rng = np.random.default_rng(seed)
-    p0 = np.empty((nwalkers, ndim), dtype=np.float64)
-    for i, p in enumerate(param_names):
-        if p in ("qiso", "qpar", "qper"):
-            p0[:, i] = 1.0 + 0.02 * rng.standard_normal(nwalkers)
-        elif p in ("sigmas", "sigmapar", "sigmaper"):
-            p0[:, i] = np.maximum(fid[p] + 0.2 * rng.standard_normal(nwalkers), 0.2)
-        else:
-            p0[:, i] = fid[p] + 0.05 * rng.standard_normal(nwalkers)
-
-    print(f"  ndim={ndim}, walkers={nwalkers}, iter={max_iterations}, seed={seed}", flush=True)
-    print(f"  params: {param_names}", flush=True)
-    print(f"  fid:    {[f'{fid[p]:.3f}' for p in param_names]}", flush=True)
-
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_prob)
-    sampler.run_mcmc(p0, max_iterations, progress=False)
-    chain = sampler.get_chain()
-    n_burn = int(burnin_frac * max_iterations)
-    flat = chain[n_burn:].reshape(-1, ndim)
-    print(f"  acceptance: {np.mean(sampler.acceptance_fraction):.3f}", flush=True)
-    print(f"  chain means / stds:", flush=True)
-    for i, p in enumerate(param_names):
-        m = float(np.mean(flat[:, i])); s = float(np.std(flat[:, i], ddof=1))
-        print(f"    {p:<10} mean={m:7.4f}  std={s:7.4f}  fid={fid[p]:7.4f}", flush=True)
-
-    template = info["template"]
-    z = float(TRACER_CONFIGS[tracer]["z_eff"])
-    DH = float(template.DH_over_rd_fid)
-    DM = float(template.DM_over_rd_fid)
-    DV = (z * DM ** 2 * DH) ** (1.0 / 3.0)
-    if apmode == "qiso":
-        i_q = param_names.index("qiso")
-        sig_q = float(flat[:, i_q].std(ddof=1))
-        sig_DH = sig_q * DH; sig_DM = sig_q * DM; sig_DV = sig_q * DV
-    else:
-        ip = param_names.index("qpar"); iq = param_names.index("qper")
-        qpar = flat[:, ip]; qper = flat[:, iq]
-        sig_qpar = float(qpar.std(ddof=1)); sig_qper = float(qper.std(ddof=1))
-        cov_qq = np.cov(qpar, qper, ddof=1)
-        grad = np.array([1.0 / 3.0, 2.0 / 3.0])
-        var_lnDV = float(grad @ cov_qq @ grad)
-        sig_DH = sig_qpar * DH; sig_DM = sig_qper * DM
-        sig_DV = float(np.sqrt(max(var_lnDV, 0.0))) * DV
-
-    desi = _get_desi_std(tracer)
-    desi_DV = desi.get("DV_over_rs", float("nan"))
-    desi_DH = desi.get("DH_over_rs", float("nan"))
-    desi_DM = desi.get("DM_over_rs", float("nan"))
-    def _r(s, d): return s / d if (np.isfinite(d) and d > 0) else float("nan")
-
-    print(f"  σ(DH/rd) = {sig_DH:.4f}    DESI = {desi_DH:.4f}    M/D = {_r(sig_DH, desi_DH):.3f}", flush=True)
-    print(f"  σ(DM/rd) = {sig_DM:.4f}    DESI = {desi_DM:.4f}    M/D = {_r(sig_DM, desi_DM):.3f}", flush=True)
-    print(f"  σ(DV/rd) = {sig_DV:.4f}    DESI = {desi_DV:.4f}    M/D = {_r(sig_DV, desi_DV):.3f}", flush=True)
-
-    result = {
-        "tracer": tracer, "apmode": apmode, "source": "bundle_native_xi_theory",
-        "sig_DH": sig_DH, "sig_DM": sig_DM, "sig_DV": sig_DV,
-        "desi_DH": desi_DH, "desi_DM": desi_DM, "desi_DV": desi_DV,
-        "ratio_DH": _r(sig_DH, desi_DH), "ratio_DM": _r(sig_DM, desi_DM), "ratio_DV": _r(sig_DV, desi_DV),
-    }
-    suffix = "" if apmode == "qparqper" else f"_{apmode}"
-    if desi_canonical_priors:
-        suffix += "_desipriors"
-    if freeze_nuisance:
-        suffix += "_frozen"
-    if bb_basis != "default":
-        suffix += f"_bb{bb_basis}"
-    out_path = _OUT_DIR / f"{tracer}_dr1_native_theory{suffix}.json"
-    out_path.write_text(json.dumps(result, indent=2))
-    return result
-
-
-def _mcmc_cli():
-    ap = argparse.ArgumentParser(description="Native ξ-theory MCMC on bundle data.")
-    ap.add_argument("--tracers", nargs="+", default=["BGS"])
-    ap.add_argument("--apmode", choices=["qparqper", "qiso"], default="qiso")
-    ap.add_argument("--nwalkers", type=int, default=48)
-    ap.add_argument("--max-iterations", type=int, default=3000)
-    ap.add_argument("--burnin-frac", type=float, default=0.3)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--alpha-low", type=float, default=0.8)
-    ap.add_argument("--alpha-high", type=float, default=1.2)
-    ap.add_argument("--desi-canonical-priors", action="store_true",
-                    help="Override Σ_par,Σ_⊥,σ_s prior centers to Adame+24 canonical values")
-    ap.add_argument("--freeze-nuisance", action="store_true",
-                    help="Pin Σ_par,Σ_⊥,σ_s,dbeta to fid (only q,b1 are sampled)")
-    ap.add_argument("--bb-basis", choices=["default", "desi_adame24"], default="default",
-                    help="BB basis: 'default' (powers=-3,-2,-1,0,1) or 'desi_adame24' (powers=0,2)")
-    args = ap.parse_args()
-    for t in args.tracers:
-        try:
-            run_mcmc(t, args.apmode, args.nwalkers, args.max_iterations,
-                     args.burnin_frac, args.seed, args.alpha_low, args.alpha_high,
-                     desi_canonical_priors=args.desi_canonical_priors,
-                     freeze_nuisance=args.freeze_nuisance,
-                     bb_basis=args.bb_basis)
-        except Exception as e:
-            print(f"[{t}] FAILED: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

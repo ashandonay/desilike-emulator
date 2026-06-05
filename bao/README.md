@@ -26,7 +26,8 @@ mcmc_fourier.py             Fourier-space MCMC                    (--cov analyti
 mcmc_config.py              config-space MCMC                     (--cov gaussxi|bundle)
 
 reference_sigmas.py      DESI reference σ (bao-recon, desi_data.csv) — frame-agnostic
-plot_fisher_vs_desi.py   unified money plot  (--space config|fourier) — Fisher + MCMC vs DESI
+comparison_plots.py      comparison plots: [forecast|cov|theory] (default forecast)
+alpha_sn_check.py        α_SN fit to the bundle cov + amplitude/structure decomposition
 ```
 
 ### Dependency direction (acyclic)
@@ -133,34 +134,83 @@ python mcmc_fourier.py --tracers LRG2 QSO --cov analytic --dataset dr1
 python mcmc_fourier.py --cov bundle        # DR1 RascalC cov_ξ substituted as precision
 
 # config — native-ξ theory + Grieb/bundle cov (config_space §4)
-python mcmc_config.py --out money          # 1 seed, all tracers  → mcmc_config.json
-python mcmc_config.py --out sweep --tracers LRG1 --seeds 42 43 44 45 46
-                                           # → seed_sweep_xi/LRG1.json  (chain-noise)
+python mcmc_config.py                       # all tracers → seed_sweep_xi/ + mcmc_config.json
+python mcmc_config.py --tracers LRG1 --seeds 42 43 44 45 46
+                                           # → seed_sweep_xi/LRG1.json  (chain-noise; partial run skips mcmc_config.json)
 ```
 
 - `mcmc_fourier.py --cov {analytic|bundle}`: `analytic` = pipeline Gaussian cov;
   `bundle` = DESI DR1 cov_ξ substituted via `precision = Mᵀ cov_ξ⁻¹ M`, `M = W·H_Hankel`.
   `--apmode auto` → `qiso` for BGS/QSO. Writes `mcmc_results_fourier/`.
   Needs `nwalkers ≥ 2·ndim` (default 64).
-- `mcmc_config.py --out {money|sweep}`: `money` writes `mcmc_config.json`
-  (one combined file, single seed); `sweep` writes per-tracer
-  `seed_sweep_xi/{tracer}.json` over `--seeds` (for chain-noise error bars).
-  Both consumed by `plot_fisher_vs_desi.py` / `aggregate_seed_sweep.py`.
+- `mcmc_config.py`: one run writes the per-tracer `seed_sweep_xi/{tracer}.json`
+  over `--seeds` (for chain-noise error bars) **and** the combined
+  `mcmc_config.json` from the seed[0] slice (single-seed scatter points). The
+  combined file is regenerated only when the run covers all tracers; a partial
+  `--tracers` run writes just the sweep files. Both consumed by
+  `comparison_plots.py forecast`.
 
 Reference σ for both is **DESI bao-recon stat-only** (not `desi_data.csv`, whose
 published σ folds in the systematic budget); see `reference_sigmas.py`.
 
-## 3. Money plot
+## 3. Comparison plots (`comparison_plots.py`)
 
-`plot_fisher_vs_desi.py --space {config|fourier}` draws the 3-panel money plot
-(σ_DH/rd, σ_DM/rd, σ_DV/rd) comparing, per tracer, Fisher and MCMC in both the
-analytic and bundle covariance against DESI bao-recon. It computes the Fisher
-series live and loads the MCMC series (config: `mcmc_config.json`, preferring
-`seed_sweep_xi/`; fourier: `mcmc_results_fourier/`). Writes `money_{space}_dr1.png`.
+One script, three plots, selected by a positional subcommand (default `forecast`):
+
+```bash
+# forecast σ: Fisher + MCMC vs DESI bao-recon (default; bare run == forecast config)
+python comparison_plots.py                       # → forecast_comparison_config_dr1.png
+python comparison_plots.py forecast --space fourier
+
+# ξ-covariance: Grieb Gaussian vs DESI bundle RascalC, 3×6 grid
+python comparison_plots.py cov --matrix both     # → cov_comparison_{corr,cov}_dr1.png
+
+# theory ξ: pipeline native ξ(s) vs bundle data
+python comparison_plots.py theory                # → theory_comparison_dr1.png
+```
+
+- `comparison_plots.py [forecast] --space {config|fourier}` — 3-panel σ(DH/DM/DV)
+  comparing, per tracer, Fisher and MCMC in both the analytic and bundle covariance
+  against DESI bao-recon. Fisher live; MCMC from `mcmc_config.json` (preferring
+  `seed_sweep_xi/`; fourier: `mcmc_results_fourier/`). →
+  `forecast_comparison_{space}_dr1.png`.
+- `comparison_plots.py cov --matrix {corr|cov|both}` — 3×6 grid of analytic Grieb
+  Gaussian vs DESI bundle RascalC covariance and their difference. →
+  `cov_comparison_{matrix}_dr1.png`.
+- `comparison_plots.py theory` — 2×3 grid of s²·ξ_ℓ: bundle data vs pipeline native
+  ξ-theory (BB=0) vs theory + best-fit broadband. → `theory_comparison_dr1.png`.
+
+For the α_SN covariance analysis (shot-noise rescaling fit to the bundle cov), see
+`alpha_sn_check.py`.
 
 The Fourier-frame **bundle** Fisher substitutes the DESI bundle ξ-cov as a Fourier
 precision (`Mᵀ cov_ξ⁻¹ M`); the config frame's native-ξ bundle Fisher is the
 faithful one (the Fourier M-projection loses information and overshoots).
+
+---
+
+## 4. DESI systematic-error layer (post-emulator)
+
+The emulator predicts **statistical** σ (matched to `bao-recon stat-only`). DESI's
+published total adds a small, mock-calibrated systematic budget in quadrature,
+`σ_tot² = σ_stat² + σ_sys²`. That budget is *not* first-principles and cannot be
+emulated across cosmology/N_tracers, so it is applied as a fixed, opt-in scaling
+**after** the emulator — the training data stays clean σ_stat.
+
+```python
+from reference_sigmas import apply_desi_syst, DESI_SYST_INFLATION
+sigma_tot = apply_desi_syst(sigma_stat_triplet, "LRG2")   # array (...,3) or dict
+```
+
+- `DESI_SYST_INFLATION[tracer][q] = σ(bao-recon_syst)/σ(bao-recon_stat-only)` — DESI's
+  *measured* per-tracer, per-distance inflation (not a tuned coefficient). Range
+  ~1.00–1.07; BGS/QSO ≈ +0.6–0.7 %, largest are LRG3+ELG1 q∥ and ELG2 q⊥ (~+6 %).
+- Diagonal scaling on `[DH, DM, DV]` (SIGMA_TARGET_NAMES order); iso tracers (BGS, QSO)
+  carry the single qiso factor on all three. Fixed at the DESI fiducial / DR1 n̄ — the
+  one assumption is that `σ_sys/σ_stat` is roughly cosmology- and n̄-independent (a
+  second-order error since the budget is ≤7 %).
+- Regenerate / verify the table from the `_syst` .h5 files (must be downloaded):
+  `python reference_sigmas.py --regen-syst` (flags any drift vs the frozen table).
 
 ---
 

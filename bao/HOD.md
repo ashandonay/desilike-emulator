@@ -1,6 +1,6 @@
 # Halo Occupation Distribution model used in the BAO forecast pipeline
 
-This document describes the HOD model implemented in `prep_covar.py`
+This document describes the HOD model implemented in `core.py`
 for the BAO Fisher forecast pipeline, including the per-tracer
 parameter choices, the cosmology-dependent quantities, and the
 literature provenance for every input.
@@ -119,7 +119,7 @@ from the linear matter power spectrum via `cosmoprimo`'s
 `fo.sigma_rz(R, z, of='delta_cb')` (CDM+baryon only, neutrinos kept
 out of the halo-formation source term per Castorina+14 prescription).
 
-Implementation: `_tinker08_f_sigma()` (prep_covar.py line ~657).
+Implementation: `_tinker08_f_sigma()` (core.py line ~583).
 
 ### 4.2 Tinker+10 peak-background-split bias
 
@@ -138,7 +138,7 @@ in. At Δ = 200:
 
 with y = log10(Δ).
 
-Implementation: `_tinker10_b1()` (prep_covar.py line ~644).
+Implementation: `_tinker10_b1()` (core.py line ~570).
 
 This is what enters the HOD integral as `b1_T10` in
 `_hod_halo_props()`.
@@ -167,7 +167,7 @@ confirmed this response is smooth and monotonic across the
 practical emulator grid (20-27% b1 swing across Ωm ∈ [0.25, 0.40] —
 the *correct* physical response).
 
-Implementation: `_hod_halo_props()` (prep_covar.py line 812).
+Implementation: `_hod_halo_props()` (core.py line 738).
 
 ## 6. Assembly bias factor (f_AB)
 
@@ -342,9 +342,6 @@ flow into the BAO Fisher pipeline as:
   conversion via Hubble at z_eff).
 - **f_sat** is exposed for diagnostics and feeds the Σ_⊥ post-recon
   prescription (Σ_⊥ depends on satellite velocity field).
-- **log_M_cut** is used by `_sigma_fog_from_M_eff()` for QSO/BGS
-  cases where centrals also contribute to FoG via their host's
-  virial scale.
 
 ## 9. Known limitations and forward work
 
@@ -430,7 +427,7 @@ treatment.
 
 | File | Purpose |
 |------|---------|
-| `prep_covar.py` | Pipeline entry; HOD integration in `_hod_halo_props()` (line 812); Tinker bias `_tinker10_b1()`; HMF `_tinker08_f_sigma()` |
+| `core.py` | Pipeline entry; HOD integration in `_hod_halo_props()` (line 738); Tinker bias `_tinker10_b1()`; HMF `_tinker08_f_sigma()` |
 | `hod.yaml` | Per-tracer-type shape parameters and assembly_bias_factor with citation blocks |
 | `validate_ab_cosmology_stability.py` | f_AB cosmology stability validation (§33l) |
 | `ab_cosmology_stability.png` | b1 drift diagnostic plot |
