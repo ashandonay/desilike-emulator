@@ -8,8 +8,8 @@ Frame map (config here  ↔  Fourier in core):
     gaussian_xi_multipole_cov         ↔  the FKP Gaussian cov (cov_engine="desilike")
       + gaussxi_cov_on_bundle_grid       (Grieb 2016 double-Bessel; config-native)
     bundle_fisher_sigmas              ↔  run_fisher / get_bao_fisher_covariance
-    make_log_prob                     ↔  mcmc_fourier.py (the Fourier-space MCMC);
-                                          driven for config space by mcmc_config.py
+    make_log_prob                     ↔  mcmc.py --space fourier (Fourier MCMC);
+                                          driven for config space by mcmc.py --space config
 
 Space-agnostic DESI / Fourier *reference* σ (bao-recon, desi_data.csv, production
 Fisher) live in reference_sigmas.py — they are what BOTH frames are compared against.
@@ -906,6 +906,6 @@ def make_log_prob(info, native, bundle, apmode, tracer,
 
 if __name__ == "__main__":
     # Default __main__ runs the cheap shot-noise normalization self-check.
-    # The heavy config-space MCMC CLI lives in mcmc_config.py.
+    # The heavy config-space MCMC CLI lives in mcmc.py --space config.
     ok = _validate_shotnoise_limit()
     sys.exit(0 if ok else 1)

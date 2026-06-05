@@ -37,8 +37,16 @@
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
 #
-#   low, high        N_tracers prior bounds for the LHS sampler. Roughly
-#                    bracket the realistic DR1/DR2/DR3 counts per tracer.
+#   low, high        N_tracers LHS bounds as MULTIPLICATIVE FACTORS on the DESI
+#                    "passed" count: the absolute box is
+#                        [low * passed, high * passed]
+#                    where passed is read at runtime from
+#                    ~/data/desi/bao_{dataset}/desi_data.csv (dataset = dr1|dr2,
+#                    chosen with --dataset; see util.ntracers_range). So the
+#                    same factors transparently rescale to DR1 or DR2 counts.
+#                    Defaults (0.5, 1.5) centre the box on passed (uniform mean
+#                    = passed). passed itself derives from observed via the BED
+#                    passed-fraction.
 #
 # Derived quantities NOT listed here (computed inside the pipeline from
 # n(z) slices + cosmology):
@@ -58,8 +66,8 @@ BGS:
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
-  low: 600000.0
-  high: 1800000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 LRG1:
   tracer_type: LRG
@@ -68,8 +76,8 @@ LRG1:
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
-  low: 500000.0
-  high: 1600000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 LRG2:
   tracer_type: LRG
@@ -78,8 +86,8 @@ LRG2:
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
-  low: 800000.0
-  high: 2400000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 LRG3_ELG1:
   tracer_type: MIX
@@ -88,8 +96,8 @@ LRG3_ELG1:
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
-  low: 2300000.0
-  high: 6800000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 ELG2:
   tracer_type: ELG
@@ -98,8 +106,8 @@ ELG2:
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
-  low: 1900000.0
-  high: 5700000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 QSO:
   tracer_type: QSO
@@ -115,8 +123,8 @@ QSO:
   # Other DESI tracers (BGS, LRG, ELG) use narrow lines with ~50 km/s
   # precision and the contribution is negligible.
   z_error_kms: 600.0
-  low: 700000.0
-  high: 2200000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
 
 Lya_QSO:
   # Marked unsupported until a proper Lyα forecast (Arinyo-i-Prats bias
@@ -124,8 +132,8 @@ Lya_QSO:
   supported: false
   zrange: [1.8, 4.2]
   z_eff: 2.33                    # Lyα currently bypasses the n(z) derivation.
-  low: 650000.0
-  high: 1900000.0
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
   # Lyα flux-bias parameters (Arinyo-i-Prats 2015 model)
   bF0: -0.117
   gamma_bF: 2.9

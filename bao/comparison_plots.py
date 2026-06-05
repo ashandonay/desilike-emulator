@@ -67,43 +67,32 @@ def _is_sparse(tracer):
 # ===========================================================================
 # forecast — Fisher + MCMC σ vs DESI bao-recon (config or fourier frame)
 # ===========================================================================
-def _mcmc_config(tracer, mcmc_raw, which):
-    """Config-space MCMC σ. Prefer the seed sweep (mean ± σ-of-σ); fall back to
-    the single-seed cache (err=0). which ∈ {gaussxi (analytic), bundle}."""
-    sw = _HERE / "seed_sweep_xi" / f"{tracer}.json"
-    if sw.exists():
-        per_seed = json.loads(sw.read_text())[which]   # {seed: {DH,DM,DV}}
-        point, err = {}, {}
-        for q, _ in _QUANTITIES:
-            vals = [s[_MCMC_KEY[q]] for s in per_seed.values()
-                    if s.get(_MCMC_KEY[q]) is not None and np.isfinite(s.get(_MCMC_KEY[q]))]
-            point[q] = float(np.mean(vals)) if vals else float("nan")
-            err[q] = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
-        return point, err
-    d = mcmc_raw.get(tracer, {}).get(which, {})
-    point = {q: float(d.get(_MCMC_KEY[q], float("nan"))) for q, _ in _QUANTITIES}
-    return point, {q: 0.0 for q, _ in _QUANTITIES}
+def _load_mcmc(name):
+    """Load a combined MCMC seed-sweep json ({tracer: {cov: {seed: {...}}}}),
+    returning {} if it hasn't been generated yet."""
+    p = _HERE / name
+    return json.loads(p.read_text()) if p.exists() else {}
 
 
-def _mcmc_fourier(tracer, cov):
-    """Fourier-space MCMC σ from mcmc_results_fourier/. cov ∈ {analytic, bundle}."""
-    suffix = "_qiso" if _is_sparse(tracer) else ""
-    p = _HERE / "mcmc_results_fourier" / f"{tracer}_dr1_{cov}{suffix}.json"
-    if not p.exists():
-        return {q: float("nan") for q, _ in _QUANTITIES}, {q: 0.0 for q, _ in _QUANTITIES}
-    d = json.loads(p.read_text())
-    point = {
-        "DH_over_rs": float(d.get("sigma_DH_over_rd_mcmc", float("nan"))),
-        "DM_over_rs": float(d.get("sigma_DM_over_rd_mcmc", float("nan"))),
-        "DV_over_rs": float(d.get("sigma_DV_over_rd_mcmc", float("nan"))),
-    }
-    return point, {q: 0.0 for q, _ in _QUANTITIES}
+def _mcmc_sweep(tracer, mcmc_raw, which):
+    """MCMC σ as mean ± σ-of-σ over the seed sweep stored in the combined json.
+    mcmc_raw[tracer][which] = {seed: {DH,DM,DV}}. `which` is the cov label
+    (config: gaussxi/bundle; fourier: analytic/bundle). Same schema for both
+    spaces, so one helper serves both."""
+    per_seed = mcmc_raw.get(tracer, {}).get(which, {})
+    point, err = {}, {}
+    for q, _ in _QUANTITIES:
+        vals = [s[_MCMC_KEY[q]] for s in per_seed.values()
+                if s.get(_MCMC_KEY[q]) is not None and np.isfinite(s.get(_MCMC_KEY[q]))]
+        point[q] = float(np.mean(vals)) if vals else float("nan")
+        err[q] = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+    return point, err
 
 
 def _fourier_bundle_fisher(tracer):
     """Fisher with the DESI bundle ξ-cov substituted as the Fourier precision
-    (precision = Mᵀ cov_ξ⁻¹ M, M = W·H_Hankel — same path as mcmc_fourier --cov bundle)."""
-    from mcmc_fourier import _load_bundle, _build_M, _precision_from_cov_xi
+    (precision = Mᵀ cov_ξ⁻¹ M, M = W·H_Hankel — same path as mcmc --space fourier --cov bundle)."""
+    from mcmc import _load_bundle, _build_M, _precision_from_cov_xi
 
     cfg = TRACER_CONFIGS[tracer]
     apmode = "qiso" if _is_sparse(tracer) else "qparqper"
@@ -149,7 +138,7 @@ def _fourier_bundle_fisher(tracer):
 
 
 def _gather_config():
-    mcmc_raw = json.loads((_HERE / "mcmc_config.json").read_text())
+    mcmc_raw = _load_mcmc("mcmc_config.json")
     out = {}
     for t in _TRACERS:
         print(f"== {t} (config) ==", flush=True)
@@ -167,22 +156,23 @@ def _gather_config():
         _, Cg = cc.gaussxi_cov_on_bundle_grid(t, info, bundle)
         fisher_ana = cc.bundle_fisher_sigmas(t, cov_override=Cg)
         recon = rs._recon_sigmas(t, fisher_bun)
-        mcmc_ana, mcmc_ana_err = _mcmc_config(t, mcmc_raw, "gaussxi")
-        mcmc_bun, mcmc_bun_err = _mcmc_config(t, mcmc_raw, "bundle")
+        mcmc_ana, mcmc_ana_err = _mcmc_sweep(t, mcmc_raw, "gaussxi")
+        mcmc_bun, mcmc_bun_err = _mcmc_sweep(t, mcmc_raw, "bundle")
         out[t] = _assemble(t, recon, fisher_ana, mcmc_ana, fisher_bun,
                            mcmc_bun, mcmc_ana_err, mcmc_bun_err)
     return out
 
 
 def _gather_fourier():
+    mcmc_raw = _load_mcmc("mcmc_fourier.json")
     out = {}
     for t in _TRACERS:
         print(f"== {t} (fourier) ==", flush=True)
         fisher_ana = rs._prod_fisher_sigmas(t)
         recon = rs._recon_sigmas(t, fisher_ana)
         fisher_bun = _fourier_bundle_fisher(t)
-        mcmc_ana, mcmc_ana_err = _mcmc_fourier(t, "analytic")
-        mcmc_bun, mcmc_bun_err = _mcmc_fourier(t, "bundle")
+        mcmc_ana, mcmc_ana_err = _mcmc_sweep(t, mcmc_raw, "analytic")
+        mcmc_bun, mcmc_bun_err = _mcmc_sweep(t, mcmc_raw, "bundle")
         out[t] = _assemble(t, recon, fisher_ana, mcmc_ana, fisher_bun,
                            mcmc_bun, mcmc_ana_err, mcmc_bun_err)
     return out
@@ -229,7 +219,9 @@ def _plot_forecast(data, out_path, space):
     tracers = list(_TRACERS)
     display = [_DISPLAY.get(t, t) for t in tracers]
     x = np.arange(len(tracers), dtype=float)
+    # color = cov (analytic blue, bundle orange); shape = estimator (o Fisher, D MCMC).
     c_ana, c_bun = "tab:blue", "tab:orange"
+    m_fisher, m_mcmc = "o", "D"
 
     fig, axes = plt.subplots(3, 1, figsize=(11, 11), sharex=True,
                              constrained_layout=True)
@@ -249,23 +241,22 @@ def _plot_forecast(data, out_path, space):
             ek = src + "_err"
             return [data[tracers[i]][ek][q] for i in xs]
 
-        # Shape = estimator (circle/square Fisher, triangle/diamond MCMC);
-        # color = cov source (blue analytic, orange bundle).
+        # color = cov (analytic/bundle); shape = estimator (o Fisher, D MCMC).
         ax.scatter(*_xy("recon"), marker="x", s=40, color="black",
                    linewidths=1.5, zorder=5)
-        ax.scatter(*_xy("fisher_ana"), marker="o", s=28, color=c_ana,
+        ax.scatter(*_xy("fisher_ana"), marker=m_fisher, s=28, color=c_ana,
                    linewidth=0, zorder=4)
-        ax.scatter(*_xy("fisher_bun"), marker="s", s=24, color=c_bun,
+        ax.scatter(*_xy("fisher_bun"), marker=m_fisher, s=28, color=c_bun,
                    linewidth=0, zorder=4)
-        for src, mk, ms in (("mcmc_ana", "^", 32), ("mcmc_bun", "D", 22)):
+        for src, col in (("mcmc_ana", c_ana), ("mcmc_bun", c_bun)):
             mx, my = _xy(src)
             me = _err(src, mx)
             if any(e > 0 for e in me):
                 ax.errorbar(mx, my, yerr=me, fmt="none",
-                            ecolor=c_ana if src == "mcmc_ana" else c_bun,
+                            ecolor=col,
                             elinewidth=1.3, capsize=4, capthick=1.3, zorder=3)
-            ax.scatter(mx, my, marker=mk, s=ms,
-                       color=c_ana if src == "mcmc_ana" else c_bun,
+            ax.scatter(mx, my, marker=m_mcmc, s=28,
+                       color=col,
                        linewidth=0, zorder=4)
 
         ax.set_ylabel(ylabel)
@@ -275,13 +266,13 @@ def _plot_forecast(data, out_path, space):
     handles = [
         Line2D([0], [0], marker="x", linestyle="", markersize=6, markeredgewidth=1.5,
                color="black", label="DESI (bao-recon)"),
-        Line2D([0], [0], marker="o", linestyle="", markersize=7,
+        Line2D([0], [0], marker=m_fisher, linestyle="", markersize=7,
                markerfacecolor=c_ana, markeredgecolor="none", label="Fisher · analytic cov"),
-        Line2D([0], [0], marker="^", linestyle="", markersize=7,
+        Line2D([0], [0], marker=m_mcmc, linestyle="", markersize=7,
                markerfacecolor=c_ana, markeredgecolor="none", label="MCMC · analytic cov"),
-        Line2D([0], [0], marker="s", linestyle="", markersize=7,
+        Line2D([0], [0], marker=m_fisher, linestyle="", markersize=7,
                markerfacecolor=c_bun, markeredgecolor="none", label="Fisher · bundle cov"),
-        Line2D([0], [0], marker="D", linestyle="", markersize=6,
+        Line2D([0], [0], marker=m_mcmc, linestyle="", markersize=7,
                markerfacecolor=c_bun, markeredgecolor="none", label="MCMC · bundle cov"),
     ]
     axes[0].legend(handles=handles, loc="upper left", bbox_to_anchor=(1.01, 1.0),

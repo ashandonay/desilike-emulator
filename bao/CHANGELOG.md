@@ -16,8 +16,16 @@ to close residuals against the published DESI Y1/Y3 σ(DM), σ(DH).
 >   → recovered as `comparison_plots.py theory`.
 > - "money plot" → "forecast comparison plot"; output
 >   `money_{space}_dr1.png` → `forecast_comparison_{space}_dr1.png` (filename kept).
-> - `mcmc_config.py` `--out {money|sweep}` flag removed — one run now writes both
->   `seed_sweep_xi/{tracer}.json` and (for full-tracer runs) `mcmc_config.json`.
+> - `mcmc_config.py` `--out {money|sweep}` flag removed; the `seed_sweep_xi/`
+>   directory was then folded into the combined json (2026-06-04) — the writers each
+>   produce a single merge-updated `mcmc_{config,fourier}.json` holding the full
+>   sweep, schema `{tracer: {cov: {seed: {DH,DM,DV}}}}`.
+> - `mcmc_config.py` + `mcmc_fourier.py` → **consolidated into `mcmc.py`**
+>   (2026-06-04), one CLI with `--space {config,fourier}`; shared orchestration /
+>   seed-loop / json-merge / σ-reduction, space-specific sampling kept as internal
+>   `_sweep_{config,fourier}`. Output filenames unchanged (`mcmc_{space}.json`).
+>   (Not to be confused with the historical `mcmc_bao.py` in older dated entries
+>   below — that was the pre-split Fourier MCMC script, a different file.)
 > - α_SN / Grieb-cov channels: `alpha_sn_check.py` now reuses
 >   `config_space.per_mode_sigma2(return_channels=True)` + `xi_cov_from_sigma2`
 >   (was a private reimplementation).

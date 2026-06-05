@@ -1871,6 +1871,11 @@ def _worker_init():
 
     warnings.filterwarnings("ignore")
     logging.disable(logging.CRITICAL)
+    # Defense-in-depth single-threading (the authoritative setting is in the
+    # parent before Pool creation, so spawn children inherit it pre-import).
+    for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+               "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(_v, "1")
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ.pop("DISPLAY", None)
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
@@ -1929,7 +1934,15 @@ def generate_dataset(
 
         ctx = mp.get_context("spawn")
         os.environ["_PREP_COVAR_WORKER"] = "1"
-        print(f"Using {workers} worker processes (spawn)")
+        # Pin each worker to a single BLAS/OpenMP thread. The compute is
+        # embarrassingly parallel over samples, so N single-threaded processes
+        # beat N processes each spawning a full BLAS thread pool — the latter
+        # oversubscribes the cores (load >> ncores) and thrashes. Set here in the
+        # parent so the spawned children inherit it before they import numpy.
+        for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                   "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            os.environ[_v] = "1"
+        print(f"Using {workers} worker processes (spawn), 1 BLAS thread each")
         pool = ctx.Pool(workers, initializer=_worker_init)
         t_start = _time.perf_counter()
 

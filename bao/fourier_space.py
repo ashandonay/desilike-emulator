@@ -59,6 +59,7 @@ from util import (
     TRACER_TYPE_CHOICES,
     get_default_save_path,
     get_tracer_config,
+    ntracers_range,
     parse_priors,
     save_dataset,
 )
@@ -516,12 +517,18 @@ def main() -> None:
              "If omitted, auto-increments to the next available version.",
     )
     parser.add_argument(
+        "--dataset", type=str, default="dr1", choices=["dr1", "dr2"],
+        help="DESI release whose 'passed' counts anchor the N_tracers box "
+             "(box = tracers.yaml low/high FACTORS x passed[dataset]).",
+    )
+    parser.add_argument(
         "--ntracers-range",
         type=float,
         nargs=2,
         default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
-        help="Override the N_tracers prior range. Defaults to tracer-bin low/high from tracers.yaml.",
+        help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
+             "tracers.yaml low/high factors x the --dataset passed count.",
     )
     parser.add_argument(
         "--priors-json",
@@ -572,17 +579,10 @@ def main() -> None:
         priors = {k: dict(DEFAULT_PRIORS[k]) for k in varied_keys}
 
     if args.ntracers_range is not None:
-        priors["N_tracers"] = {
-            "dist": "uniform",
-            "low": args.ntracers_range[0],
-            "high": args.ntracers_range[1],
-        }
+        nt_low, nt_high = args.ntracers_range
     else:
-        priors["N_tracers"] = {
-            "dist": "uniform",
-            "low": float(tracer_bin_cfg["low"]),
-            "high": float(tracer_bin_cfg["high"]),
-        }
+        nt_low, nt_high = ntracers_range(args.tracer_bin, args.dataset)
+    priors["N_tracers"] = {"dist": "uniform", "low": nt_low, "high": nt_high}
 
     all_cosmo_keys = {"Om", "Ok", "w0", "wa", "hrdrag"}
     fixed_keys = all_cosmo_keys - set(model_params)
@@ -595,7 +595,8 @@ def main() -> None:
 
     save_path = os.path.abspath(
         args.save_path if args.save_path else
-        get_default_save_path(analysis="bao", quantity="covar", cosmo_model=cosmo_model)
+        get_default_save_path(analysis="bao", quantity="covar",
+                              cosmo_model=cosmo_model, dataset=args.dataset)
     )
 
     print(f"Tracer bin: {args.tracer_bin}")

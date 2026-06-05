@@ -156,29 +156,46 @@ def get_tracer_config(tracer_bin: str) -> Dict[str, object]:
     return cfg
 
 
-_DR1_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1"}
-_DR1_NTRACERS_CACHE: Dict[str, float] = {}
+_CSV_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
+_NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {csv_label: passed}
+
+
+def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
+    """Return the DESI 'passed' N_tracers for ``tracer_bin`` from
+    ``~/data/desi/bao_{dataset}/desi_data.csv`` (dataset in {dr1, dr2}).
+
+    The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
+    pipeline configuration that compares predictions against bundle data must
+    use the actual sample size for that tracer/release — not a generic default.
+    Using a mismatched N silently shifts the HOD-weighted b1 and invalidates
+    downstream b1/f_AB calibration.
+    """
+    if dataset not in _NTRACERS_CACHE:
+        import pandas as pd
+        path = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv"
+        df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
+        _NTRACERS_CACHE[dataset] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
+    cache = _NTRACERS_CACHE[dataset]
+    key = _CSV_NAME_MAP.get(tracer_bin, tracer_bin)
+    if key not in cache:
+        raise KeyError(f"No {dataset} N_tracers for {tracer_bin!r} (looked up as {key!r}). "
+                       f"Available: {sorted(cache)}")
+    return cache[key]
 
 
 def dr1_ntracers(tracer_bin: str) -> float:
-    """Return DR1 'passed' N_tracers for ``tracer_bin`` from desi_data.csv.
+    """Back-compat DR1 wrapper for :func:`ntracers`."""
+    return ntracers(tracer_bin, "dr1")
 
-    The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
-    pipeline configuration that compares predictions against DR1 bundle data
-    must use the actual DR1 sample size for that tracer — not a generic
-    default. Using a mismatched N silently shifts the HOD-weighted b1 and
-    invalidates downstream b1/f_AB calibration.
-    """
-    if not _DR1_NTRACERS_CACHE:
-        import pandas as pd
-        path = Path.home() / "data" / "desi" / "bao_dr1" / "desi_data.csv"
-        df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
-        _DR1_NTRACERS_CACHE.update({r["tracer"]: float(r["passed"]) for _, r in df.iterrows()})
-    key = _DR1_NAME_MAP.get(tracer_bin, tracer_bin)
-    if key not in _DR1_NTRACERS_CACHE:
-        raise KeyError(f"No DR1 N_tracers for {tracer_bin!r} (looked up as {key!r}). "
-                       f"Available: {sorted(_DR1_NTRACERS_CACHE)}")
-    return _DR1_NTRACERS_CACHE[key]
+
+def ntracers_range(tracer_bin: str, dataset: str = "dr1") -> Tuple[float, float]:
+    """Absolute N_tracers LHS bounds for ``tracer_bin``: the per-tracer
+    ``low``/``high`` *multiplicative factors* in tracers.yaml times the DESI
+    ``passed`` count for ``dataset``. E.g. factors (0.5, 1.5) -> [0.5*passed,
+    1.5*passed], a box centred on the passed count."""
+    cfg = get_tracer_config(tracer_bin)
+    p = ntracers(tracer_bin, dataset)
+    return float(cfg["low"]) * p, float(cfg["high"]) * p
 
 
 def build_model(analysis: str, architecture: str, **kwargs) -> nn.Module:
@@ -351,7 +368,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None):
                 return mod.run_fisher(sample, **_kw)
             priors = dict(mod.DEFAULT_PRIORS)
             if tracer_bin_cfg:
-                priors["N_tracers"] = {"dist": "uniform", "low": tracer_bin_cfg["low"], "high": tracer_bin_cfg["high"]}
+                _nt_lo, _nt_hi = ntracers_range(tracer_bin)
+                priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
             return priors, mod.TARGET_NAMES, ground_truth_fn, None
         elif quantity == "mean":
             mod = _load_module("shapefit_prep_mean", os.path.join(_here, "shapefit", "prep_mean.py"))
@@ -380,7 +398,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None):
                 return mod.run_fisher(sample, **_kw)
             priors = dict(mod.DEFAULT_PRIORS)
             if tracer_bin_cfg:
-                priors["N_tracers"] = {"dist": "uniform", "low": tracer_bin_cfg["low"], "high": tracer_bin_cfg["high"]}
+                _nt_lo, _nt_hi = ntracers_range(tracer_bin)
+                priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
             return priors, mod.TARGET_NAMES, ground_truth_fn, None
         else:
             raise ValueError(f"Unknown quantity for bao: {quantity}")
@@ -389,11 +408,16 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None):
         raise ValueError(f"Unknown analysis: {analysis}")
 
 
-def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean", cosmo_model: str | None = None) -> str:
+def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
+                          cosmo_model: str | None = None,
+                          dataset: str | None = None) -> str:
     scratch = os.environ.get("SCRATCH")
     if not scratch:
         raise EnvironmentError("SCRATCH is not set; please pass --save-path explicitly.")
+    # training_data/{analysis}/[{dataset}/][{cosmo_model}/]{quantity}
     parts = [scratch, "bedcosmo", "num_tracers", "emulator", "training_data", analysis]
+    if dataset is not None:
+        parts.append(dataset)
     if cosmo_model is not None:
         parts.append(cosmo_model)
     parts.append(quantity)

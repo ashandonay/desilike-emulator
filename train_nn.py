@@ -293,6 +293,14 @@ def main() -> None:
         help="Cosmology model defining the parameter set (affects data path). Default: 'base'.",
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        choices=["dr1", "dr2"],
+        help="DESI release subdir in the data path (bao: {dataset}/{cosmo_model}/"
+             "{quantity}). Omit for analyses without a dataset split (e.g. shapefit).",
+    )
+    parser.add_argument(
         "--nn-model",
         type=str,
         default=None,
@@ -364,7 +372,7 @@ def main() -> None:
     architecture = model_cfg.get("architecture", "resnet")
     print(f"Loaded training config for {args.analysis}/{config_key} (architecture={architecture}): {model_cfg}")
 
-    root_data_dir = get_default_save_path(analysis=args.analysis, quantity=args.quantity, cosmo_model=args.cosmo_model)
+    root_data_dir = get_default_save_path(analysis=args.analysis, quantity=args.quantity, cosmo_model=args.cosmo_model, dataset=args.dataset)
 
     # Resolve data path
     if os.path.isabs(args.data_dir) and os.path.isdir(args.data_dir):

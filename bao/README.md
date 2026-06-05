@@ -22,8 +22,8 @@ core.py                  shared base: BAO likelihood + cosmology + sampling engi
 fkp_analytic_cov.py      FKP / Grieb cov building blocks (used by config_space)
 
 generate_emulator_data.py   unified Fisher training-data runner   (--space fourier|config)
-mcmc_fourier.py             Fourier-space MCMC                    (--cov analytic|bundle)
-mcmc_config.py              config-space MCMC                     (--cov gaussxi|bundle)
+generate_training_data.sh   all-tracer driver -> shared auto-versioned folder
+mcmc.py                 unified BAO MCMC                      (--space fourier|config)
 
 reference_sigmas.py      DESI reference σ (bao-recon, desi_data.csv) — frame-agnostic
 comparison_plots.py      comparison plots: [forecast|cov|theory] (default forecast)
@@ -43,7 +43,8 @@ alpha_sn_check.py        α_SN fit to the bundle cov + amplitude/structure decom
   fourier_space.py                 config_space.py
         │         │                ┌──────┘     │
         ▼         └────────┐       ▼            ▼
-  mcmc_fourier.py          ▼   mcmc_config.py   (XiSigmaGenerator)
+        └──────► mcmc.py ◄─────┘   (XiSigmaGenerator)
+       (--space fourier|config)
                   generate_emulator_data.py  (imports all three)
 ```
 
@@ -89,23 +90,30 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
 
 ## 1. Emulator training data (Fisher)
 
-`generate_emulator_data.py` is the single entry point. It draws constrained
+`generate_emulator_data.py` is the per-tracer entry point. It draws constrained
 Latin-hypercube samples of `(N_tracers, cosmology)`, runs the chosen frame's
 Fisher per sample in a spawn `Pool`, and writes versioned `train`/`test` `.npz`.
+**`generate_training_data.sh` is the all-tracer driver** — it runs every tracer
+into one shared, auto-incremented version folder (no overwrite):
 
 ```bash
-# config-space (first-principles Grieb ξ-cov — the σ driver)
-python generate_emulator_data.py --space config  --tracer-bin LRG2 \
-    --cosmo-model base --n-samples 5000 --workers 16
+# all 6 tracers -> next free v{N} (DR1, config space, base model)
+bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
 
-# Fourier-space (analytic P-space Gaussian Fisher — same target)
-python generate_emulator_data.py --space fourier --tracer-bin LRG2 \
+# DR2 counts — same factors, different anchor (lands in its own v{N})
+bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
+
+# single tracer, by hand (auto-versions per save() call — prefer the driver)
+python generate_emulator_data.py --space config --dataset dr1 --tracer-bin LRG2 \
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../training_data/bao/{cosmo_model}/sigma_{space}/v{N}/{tracer}_{train,test}.npz`
+- Output: `$SCRATCH/.../training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
   with `target_names = [sigma_DH_over_rd, sigma_DM_over_rd, sigma_DV_over_rd]`
   and the cosmo + `N_tracers` inputs in `x`.
+- `--dataset` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors
+  the `N_tracers` box (`tracers.yaml low/high` are factors x that count) and forms
+  the `{dataset}` path segment. Train with the matching `train_nn.py --dataset`.
 - `--cosmo-model` ∈ {`base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa`}
   selects which cosmology parameters vary.
 - **`--space config` ignores `--area`/`--zrange`/`--z-eff`/`--nz-slices-path`** — its
@@ -126,29 +134,34 @@ python fourier_space.py --tracer-bin LRG2 --cosmo-model base --n-samples 5000
 
 ## 2. MCMC sampling
 
-One script per frame; both reduce the posterior to the same σ-triplet.
+One CLI (`mcmc.py`), pick the frame with `--space`; both reduce the posterior
+to the same σ-triplet.
 
 ```bash
+# one CLI, pick the frame with --space {config|fourier}
+
 # Fourier — sample the desilike likelihood object
-python mcmc_fourier.py --tracers LRG2 QSO --cov analytic --dataset dr1
-python mcmc_fourier.py --cov bundle        # DR1 RascalC cov_ξ substituted as precision
+python mcmc.py --space fourier --tracers LRG2 QSO --cov analytic --dataset dr1
+python mcmc.py --space fourier --cov bundle              # DR1 RascalC cov_ξ as precision
+python mcmc.py --space fourier --cov bundle --seeds 42 43 44 45 46   # sweep → error bars
 
 # config — native-ξ theory + Grieb/bundle cov (config_space §4)
-python mcmc_config.py                       # all tracers → seed_sweep_xi/ + mcmc_config.json
-python mcmc_config.py --tracers LRG1 --seeds 42 43 44 45 46
-                                           # → seed_sweep_xi/LRG1.json  (chain-noise; partial run skips mcmc_config.json)
+python mcmc.py --space config                           # all tracers → mcmc_config.json
+python mcmc.py --space config --tracers LRG1 --seeds 42 43 44 45 46  # merge-updates LRG1 only
 ```
 
-- `mcmc_fourier.py --cov {analytic|bundle}`: `analytic` = pipeline Gaussian cov;
-  `bundle` = DESI DR1 cov_ξ substituted via `precision = Mᵀ cov_ξ⁻¹ M`, `M = W·H_Hankel`.
-  `--apmode auto` → `qiso` for BGS/QSO. Writes `mcmc_results_fourier/`.
-  Needs `nwalkers ≥ 2·ndim` (default 64).
-- `mcmc_config.py`: one run writes the per-tracer `seed_sweep_xi/{tracer}.json`
-  over `--seeds` (for chain-noise error bars) **and** the combined
-  `mcmc_config.json` from the seed[0] slice (single-seed scatter points). The
-  combined file is regenerated only when the run covers all tracers; a partial
-  `--tracers` run writes just the sweep files. Both consumed by
-  `comparison_plots.py forecast`.
+- `mcmc.py --space {config|fourier}` is the single MCMC CLI.
+  - `--space fourier --cov {analytic|bundle|both}`: `analytic` = pipeline Gaussian
+    cov; `bundle` = DESI DR1 cov_ξ substituted via `precision = Mᵀ cov_ξ⁻¹ M`,
+    `M = W·H_Hankel`. `--apmode auto` → `qiso` for BGS/QSO. `nwalkers` default 64
+    (needs `≥ 2·ndim`). `--save-chain` dumps to `chains_fourier/` (debug).
+  - `--space config --cov {gaussxi|bundle|both}`: native-ξ theory + Grieb/bundle
+    cov via raw emcee on `config_space.make_log_prob`. `nwalkers` default 48.
+- Each space writes one combined seed-sweep file — `mcmc_config.json` /
+  `mcmc_fourier.json`, schema `{tracer: {cov: {seed: {DH,DM,DV}}}}`. Each run
+  **merge-updates** only the (tracer, cov) it ran over `--seeds`, leaving the rest
+  intact; `comparison_plots.py forecast` reads the sweep for both the scatter
+  points (mean over seeds) and the σ-of-σ error bars.
 
 Reference σ for both is **DESI bao-recon stat-only** (not `desi_data.csv`, whose
 published σ folds in the systematic budget); see `reference_sigmas.py`.
@@ -171,8 +184,9 @@ python comparison_plots.py theory                # → theory_comparison_dr1.png
 
 - `comparison_plots.py [forecast] --space {config|fourier}` — 3-panel σ(DH/DM/DV)
   comparing, per tracer, Fisher and MCMC in both the analytic and bundle covariance
-  against DESI bao-recon. Fisher live; MCMC from `mcmc_config.json` (preferring
-  `seed_sweep_xi/`; fourier: `mcmc_results_fourier/`). →
+  against DESI bao-recon. Fisher live; MCMC from the combined seed-sweep json
+  (`mcmc_config.json` / `mcmc_fourier.json`) — mean ± σ-of-σ over seeds. Marker
+  **color = cov** (analytic/bundle), **shape = estimator** (○ Fisher, ◇ MCMC). →
   `forecast_comparison_{space}_dr1.png`.
 - `comparison_plots.py cov --matrix {corr|cov|both}` — 3×6 grid of analytic Grieb
   Gaussian vs DESI bundle RascalC covariance and their difference. →
