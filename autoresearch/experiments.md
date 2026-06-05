@@ -1,15 +1,11 @@
-# BAO base unscaled experiments
+# dr1/base/config/v1 — LRG2 architecture optimization
 
-## Exp1: Baseline — 0.000045 (BEST, FINAL)
-Config: 24dim, 6blocks, expand=4, 10 restarts, gamma=0.85, batch=256, LR=1e-3
+Data: `bao/dr1/base/config/v1`, tracer LRG2.
+Task: base cosmo model, 3 inputs (N_tracers, Om, hrdrag) -> 3 outputs
+(sigma_DH/rd, sigma_DM/rd, sigma_DV/rd). 24k train / 6k test.
+Metric: standardized test MSE (lower is better).
 
-## Exp2: gamma=0.9 (DISCARDED) — 0.001250
-## Exp3: 8blocks (DISCARDED) — 0.001949
-## Exp4: 5 restarts (DISCARDED) — 0.001284
-## Exp5: gamma=0.8 (DISCARDED) — 0.001250
-## Exp6: expand=2 (DISCARDED) — 0.005773
-## Exp7: batch=128 (DISCARDED) — 0.004467
-## Exp8: batch=512 (DISCARDED) — 0.005361
-## Exp9: LR=5e-4 (DISCARDED) — 0.002973
-
-Optimization complete. Baseline config is optimal after 8 failed improvement attempts.
+## Exp1: baseline — 24dim, 6blocks, expand=4, 10 restarts, gamma=0.85, batch=256, LR=1e-3
+Known-good base config from program.md. Establishes the global-best reference
+for this campaign before any architecture changes.
+**Result**: (running)
