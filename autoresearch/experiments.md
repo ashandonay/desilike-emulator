@@ -154,8 +154,13 @@ used (and the sandbox stops duplicating prod code):
   subset to the checkpoint's param_names. Verified a live sample returns 3 finite σ.
 - Fixed `train.py`/`eval.py` relative imports (package/script try-except) so
   `python train.py ...` actually runs locally.
-- **End-to-end proof**: trained LRG2 on dr1/base/config/v2 via `train.py
-  --nn-model dr1_base_config` → `model_best.pt`, then ran the repaired `eval.py`.
-  See the production path in program.md. (Run: MLflow 52d3db85.)
+- **End-to-end proof** (MLflow run 52d3db85): trained LRG2 on dr1/base/config/v2
+  via `train.py --nn-model dr1_base_config` → `model_best.pt`, then ran the
+  repaired `eval.py`. Training best test_mse = **1.12e-7** @ epoch 9953 — at the
+  low end of the validate.py 24/6/4 band (1.14–3.06e-7), so the production path
+  reproduces the sandbox. Live config-space eval over 1000 prior samples: emulator
+  **unbiased** (mean %-err −0.05 to −0.07%) with ~3.3–4.1% std across the FULL
+  prior box (sharply peaked at 0 near fiducial; the few-% tail is from extreme
+  prior corners). Confirms the promoted pipeline works end to end.
 Workflow going forward is documented in program.md: search on a branch → promote
 to bao/ indexed by config → train.py → eval.py → merge to main.
