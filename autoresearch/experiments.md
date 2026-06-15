@@ -118,3 +118,22 @@ Campaign takeaways:
   minimum — only faithful, seed-swept, full-schedule runs are trustworthy here.
 - More data (v1->v2) lowered the floor and mildly rewarded capacity, but not
   enough to move off the 24-dim knee.
+
+## Cross-tracer check: BGS on v2 (40k/10k), faithful, 2 seeds — does 24/6/4 transfer?
+BGS is the sparsest tracer (raw σ spread much larger than LRG2: y std ~11/4/3.7).
+Re-bracketed capacity to confirm the knee/architecture isn't tracer-specific.
+
+| config  | params  | BGS mean best_mse | LRG2 mean | seeds (42/123)        |
+|---------|--------:|------------------:|----------:|-----------------------|
+| 12/6/4  |   7359  | 1.54e-7           | 4.75e-7   | 1.59 / 1.49 e-7       |
+| 24/6/4  |  28539  | 1.10e-7           | 1.96e-7   | 0.85 / 1.35 e-7       |
+| 48/6/4  | 112371  | 6.53e-8           | 1.32e-7   | 0.65 / 0.66 e-7       |
+
+**Architecture transfers — no different params needed.** 24/6/4 trains cleanly on
+BGS (same LR/batch/schedule, stable) and floors at 1.10e-7, even LOWER than LRG2 —
+BGS is slightly EASIER to emulate in standardized units despite its larger raw
+dynamic range (smoother mapping). Capacity curve is FLATTER on BGS (12->24 penalty
+only ~1.4x vs LRG2's 2.4x), so BGS is more forgiving, not less. 48/6/4 again the
+consistent absolute-floor winner (~6.5e-8, both seeds). Conclusion: 24dim/6blk/exp4
+is a safe shared base-cosmo architecture across tracers; per-tracer retraining (not
+re-architecting) is all that's required.
