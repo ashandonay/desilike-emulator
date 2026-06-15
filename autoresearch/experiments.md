@@ -1,4 +1,4 @@
-# dr1/base/config — LRG2 architecture optimization
+# dr1/base/config — base-cosmo architecture optimization (LRG2 dev tracer)
 
 Data: `bao/dr1/base/config`, tracer LRG2.
 Task: base cosmo model, 3 inputs (N_tracers, Om, hrdrag) -> 3 outputs

@@ -49,7 +49,7 @@ base_omegak_w_wa:
   lr_gamma: 1.0
   grad_clip: 1.0
 
-# Promoted from autoresearch (branch autoresearch/dr1-base-config-lrg2): the
+# Promoted from autoresearch (branch autoresearch/dr1-base-config): the
 # validated base-cosmo architecture for the config-space dr1 dataset
 # (training_data/bao/dr1/base/config). 24/6/4 ResNet sits at the
 # capacity/accuracy knee (32-dim ties it; 48-dim only ~1.5x lower MSE at 4x
