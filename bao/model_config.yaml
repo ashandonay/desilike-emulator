@@ -48,3 +48,26 @@ base_omegak_w_wa:
   lr_restarts: 10
   lr_gamma: 1.0
   grad_clip: 1.0
+
+# Promoted from autoresearch (branch autoresearch/dr1-base-config-lrg2): the
+# validated base-cosmo architecture for the config-space dr1 dataset
+# (training_data/bao/dr1/base/config). 24/6/4 ResNet sits at the
+# capacity/accuracy knee (32-dim ties it; 48-dim only ~1.5x lower MSE at 4x
+# params); faithful 3-seed sweeps on v2 -> mean test_mse ~2e-7 (<0.1% sigma RMS).
+# Key convention: <release>_<cosmo_model>_<space>. Select with
+#   --analysis bao --dataset dr1 --cosmo-model base --quantity config --nn-model dr1_base_config
+dr1_base_config:
+  architecture: resnet
+  hidden_dim: 24
+  n_hidden: 6
+  expand: 4
+  dropout: 0.0
+  lr: 1.0e-3
+  final_lr_frac: 0.01
+  weight_decay: 1.0e-5
+  batch_size: 256
+  warmup_fraction: 0.05
+  scheduler_type: lambda
+  lr_restarts: 10
+  lr_gamma: 0.85
+  grad_clip: 1.0

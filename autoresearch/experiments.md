@@ -137,3 +137,25 @@ only ~1.4x vs LRG2's 2.4x), so BGS is more forgiving, not less. 48/6/4 again the
 consistent absolute-floor winner (~6.5e-8, both seeds). Conclusion: 24dim/6blk/exp4
 is a safe shared base-cosmo architecture across tracers; per-tracer retraining (not
 re-architecting) is all that's required.
+
+## Consolidation + promotion to production (2026-06-15)
+Folded the sandbox into the production pipeline so the search result is actually
+used (and the sandbox stops duplicating prod code):
+- Sandbox model unified into `autoresearch/model.py` (one editable `ResNetRegressor`,
+  identical to `bao/model.py`); `screen.py`/`validate.py` import it. Removed the
+  redundant `autoresearch/train.py` (production training is `train_nn.py`).
+- **Promoted the winner**: added `dr1_base_config` (24/6/4 + lambda 10/0.85) to
+  `bao/model_config.yaml`, keyed `<release>_<cosmo_model>_<space>`. `bao/model.py`
+  unchanged (same ResNet structure) — verified `build_model('bao','resnet',24,6,4)`
+  is byte-identical (state_dict keys + 28539 params) to the sandbox model.
+- **Repaired `eval_nn.py`**: `util.py:get_pipeline` pointed at the deleted
+  `bao/prep_covar.py`; rewired the bao branch to `config_space.XiSigmaGenerator`
+  (quantity=config) and `fourier_space.run_fisher` (quantity=covar), priors
+  subset to the checkpoint's param_names. Verified a live sample returns 3 finite σ.
+- Fixed `train_nn.py`/`eval_nn.py` relative imports (package/script try-except) so
+  `python train_nn.py ...` actually runs locally.
+- **End-to-end proof**: trained LRG2 on dr1/base/config/v2 via `train_nn.py
+  --nn-model dr1_base_config` → `model_best.pt`, then ran the repaired `eval_nn.py`.
+  See the production path in program.md. (Run: MLflow 52d3db85.)
+Workflow going forward is documented in program.md: search on a branch → promote
+to bao/ indexed by config → train_nn.py → eval_nn.py → merge to main.

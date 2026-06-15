@@ -14,11 +14,12 @@ Usage (run from autoresearch/):
     CUDA_VISIBLE_DEVICES=0 python screen.py --out dev/screen_g0.tsv \
         16,4,4 24,6,4 32,6,4
 """
-import argparse, copy, math, os, sys, time
-import torch, torch.nn as nn, torch.nn.functional as F
+import argparse, math, os, sys, time
+import torch, torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prepare import IN_DIM, OUT_DIM, N_TRAIN, x_train, y_train, evaluate_test_mse
+from model import ResNetRegressor
 
 # --- compressed screening schedule (relative ranking only) ---
 SCHED_EPOCHS = 1200
@@ -33,24 +34,6 @@ BATCH        = 256
 EVAL_EVERY   = 200
 
 dev = x_train.device
-
-
-class ResBlock(nn.Module):
-    def __init__(self, d, e):
-        super().__init__(); self.fc1 = nn.Linear(d, d * e); self.fc2 = nn.Linear(d * e, d)
-    def forward(self, x): return x + self.fc2(F.silu(self.fc1(x)))
-
-
-class Net(nn.Module):
-    def __init__(self, i, o, h, n, e):
-        super().__init__()
-        self.pi = nn.Linear(i, h)
-        self.bl = nn.ModuleList([ResBlock(h, e) for _ in range(n)])
-        self.po = nn.Linear(h, o)
-    def forward(self, x):
-        x = F.silu(self.pi(x))
-        for b in self.bl: x = b(x)
-        return self.po(x)
 
 
 def lr_mult(epoch):
@@ -73,7 +56,7 @@ def make_opt(model):
 
 def screen(dim, blocks, expand, seed=42):
     torch.manual_seed(seed); torch.cuda.manual_seed(seed)
-    model = Net(IN_DIM, OUT_DIM, dim, blocks, expand).to(dev)
+    model = ResNetRegressor(IN_DIM, OUT_DIM, hidden_dim=dim, n_hidden=blocks, expand=expand).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     opt = make_opt(model)
     loss_fn = nn.MSELoss()

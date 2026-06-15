@@ -1,7 +1,7 @@
 """
 Faithful validation driver: full production schedule (10000 epochs, 10 cosine
 warm restarts, gamma=0.85, warmup 0.05, batch 256, AdamW wd 1e-5, grad clip 1.0)
-mirroring train.py exactly. Fast index-perm loop + fused AdamW are
+mirroring the production train_nn.py schedule. Fast index-perm loop + fused AdamW are
 math-neutral. Runs the FULL schedule (no early stop) and records best test_mse
 per (config, seed) for a clean seed-sweep comparison.
 
@@ -13,12 +13,13 @@ Usage (from autoresearch/):
     CUDA_VISIBLE_DEVICES=0 python validate.py --out dev/validate.tsv 12,6,4,42
 """
 import argparse, math, os, sys, time
-import torch, torch.nn as nn, torch.nn.functional as F
+import torch, torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prepare import TOTAL_EPOCHS, IN_DIM, OUT_DIM, N_TRAIN, x_train, y_train, evaluate_test_mse
+from model import ResNetRegressor
 
-# --- faithful production schedule (matches train.py) ---
+# --- faithful production schedule (matches train_nn.py: scheduler_type=lambda) ---
 SCHED_EPOCHS  = TOTAL_EPOCHS   # 10000
 N_RESTARTS    = 10
 GAMMA         = 0.85
@@ -31,24 +32,6 @@ BATCH         = 256
 EVAL_EVERY    = 500
 
 dev = x_train.device
-
-
-class ResBlock(nn.Module):
-    def __init__(self, d, e):
-        super().__init__(); self.fc1 = nn.Linear(d, d * e); self.fc2 = nn.Linear(d * e, d)
-    def forward(self, x): return x + self.fc2(F.silu(self.fc1(x)))
-
-
-class Net(nn.Module):
-    def __init__(self, i, o, h, n, e):
-        super().__init__()
-        self.pi = nn.Linear(i, h)
-        self.bl = nn.ModuleList([ResBlock(h, e) for _ in range(n)])
-        self.po = nn.Linear(h, o)
-    def forward(self, x):
-        x = F.silu(self.pi(x))
-        for b in self.bl: x = b(x)
-        return self.po(x)
 
 
 def lr_mult(epoch):
@@ -70,7 +53,7 @@ def make_opt(model):
 
 def run(dim, blocks, expand, seed):
     torch.manual_seed(seed); torch.cuda.manual_seed(seed)
-    model = Net(IN_DIM, OUT_DIM, dim, blocks, expand).to(dev)
+    model = ResNetRegressor(IN_DIM, OUT_DIM, hidden_dim=dim, n_hidden=blocks, expand=expand).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     opt = make_opt(model); loss_fn = nn.MSELoss()
     best = float("inf"); best_epoch = 0; t0 = time.time()

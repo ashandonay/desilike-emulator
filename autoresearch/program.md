@@ -1,126 +1,115 @@
 # autoresearch — desilike emulator
 
-This is an experiment to have the LLM do its own research on neural network emulators for cosmological computations (BAO/shapefit Fisher matrix covariances).
+Have the LLM search for the best NN architecture for a given emulator **config**
+(BAO/shapefit σ-emulators), on its own git branch, then **promote the winning
+architecture into the production `bao/` pipeline** and merge to `main`.
+
+The sandbox in `autoresearch/` is yours to edit freely during a search. The
+durable output is the change to `bao/model.py` / `bao/model_config.yaml` (and
+`util.py` if a new architecture class is added), which gets merged to `main`.
 
 ## Runtime
 
-Runs in the repo's conda `emulator` env (torch 2.5.1, CUDA). There is no `uv`
-and no per-tool `pyproject.toml` — use only packages already in that env.
+Conda `emulator` env (torch + CUDA); no `uv`. Use only packages in that env.
 
 ```bash
 cd ~/desilike-emulator/autoresearch
 PY="$HOME/miniconda3/envs/emulator/bin/python"
-$PY prepare.py        # verify data loads + print stats
-$PY train.py          # run one experiment (writes results.tsv)
+export EMULATOR_DATA_DIR=$HOME/scratch/bedcosmo/num_tracers/emulator/training_data/bao/dr1/base/config/v2
+export EMULATOR_TRACER=LRG2
+$PY prepare.py    # verify the data loads + print stats
 ```
 
-Add `CUDA_VISIBLE_DEVICES=0` (or `1`) to pin a GPU.
+## The sandbox (edit freely during a search)
 
-## Setup
+- **`model.py`** — the architecture under search (`ResNetRegressor`). This is the
+  single place to change model *structure*. Kept identical in class name/signature
+  to `bao/model.py` so promotion is a clean copy.
+- **`screen.py`** — fast pre-filter: trains each `dim,blocks,expand` config on a
+  short compressed schedule, ranks cheaply. **Caveat: it mis-ranks** when the
+  metric has a late LR-restart deep minimum (see `experiments.md`) — use it only
+  to prune obviously-bad capacity, never for the final call.
+- **`validate.py`** — AUTHORITATIVE: faithful full production schedule (mirrors
+  `train_nn.py`: 10000 epochs, `scheduler_type=lambda`, 10 restarts, gamma 0.85),
+  seed-swept. All decisions rest on this.
+- **`prepare.py`** — READ-ONLY: data loading, z-score standardization, and
+  `evaluate_test_mse` (the fixed metric). Do not modify.
+- **`dev/`** — gitignored scratch for `screen.py`/`validate.py` `.tsv`/`.log` outputs.
 
-To set up a new experiment, work with the user to:
+Width/depth/expand sweeps need no code edits — pass `dim,blocks,expand` tokens.
+For a *structural* change (new block type, normalization, etc.), edit `model.py`.
 
-1. **Agree on a branch name**: e.g. `autoresearch/bao-base-unscaled`. The branch must not already exist.
-2. **Create the branch**: `git checkout -b autoresearch/<name>` from current master.
-3. **Read the in-scope files**:
-   - `program.md` — this file, the experiment protocol.
-   - `prepare.py` — fixed constants, data loading, standardization, evaluation. **Do not modify.**
-4. **Set environment variables** for the data:
-   - `EMULATOR_DATA_DIR`: path to the data directory containing `{TRACER}_train.npz` and `{TRACER}_test.npz`
-   - `EMULATOR_TRACER`: tracer name (default: "LRG2")
-5. **Create `train.py`** following the template below.
-6. **Initialize `experiments.md`** with the first experiment reasoning.
-7. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
+## Workflow
 
-## Architecture
+1. **Branch**: `git checkout -b autoresearch/<release>-<cosmo_model>-<space>-<tracer>`
+   (e.g. `autoresearch/dr1-base-config-lrg2`).
+2. **Point at the data**: set `EMULATOR_DATA_DIR` / `EMULATOR_TRACER` for the
+   target config's `{TRACER}_{train,test}.npz`.
+3. **Search** (log reasoning + results to `experiments.md` as you go):
+   - prune with `screen.py` (fast), then confirm with `validate.py` (faithful,
+     ≥3 seeds). Edit `model.py` for structural ideas.
+   - Apply the simplicity criterion: prefer the smallest model at the noise floor.
+4. **Promote the winner** (see next section) — indexed by config.
+5. **Train for real** with the production `train_nn.py` (saves a real checkpoint).
+6. **Evaluate** with `eval_nn.py` on that checkpoint.
+7. **Merge the branch to `main`**.
 
-The model is a residual MLP (ResNet regressor):
-- `proj_in`: Linear(in_dim, hidden_dim) + SiLU activation
-- `N_HIDDEN` residual blocks, each: Linear(dim, dim*expand) → SiLU → Dropout → Linear(dim*expand, dim) + skip connection
-- `proj_out`: Linear(hidden_dim, out_dim)
+## Promotion (the point of the whole exercise)
 
-Known good configs:
-- **base cosmo model**: 24dim, 6blocks, expand=4 (~28K params)
-- **base_omegak_w_wa cosmo model**: 48dim, 6blocks, expand=4 (~113K params)
+The architecture lives in **two** places, indexed by the config
+`(release, cosmo_model, space)`:
 
-## train.py template
+- **Hyperparameters** (`hidden_dim`/`n_hidden`/`expand`/`dropout` + LR schedule)
+  → **always** add/update a `bao/model_config.yaml` entry, keyed
+  `<release>_<cosmo_model>_<space>` (e.g. `dr1_base_config`). Include
+  `architecture: <name>` (default `resnet`).
+- **The architecture class** → **only if structurally new**: copy the winning
+  `model.py` definition into `bao/model.py` as a new class, register it in
+  `util.py:ARCHITECTURE_REGISTRY["bao"]` under a name, and point the YAML entry's
+  `architecture:` at it. For a plain width/depth/expand winner, `bao/model.py`
+  does NOT change — only the YAML entry.
 
-`train.py` is the only file you create/modify. It must:
+Promotion is a **deliberate, documented edit you make** — never have `validate.py`
+auto-overwrite `bao/` source.
 
-1. **Import from prepare.py**: `TOTAL_EPOCHS`, `IN_DIM`, `OUT_DIM`, `N_TRAIN`, `evaluate_test_mse`, `make_dataloader`, `x_train`, `y_train`
-2. **Use epoch-based LR scheduling**: `progress = epoch / TOTAL_EPOCHS` (10,000 epochs total). The schedule shape should match the full production training run.
-3. **Cosine warm restarts with decaying peaks**: `N_RESTARTS` cycles, `LR_GAMMA` decay factor per cycle (< 1.0 to prevent overfitting at later cycles).
-4. **Evaluate every `EVAL_EVERY` epochs** (default: 1000) using `evaluate_test_mse(model)`.
-5. **Early stopping** (two levels):
-   - **Within-run**: Stop after `PATIENCE` consecutive evals with no improvement over *this run's* best (default: 3).
-   - **Global best**: At each eval, also compare against the global best test_mse from previous experiments (read from `results.tsv`). If by `GLOBAL_PATIENCE` evals (default: 2) the current run hasn't beaten the global best, stop early and move on to the next experiment.
-6. **Log results to `results.tsv`**: Append one row per eval checkpoint with these tab-separated columns:
-   ```
-   experiment	epoch	test_mse	best_mse	hidden_dim	n_hidden	expand	lr	lr_gamma	n_restarts	batch_size	description
-   ```
-   The file should be created with a header if it doesn't exist, and appended to otherwise. Flush after each write.
-7. **Best model checkpointing**: Keep `best_state = copy.deepcopy(model.state_dict())` and restore it at the end.
+## Train + eval the promoted model (production path)
 
-Key hyperparameters to expose at the top of the file:
+```bash
+cd ~/desilike-emulator
+PY="$HOME/miniconda3/envs/emulator/bin/python"
+export SCRATCH=$HOME/scratch
+export LD_LIBRARY_PATH=$HOME/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH
+
+# Train (uses bao/model.py + the model_config.yaml key); saves model_best.pt
+# under the MLflow run artifacts, then auto-runs eval.
+$PY train_nn.py --analysis bao --dataset dr1 --cosmo-model base --quantity config \
+    --data-dir v2 --tracer-bin LRG2 --nn-model dr1_base_config --epochs 10000
+
+# Eval standalone on a saved checkpoint (live config-space ground truth):
+$PY eval_nn.py --model-path <run>/artifacts/checkpoints/model_best.pt \
+    --analysis bao --quantity config --tracer-bin LRG2 --save-path <out>
 ```
-HIDDEN_DIM, N_HIDDEN, DROPOUT, EXPAND, BATCH_SIZE, LR, WEIGHT_DECAY,
-WARMUP_FRAC, FINAL_LR_FRAC, N_RESTARTS, LR_GAMMA, GRAD_CLIP, SEED,
-EVAL_EVERY, PATIENCE, GLOBAL_PATIENCE, EXPERIMENT, DESCRIPTION
-```
 
-## What you CAN do
+`train_nn.py` standardizes identically to `prepare.py` and saves the scaler +
+arch metadata into the checkpoint; `eval_nn.py` rebuilds the model from that
+metadata via `build_model` and scores it against the live σ generator
+(`bao/config_space.XiSigmaGenerator`).
 
-- Modify `train.py` — model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+## The goal & search guidance
+
+- **Minimize the standardized test MSE** (`evaluate_test_mse`), then apply the
+  **simplicity criterion**: smallest architecture at the noise floor wins.
+- **Trust only `validate.py`** for decisions. Short screens rank capacity-to-floor
+  but miss the late deep minimum from LR warm restarts (best epoch ~9000). Seed-
+  sweep before recording a winner.
+
+## Logging — `experiments.md`
+
+Append a short entry per experiment (what you tried, why, and the result). Keep
+the running tables of `validate.py` seed sweeps and the final promotion decision.
 
 ## What you CANNOT do
 
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, and training constants.
-- Install new packages or add dependencies. Use only what's already in the conda `emulator` env.
-- Modify the evaluation harness. `evaluate_test_mse` in `prepare.py` is the ground truth metric.
-
-## The goal
-
-**Get the lowest test_mse.** This is the MSE on the standardized test set, computed by `evaluate_test_mse()`.
-
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Removing something and getting equal or better results is a win.
-
-## Logging results
-
-### experiments.md
-
-Before each experiment, append a brief entry explaining *why* you're trying this change and what you expect:
-
-```
-## Experiment 3: 32dim 8blocks (was 24dim 6blocks)
-Increasing capacity to handle higher dynamic range in scaled data.
-Expect lower test_mse if the model was capacity-limited.
-**Result**: test_mse=0.000080 — confirmed, 20% improvement.
-```
-
-### results.tsv
-
-`results.tsv` accumulates across experiments on the branch. Each eval checkpoint is one row, so you can plot loss curves across experiments by grouping on the `experiment` column. Never overwrite — always append.
-
-## The experiment loop
-
-LOOP FOREVER:
-
-1. Look at current results: what's the best test_mse so far? What has/hasn't worked?
-2. Log reasoning to `experiments.md`: what you're trying and why.
-3. Edit `train.py` with the experimental change.
-4. `git commit` the change.
-5. Run: `$PY train.py > run.log 2>&1` (with `PY="$HOME/miniconda3/envs/emulator/bin/python"`)
-6. Check results: `tail -20 run.log` for the summary block.
-7. If test_mse improved, keep the commit. If worse, `git reset --hard HEAD~1`.
-8. Repeat.
-
-**Run experiments in parallel** on both GPUs (`CUDA_VISIBLE_DEVICES=0/1`) when possible.
-
-**Crashes**: If a run crashes with a fixable bug (typo, missing import), fix and re-run. If fundamentally broken, skip it and move on.
-
-**NEVER STOP**: Once the loop begins, do NOT pause to ask the human if you should continue. You are autonomous. If you run out of ideas, think harder — try combining previous near-misses, try more radical changes. The loop runs until the human interrupts you.
-
-## Environment Variables
-
-- `EMULATOR_DATA_DIR`: path to data directory (default: `~/scratch/bedcosmo/num_tracers/emulator/training_data/bao/base_omegak_w_wa/covar/v3`)
-- `EMULATOR_TRACER`: tracer name, e.g. "LRG2", "BGS" (default: "LRG2")
+- Modify `prepare.py` or its `evaluate_test_mse` metric (read-only).
+- Install new packages — use only the conda `emulator` env.
+- Auto-mutate `bao/` from a script — promotion is a reviewed, hand-made edit.

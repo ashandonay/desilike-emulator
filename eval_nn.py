@@ -10,7 +10,12 @@ import torch
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
-from .util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+try:
+    # Package context (deployed as bedcosmo.num_tracers.emulator).
+    from .util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+except ImportError:
+    # Script context (run directly from this dir; sys.path.insert above puts it first).
+    from util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
 
 def _log_bins(vals: np.ndarray, n_bins: int = 30) -> np.ndarray:
     """Return histogram bin edges appropriate for log/symlog data."""
@@ -89,7 +94,7 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     param_names = ckpt["param_names"]
     ckpt_target_names = ckpt["target_names"]
 
-    default_priors, target_names, ground_truth_fn, setup = get_pipeline(analysis, quantity, tracer_bin=tracer_bin)
+    default_priors, target_names, ground_truth_fn, setup = get_pipeline(analysis, quantity, tracer_bin=tracer_bin, param_names=param_names)
 
     true_rows = []
     param_rows = []

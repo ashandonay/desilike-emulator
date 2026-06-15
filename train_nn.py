@@ -11,8 +11,14 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
-from .util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
-from .eval_nn import run_eval
+try:
+    # Package context (deployed as bedcosmo.num_tracers.emulator).
+    from .util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from .eval_nn import run_eval
+except ImportError:
+    # Script context (run directly from this dir; sys.path.insert above puts it first).
+    from util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from eval_nn import run_eval
 
 def load_data(data_path: str, tracer_bin: str | None = None) -> Dict[str, np.ndarray]:
     if tracer_bin and os.path.isfile(f"{data_path}/{tracer_bin}_train.npz"):
