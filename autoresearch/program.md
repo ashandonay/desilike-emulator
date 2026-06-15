@@ -41,8 +41,8 @@ For a *structural* change (new block type, normalization, etc.), edit `model.py`
 
 ## Workflow
 
-1. **Branch**: `git checkout -b autoresearch/<release>-<cosmo_model>-<space>-<tracer>`
-   (e.g. `autoresearch/dr1-base-config-lrg2`).
+1. **Branch**: `git checkout -b autoresearch/<release>-<cosmo_model>-<space>`
+   (e.g. `autoresearch/dr1-base-config`) — one search/promotion covers all tracers.
 2. **Point at the data**: set `EMULATOR_DATA_DIR` / `EMULATOR_TRACER` for the
    target config's `{TRACER}_{train,test}.npz`.
 3. **Search** (log reasoning + results to `experiments.md` as you go):
