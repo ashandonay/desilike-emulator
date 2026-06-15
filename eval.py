@@ -169,9 +169,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
         axes[i].set_visible(False)
     fig.suptitle(f"NN prediction {delta_label}", fontsize=14, y=1.02)
     fig.tight_layout()
-    fig.savefig(os.path.join(save_path, f"eval_nn_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(save_path, f"eval_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved evaluation plot to: {os.path.join(save_path, f'eval_nn_{timestamp}.png')}")
+    print(f"Saved evaluation plot to: {os.path.join(save_path, f'eval_{timestamp}.png')}")
 
     # --- Triangle plot of cosmo inputs, coloured by outlier status ---
     # A sample is an "outlier" if ANY target fails np.isclose
@@ -232,9 +232,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 ax.tick_params(labelbottom=False)
             if j != 0:
                 ax.tick_params(labelleft=False)
-    fig2.savefig(os.path.join(save_path, f"eval_nn_triangle_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig2.savefig(os.path.join(save_path, f"eval_triangle_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig2)
-    print(f"Saved triangle plot to: {os.path.join(save_path, f'eval_nn_triangle_{timestamp}.png')}")
+    print(f"Saved triangle plot to: {os.path.join(save_path, f'eval_triangle_{timestamp}.png')}")
 
     # --- Triangle plot of target outputs, coloured by outlier status ---
     target_names = list(ckpt_target_names)
@@ -288,9 +288,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 ax.tick_params(labelbottom=False)
             if j != 0:
                 ax.tick_params(labelleft=False)
-    fig3.savefig(os.path.join(save_path, f"eval_nn_triangle_targets_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig3.savefig(os.path.join(save_path, f"eval_triangle_targets_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig3)
-    print(f"Saved target triangle plot to: {os.path.join(save_path, f'eval_nn_triangle_targets_{timestamp}.png')}")
+    print(f"Saved target triangle plot to: {os.path.join(save_path, f'eval_triangle_targets_{timestamp}.png')}")
 
 
 def main() -> None:
