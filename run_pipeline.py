@@ -1,5 +1,5 @@
 """
-Shapefit pipeline runner: chains prep_shapefit_data -> train_nn (which runs eval internally).
+Shapefit pipeline runner: chains prep_shapefit_data -> train (which runs eval internally).
 
 Usage:
     python -m bedcosmo.num_tracers.shapefit.run_pipeline \
@@ -37,7 +37,7 @@ def main() -> None:
     prep.add_argument("--prep-priors-json", type=str, default="")
 
     # Train args
-    train = parser.add_argument_group("train", "Arguments forwarded to train_nn.py")
+    train = parser.add_argument_group("train", "Arguments forwarded to train.py")
     train.add_argument("--train-epochs", type=int, default=1000)
     train.add_argument("--train-batch-size", type=int, default=256)
     train.add_argument("--train-lr", type=float, default=1e-3)
@@ -64,7 +64,7 @@ def main() -> None:
     # --- Build train command ---
     train_cmd = [
         sys.executable,
-        os.path.join(_SHAPEFIT_DIR, "train_nn.py"),
+        os.path.join(_SHAPEFIT_DIR, "train.py"),
         "--epochs", str(args.train_epochs),
         "--batch-size", str(args.train_batch_size),
         "--lr", str(args.train_lr),

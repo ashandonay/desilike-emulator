@@ -30,7 +30,7 @@ $PY prepare.py    # verify the data loads + print stats
   metric has a late LR-restart deep minimum (see `experiments.md`) — use it only
   to prune obviously-bad capacity, never for the final call.
 - **`validate.py`** — AUTHORITATIVE: faithful full production schedule (mirrors
-  `train_nn.py`: 10000 epochs, `scheduler_type=lambda`, 10 restarts, gamma 0.85),
+  `train.py`: 10000 epochs, `scheduler_type=lambda`, 10 restarts, gamma 0.85),
   seed-swept. All decisions rest on this.
 - **`prepare.py`** — READ-ONLY: data loading, z-score standardization, and
   `evaluate_test_mse` (the fixed metric). Do not modify.
@@ -50,8 +50,8 @@ For a *structural* change (new block type, normalization, etc.), edit `model.py`
      ≥3 seeds). Edit `model.py` for structural ideas.
    - Apply the simplicity criterion: prefer the smallest model at the noise floor.
 4. **Promote the winner** (see next section) — indexed by config.
-5. **Train for real** with the production `train_nn.py` (saves a real checkpoint).
-6. **Evaluate** with `eval_nn.py` on that checkpoint.
+5. **Train for real** with the production `train.py` (saves a real checkpoint).
+6. **Evaluate** with `eval.py` on that checkpoint.
 7. **Merge the branch to `main`**.
 
 ## Promotion (the point of the whole exercise)
@@ -82,16 +82,16 @@ export LD_LIBRARY_PATH=$HOME/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH
 
 # Train (uses bao/model.py + the model_config.yaml key); saves model_best.pt
 # under the MLflow run artifacts, then auto-runs eval.
-$PY train_nn.py --analysis bao --dataset dr1 --cosmo-model base --quantity config \
+$PY train.py --analysis bao --dataset dr1 --cosmo-model base --quantity config \
     --data-dir v2 --tracer-bin LRG2 --nn-model dr1_base_config --epochs 10000
 
 # Eval standalone on a saved checkpoint (live config-space ground truth):
-$PY eval_nn.py --model-path <run>/artifacts/checkpoints/model_best.pt \
+$PY eval.py --model-path <run>/artifacts/checkpoints/model_best.pt \
     --analysis bao --quantity config --tracer-bin LRG2 --save-path <out>
 ```
 
-`train_nn.py` standardizes identically to `prepare.py` and saves the scaler +
-arch metadata into the checkpoint; `eval_nn.py` rebuilds the model from that
+`train.py` standardizes identically to `prepare.py` and saves the scaler +
+arch metadata into the checkpoint; `eval.py` rebuilds the model from that
 metadata via `build_model` and scores it against the live σ generator
 (`bao/config_space.XiSigmaGenerator`).
 

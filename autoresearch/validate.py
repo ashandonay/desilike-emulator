@@ -1,7 +1,7 @@
 """
 Faithful validation driver: full production schedule (10000 epochs, 10 cosine
 warm restarts, gamma=0.85, warmup 0.05, batch 256, AdamW wd 1e-5, grad clip 1.0)
-mirroring the production train_nn.py schedule. Fast index-perm loop + fused AdamW are
+mirroring the production train.py schedule. Fast index-perm loop + fused AdamW are
 math-neutral. Runs the FULL schedule (no early stop) and records best test_mse
 per (config, seed) for a clean seed-sweep comparison.
 
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prepare import TOTAL_EPOCHS, IN_DIM, OUT_DIM, N_TRAIN, x_train, y_train, evaluate_test_mse
 from model import ResNetRegressor
 
-# --- faithful production schedule (matches train_nn.py: scheduler_type=lambda) ---
+# --- faithful production schedule (matches train.py: scheduler_type=lambda) ---
 SCHED_EPOCHS  = TOTAL_EPOCHS   # 10000
 N_RESTARTS    = 10
 GAMMA         = 0.85

@@ -5,7 +5,7 @@ This package builds PyTorch regressors that emulate **desilike** outputs: Fisher
 ## Requirements
 
 - **`desilike`** (and its dependencies, including JAX where Fisher workers use it).
-- **`SCRATCH`** environment variable for default data and MLflow paths (`get_default_save_path`, training logs). If it is unset, pass explicit `--save-path` to prep scripts and `--save-path` / absolute paths for `eval_nn.py` as needed.
+- **`SCRATCH`** environment variable for default data and MLflow paths (`get_default_save_path`, training logs). If it is unset, pass explicit `--save-path` to prep scripts and `--save-path` / absolute paths for `eval.py` as needed.
 
 Default layout (when `SCRATCH` is set):
 
@@ -33,7 +33,7 @@ Shared per-analysis files:
 |------|---------|
 | **`model_config.yaml`** | Named blocks of NN and optimizer hyperparameters. The key you pass as `--nn-model` (or the default derived from `--cosmo-model`) selects one block. |
 | **`model.py`** | PyTorch module registered in `util.ARCHITECTURE_REGISTRY` (currently **`resnet`**: SiLU residual MLP — `ResNetRegressor` for BAO, `base_regressor` for ShapeFit). |
-| **`prep_covar.py`** | CLI to sample priors, run Fisher forecasts in parallel (optional `--workers`), and write `train.npz` / `test.npz` under `v{N}/`. Exposes `run_fisher`, `TARGET_NAMES`, `DEFAULT_PRIORS` for `util.get_pipeline` (used by **`eval_nn.py`**). |
+| **`prep_covar.py`** | CLI to sample priors, run Fisher forecasts in parallel (optional `--workers`), and write `train.npz` / `test.npz` under `v{N}/`. Exposes `run_fisher`, `TARGET_NAMES`, `DEFAULT_PRIORS` for `util.get_pipeline` (used by **`eval.py`**). |
 | **`run_prep_covar.sh`** | Optional shell wrapper for batch jobs. |
 | **`run_single_fisher.py`** | Debugging / one-off Fisher runs. |
 
@@ -55,7 +55,7 @@ Top-level keys are arbitrary labels (e.g. `base`, `base_scaled`, `base_omegak_w_
 
 For **ShapeFit**, `shapefit/model_config.yaml` currently defines only **`base`**. If you train with `--cosmo-model base_w_wa`, either add a `base_w_wa` block to the YAML or pass **`--nn-model base`** to reuse the shared hyperparameters.
 
-Typical fields (all consumed by `train_nn.py` where applicable):
+Typical fields (all consumed by `train.py` where applicable):
 
 - **`architecture`**: must exist in `util.ARCHITECTURE_REGISTRY` for that analysis (e.g. `resnet`).
 - **`hidden_dim`**, **`n_hidden`**, **`expand`**, **`dropout`**: passed into the regressor.
@@ -116,8 +116,8 @@ Outputs go to `training_data/shapefit/{cosmo_model}/mean/v{N}/`.
 | File | Role |
 |------|------|
 | **`util.py`** | `build_model`, `get_default_save_path`, `get_pipeline` (loads `prep_covar` / `prep_mean` for ground truth), `save_dataset`, LHS sampling, tracer bins for **`--tracer-bin`**. |
-| **`train_nn.py`** | Loads YAML + `.npz` data, standardizes inputs/targets, trains with MLflow logging, saves checkpoints under the run’s artifacts. |
-| **`eval_nn.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
+| **`train.py`** | Loads YAML + `.npz` data, standardizes inputs/targets, trains with MLflow logging, saves checkpoints under the run’s artifacts. |
+| **`eval.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
 | **`scale_data.py`** | Post-processes a directory of `.npz` files: multiplies `y` by user-defined factors of input variables; writes a sibling directory and **`scale_info.json`** (used at train/eval time to track scaling). |
 | **`test_cov_scaling.py`** | Tests for the scale expression language. |
 | **`run_pipeline.py`** | **Legacy**: docstring and paths point to old `prep_shapefit_data.py` / different CLI; prefer explicit prep → train → eval. |
@@ -135,11 +135,11 @@ python scale_data.py <data_dir> <expr1> [expr2 ...]
 
 Each **expression** is an infix formula using `+ - * / ^ **`, parentheses, `exp(...)`, `log(...)`, and variables among: **`N_tracers`**, **`Om`**, **`Ok`**, **`w0`**, **`wa`**, **`hrdrag`**. Variables must appear in the dataset’s `param_names`.
 
-Output directory: `<data_dir>_<suffix>_scaled` where `suffix` encodes the expressions. A **`scale_info.json`** records `scale_expressions` and `source_dir`. **`train_nn.py`** copies `scale_expressions` into the checkpoint so **`eval_nn.py`** can invert scaling when comparing to the true Fisher / extractor.
+Output directory: `<data_dir>_<suffix>_scaled` where `suffix` encodes the expressions. A **`scale_info.json`** records `scale_expressions` and `source_dir`. **`train.py`** copies `scale_expressions` into the checkpoint so **`eval.py`** can invert scaling when comparing to the true Fisher / extractor.
 
 ---
 
-## `train_nn.py`
+## `train.py`
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -157,11 +157,11 @@ Output directory: `<data_dir>_<suffix>_scaled` where `suffix` encodes the expres
 | `--eval-atol`, `--eval-rtol` | `2e-3` | Passed to post-training eval. |
 | `--tracer-bin` | `None` | One of `BGS`, `LRG1`, `LRG2`, `LRG3_ELG1`, `ELG2`, `QSO`, `Lya_QSO`: loads `{name}_train.npz` / `{name}_test.npz` if present and scopes eval priors / redshift. |
 
-Training uses the first available CUDA device; evaluation inside `eval_nn.py` uses **`cuda:1`** if CUDA is available, else CPU.
+Training uses the first available CUDA device; evaluation inside `eval.py` uses **`cuda:1`** if CUDA is available, else CPU.
 
 ---
 
-## `eval_nn.py`
+## `eval.py`
 
 Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must identify a checkpoint (`model_best.pt` preferred, then `model.pt`).
 
@@ -189,24 +189,24 @@ Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must ident
 ```bash
 python bao/prep_covar.py --cosmo-model base --n-samples 10000 --workers 8
 # optional: python scale_data.py $SCRATCH/.../bao/base/covar/v1 'log(N_tracers)' '1/exp(Om)'
-python train_nn.py --analysis bao --quantity covar --cosmo-model base --nn-model base_scaled --data-dir latest
-python eval_nn.py --run-id <mlflow_run_id> --analysis bao --quantity covar
+python train.py --analysis bao --quantity covar --cosmo-model base --nn-model base_scaled --data-dir latest
+python eval.py --run-id <mlflow_run_id> --analysis bao --quantity covar
 ```
 
 **2. ShapeFit covariance emulator**
 
 ```bash
 python shapefit/prep_covar.py --cosmo-model base_w_wa --name LRG2 --zrange 0.6 0.8 --z-eff 0.706
-python train_nn.py --analysis shapefit --quantity covar --cosmo-model base_w_wa --data-dir latest --tracer-bin LRG2
-python eval_nn.py --run-dir <path_to_run_artifacts> --analysis shapefit --quantity covar --tracer-bin LRG2
+python train.py --analysis shapefit --quantity covar --cosmo-model base_w_wa --data-dir latest --tracer-bin LRG2
+python eval.py --run-dir <path_to_run_artifacts> --analysis shapefit --quantity covar --tracer-bin LRG2
 ```
 
 **3. ShapeFit mean parameters**
 
 ```bash
 python shapefit/prep_mean.py --cosmo-model base
-python train_nn.py --analysis shapefit --quantity mean --data-dir latest
-python eval_nn.py --model-path /path/to/model.pt --analysis shapefit --quantity mean
+python train.py --analysis shapefit --quantity mean --data-dir latest
+python eval.py --model-path /path/to/model.pt --analysis shapefit --quantity mean
 ```
 
 ---

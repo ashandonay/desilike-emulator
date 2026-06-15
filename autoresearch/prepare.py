@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader, TensorDataset
 # ---------------------------------------------------------------------------
 
 TIME_BUDGET = 900   # wall-clock budget for autoresearch evaluation (15 minutes)
-TOTAL_EPOCHS = 10000  # total epochs for the full training run (matches train_nn.py default)
+TOTAL_EPOCHS = 10000  # total epochs for the full training run (matches train.py default)
 
 TRACER = os.environ.get("EMULATOR_TRACER", "LRG2")            # set to "" for no tracer prefix
 

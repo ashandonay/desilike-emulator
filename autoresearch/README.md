@@ -21,8 +21,8 @@ See `program.md` for the full workflow (search → promote → train → eval �
 - `dev/` — gitignored scratch for `screen.py`/`validate.py` `.tsv`/`.log` outputs.
 
 Training is **not** done here — the real model is trained by the production
-`train_nn.py` after promotion. (The old standalone `train.py` was removed; it
-duplicated `train_nn.py`.)
+`train.py` (repo root) after promotion. (The old standalone sandbox trainer was
+removed; it duplicated the production `train.py`.)
 
 ## Running a search
 
@@ -44,4 +44,4 @@ CUDA_VISIBLE_DEVICES=0 $PY validate.py --out dev/validate.tsv 24,6,4,42 24,6,4,1
 
 Consumes the same `{TRACER}_train.npz` / `{TRACER}_test.npz` arrays
 (`x`, `y`, `param_names`, `target_names`) produced for the production
-`train_nn.py`, so any existing emulator training set works unchanged.
+`train.py`, so any existing emulator training set works unchanged.
