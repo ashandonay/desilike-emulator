@@ -7,3 +7,5 @@ notebooks/
 # autoresearch tool generated artifacts
 autoresearch/results.tsv
 autoresearch/worktrees/
+autoresearch/dev/
+autoresearch/screen*.tsv

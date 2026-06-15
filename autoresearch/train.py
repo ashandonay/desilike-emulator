@@ -71,8 +71,8 @@ PATIENCE = 3              # stop after this many evals with no improvement over 
 GLOBAL_PATIENCE = 2       # stop after this many evals without beating global best from prior experiments
 
 # Experiment tracking
-EXPERIMENT = "exp01_24dim_6blocks_gamma085"
-DESCRIPTION = "baseline 24dim 6blocks lr_gamma=0.85"
+EXPERIMENT = "final_24dim_6blocks_gamma085_v2"
+DESCRIPTION = "v2-validated final: 24dim/6blocks/expand4 knee (mean 1.96e-7, 3-seed sweep)"
 
 # ---------------------------------------------------------------------------
 # LR schedule (epoch-based cosine with warm restarts + decaying peaks)
@@ -129,7 +129,9 @@ print(f"Model: {N_HIDDEN} hidden layers, {HIDDEN_DIM} dim, expand={EXPAND}, {num
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 loss_fn = nn.MSELoss()
-train_loader = make_dataloader(x_train, y_train, BATCH_SIZE, shuffle=True)
+# Data already lives on-device (prepare.py), so we minibatch with a per-epoch
+# GPU index permutation instead of a DataLoader — avoids per-batch host<->device
+# overhead that dominates wall-time for this tiny model.
 
 global_best = get_global_best(exclude_experiment=EXPERIMENT)
 print(f"Total epochs: {TOTAL_EPOCHS}, Eval every: {EVAL_EVERY}, Patience: {PATIENCE}, Global patience: {GLOBAL_PATIENCE}")
@@ -155,31 +157,34 @@ results_log = open(_results_file, "a")
 
 for epoch in range(1, TOTAL_EPOCHS + 1):
     model.train()
-    epoch_loss = 0.0
+    epoch_loss = torch.zeros((), device=device)
     n_batches = 0
 
     lr_mult = get_lr(epoch)
     for group in optimizer.param_groups:
         group["lr"] = LR * lr_mult
 
-    for xb, yb in train_loader:
+    perm = torch.randperm(N_TRAIN, device=device)
+    for start in range(0, N_TRAIN, BATCH_SIZE):
+        idx = perm[start:start + BATCH_SIZE]
+        xb, yb = x_train[idx], y_train[idx]
+
         optimizer.zero_grad()
         pred = model(xb)
         loss = loss_fn(pred, yb)
-        loss_val = loss.item()
-
-        if not math.isfinite(loss_val):
-            print(f"FAIL: NaN/Inf loss at epoch {epoch}")
-            exit(1)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
         optimizer.step()
 
-        epoch_loss += loss_val
+        epoch_loss += loss.detach()
         n_batches += 1
 
-    avg_loss = epoch_loss / n_batches
+    # Single host sync per epoch (not per batch): cheap NaN guard + logging value.
+    avg_loss = (epoch_loss / n_batches).item()
+    if not math.isfinite(avg_loss):
+        print(f"FAIL: NaN/Inf loss at epoch {epoch}")
+        exit(1)
 
     if epoch % 100 == 0:
         elapsed = time.time() - t_start
@@ -189,8 +194,8 @@ for epoch in range(1, TOTAL_EPOCHS + 1):
     if epoch % EVAL_EVERY == 0:
         cur_mse = evaluate_test_mse(model)
         elapsed = time.time() - t_start
-        print(f"  >> EVAL epoch {epoch}: test_mse={cur_mse:.6f} (best={best_mse:.6f}, global={global_best:.6f}) | elapsed: {elapsed:.0f}s")
-        results_log.write(f"{EXPERIMENT}\t{epoch}\t{cur_mse:.6f}\t{min(best_mse, cur_mse):.6f}\t{HIDDEN_DIM}\t{N_HIDDEN}\t{EXPAND}\t{LR}\t{LR_GAMMA}\t{N_RESTARTS}\t{BATCH_SIZE}\t{DESCRIPTION}\n")
+        print(f"  >> EVAL epoch {epoch}: test_mse={cur_mse:.3e} (best={best_mse:.3e}, global={global_best:.3e}) | elapsed: {elapsed:.0f}s")
+        results_log.write(f"{EXPERIMENT}\t{epoch}\t{cur_mse:.6e}\t{min(best_mse, cur_mse):.6e}\t{HIDDEN_DIM}\t{N_HIDDEN}\t{EXPAND}\t{LR}\t{LR_GAMMA}\t{N_RESTARTS}\t{BATCH_SIZE}\t{DESCRIPTION}\n")
         results_log.flush()
 
         # Within-run early stopping
@@ -198,7 +203,7 @@ for epoch in range(1, TOTAL_EPOCHS + 1):
             best_mse = cur_mse
             best_state = copy.deepcopy(model.state_dict())
             no_improve_count = 0
-            print(f"  >> new best: {best_mse:.6f}")
+            print(f"  >> new best: {best_mse:.3e}")
         else:
             no_improve_count += 1
             print(f"  >> no improvement ({no_improve_count}/{PATIENCE})")
@@ -226,14 +231,14 @@ for epoch in range(1, TOTAL_EPOCHS + 1):
 
 if best_state is not None:
     model.load_state_dict(best_state)
-    print(f"Loaded best checkpoint (mse={best_mse:.6f})")
+    print(f"Loaded best checkpoint (mse={best_mse:.3e})")
 
 test_mse = evaluate_test_mse(model)
 t_end = time.time()
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
 
 print("---")
-print(f"test_mse:         {test_mse:.6f}")
+print(f"test_mse:         {test_mse:.6e}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
 print(f"total_epochs:     {epoch}")
 print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
