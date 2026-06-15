@@ -1,17 +1,21 @@
 """
 Faithful validation driver: full production schedule (10000 epochs, 10 cosine
 warm restarts, gamma=0.85, warmup 0.05, batch 256, AdamW wd 1e-5, grad clip 1.0)
-mirroring ../train.py exactly. Fast index-perm loop + fused AdamW are
+mirroring train.py exactly. Fast index-perm loop + fused AdamW are
 math-neutral. Runs the FULL schedule (no early stop) and records best test_mse
 per (config, seed) for a clean seed-sweep comparison.
 
+This is the AUTHORITATIVE architecture-comparison harness; screen.py is only a
+fast pre-filter (it mis-ranks here, see experiments.md). Outputs go to the
+gitignored dev/ directory.
+
 Usage (from autoresearch/):
-    CUDA_VISIBLE_DEVICES=0 python dev/validate.py --out dev/validate.tsv 12,6,4,42
+    CUDA_VISIBLE_DEVICES=0 python validate.py --out dev/validate.tsv 12,6,4,42
 """
 import argparse, math, os, sys, time
 import torch, torch.nn as nn, torch.nn.functional as F
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prepare import TOTAL_EPOCHS, IN_DIM, OUT_DIM, N_TRAIN, x_train, y_train, evaluate_test_mse
 
 # --- faithful production schedule (matches train.py) ---

@@ -3,16 +3,21 @@ Fast architecture-screening driver (NOT the faithful production run).
 
 Trains each given (dim,blocks,expand) config on a short compressed schedule
 and records the best test MSE, to rank architectures cheaply. Winners get
-re-run faithfully via ../train.py (full 10000-epoch schedule + seed sweep).
+re-run faithfully via validate.py (full 10000-epoch schedule + seed sweep).
+
+NOTE: a fast pre-filter only. Its compressed schedule cannot reach the late
+LR-restart deep minimum, so its ranking is NOT trustworthy for final decisions
+on this problem (see experiments.md) -- use validate.py for those. Outputs go
+to the gitignored dev/ directory.
 
 Usage (run from autoresearch/):
-    CUDA_VISIBLE_DEVICES=0 python dev/screen.py --out dev/screen_g0.tsv \
+    CUDA_VISIBLE_DEVICES=0 python screen.py --out dev/screen_g0.tsv \
         16,4,4 24,6,4 32,6,4
 """
 import argparse, copy, math, os, sys, time
 import torch, torch.nn as nn, torch.nn.functional as F
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prepare import IN_DIM, OUT_DIM, N_TRAIN, x_train, y_train, evaluate_test_mse
 
 # --- compressed screening schedule (relative ranking only) ---

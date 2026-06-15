@@ -23,7 +23,7 @@ Known-good base config from program.md; global-best reference for the campaign.
 The metric saturates at a ~7e-7 noise floor — capacity is not the bottleneck.
 
 ## Screen 1: architecture grid (single seed=42, compressed 1200-epoch / 1-restart schedule)
-Fast relative-ranking sweep (dev/screen.py) over dim x blocks x expand to find
+Fast relative-ranking sweep (screen.py) over dim x blocks x expand to find
 the SMALLEST model that still reaches the floor (program.md simplicity criterion).
 
 | dim/blk/exp | params | best_mse |
@@ -47,7 +47,7 @@ baseline exactly (7.37e-7) at 3.9x fewer params** — the simplicity winner.
 Single-seed deltas are within plausible noise -> validate faithfully + seed sweep.
 
 ## Validation 1: 12/6/4 vs 24/6/4 baseline, faithful full schedule, 3 seeds
-Faithful run (dev/validate.py): full 10000-epoch / 10-restart / gamma=0.85 /
+Faithful run (validate.py): full 10000-epoch / 10-restart / gamma=0.85 /
 batch=256 schedule (mirrors train.py), best test_mse over the whole schedule.
 
 | seed | 12/6/4 (7359p) | 24/6/4 (28539p) | best_epoch |
