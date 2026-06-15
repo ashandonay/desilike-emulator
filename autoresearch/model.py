@@ -1,14 +1,12 @@
 """
-Production BAO emulator architecture(s). This is the promotion target for the
-autoresearch search loop (see autoresearch/program.md): the winning architecture
-is copied here from autoresearch/model.py.
+Sandbox model definition for the autoresearch search loop.
 
-Per-config *hyperparameters* (hidden_dim/n_hidden/expand/schedule) live in
-model_config.yaml, keyed by config — most configs reuse ResNetRegressor with
-different widths/depths, so this file does NOT change for them. Add a new class
-here ONLY when the architecture is structurally new (e.g. a new block type or
-normalization); then register it in util.py:ARCHITECTURE_REGISTRY["bao"] under a
-name and reference it from a model_config.yaml entry via `architecture: <name>`.
+This is the SINGLE place to edit architecture while searching (screen.py and
+validate.py both import from here). It is kept identical in class name and
+signature to ``bao/model.py`` so that, once a search settles on the best
+architecture, promoting it is a clean copy of this definition into
+``bao/model.py`` (+ a registry entry in ``util.py`` if the structure is new).
+See program.md for the promotion workflow.
 """
 import torch
 import torch.nn as nn

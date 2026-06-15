@@ -4,6 +4,7 @@ __pycache__/
 *.log
 notebooks/
 
-# autoresearch tool generated artifacts
+# autoresearch generated outputs (driver code screen.py/validate.py is tracked at autoresearch/ root)
 autoresearch/results.tsv
 autoresearch/worktrees/
+autoresearch/dev/

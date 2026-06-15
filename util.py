@@ -348,11 +348,14 @@ def _load_module(name: str, path: str):
     return mod
 
 
-def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None):
+def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, param_names=None):
     """Return (default_priors, target_names, ground_truth_fn, setup) for the given analysis/quantity.
 
     If *tracer_bin* is given, overrides N_tracers prior bounds and passes the
-    corresponding zrange/z_eff to the ground truth function.
+    corresponding zrange/z_eff to the ground truth function. If *param_names* is
+    given (e.g. a checkpoint's), the priors are restricted to exactly those
+    parameters so the live ground truth varies the same params the model was
+    trained on (the rest stay at their fiducial defaults).
     """
     _here = os.path.dirname(os.path.abspath(__file__))
 
@@ -385,24 +388,59 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None):
             raise ValueError(f"Unknown quantity for shapefit: {quantity}")
 
     elif analysis == "bao":
-        if quantity == "covar":
-            mod = _load_module("bao_prep_covar", os.path.join(_here, "bao", "prep_covar.py"))
-            kw = {}
-            if tracer_bin_cfg:
-                kw = {
-                    "zrange": tracer_bin_cfg["zrange"],
-                    "z_eff": tracer_bin_cfg["z_eff"],
-                    "tracer_bin": tracer_bin,
+        if quantity not in ("config", "covar"):
+            raise ValueError(
+                f"Unknown quantity for bao: {quantity!r} (expected 'config' or 'covar')"
+            )
+        if not tracer_bin:
+            raise ValueError(
+                "bao eval requires a tracer_bin (the σ generator needs the tracer geometry)."
+            )
+        # Lazy + heavy: pulls desilike + the DESI bundles. The bao modules use
+        # sibling imports (e.g. `import core`), so put bao/ on sys.path like the
+        # bao runtime does (cwd=bao/) before importing them.
+        import sys
+        _bao_dir = os.path.join(_here, "bao")
+        if _bao_dir not in sys.path:
+            sys.path.insert(0, _bao_dir)
+        import core as bao_core
+
+        target_names = list(bao_core.SIGMA_TARGET_NAMES)
+
+        # Restrict priors to the trained model's varied params (param_names),
+        # else default to N_tracers + the base cosmo set. N_tracers bounds come
+        # from the tracer's DR1 box; non-varied cosmo params stay at fiducial
+        # defaults inside the generator.
+        varied = [str(p) for p in param_names] if param_names is not None \
+            else (["N_tracers"] + bao_core.COSMO_MODELS["base"])
+        priors = {p: dict(bao_core.DEFAULT_PRIORS[p]) for p in varied}
+        _nt_lo, _nt_hi = ntracers_range(tracer_bin)
+        priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
+
+        if quantity == "config":
+            # Config-space ξ-covariance σ — the emulator's training-data generator.
+            import config_space
+            gen = config_space.XiSigmaGenerator(tracer_bin)  # built once, reused per sample
+            def ground_truth_fn(_setup, sample, _gen=gen):
+                cosmo = {k: v for k, v in sample.items() if k != "N_tracers"}
+                s = _gen.sigma_triplet(N_tracers=sample["N_tracers"], **cosmo)
+                return {
+                    "sigma_DH_over_rd": s["DH_over_rs"],
+                    "sigma_DM_over_rd": s["DM_over_rs"],
+                    "sigma_DV_over_rd": s["DV_over_rs"],
                 }
-            def ground_truth_fn(_setup, sample, _kw=kw):
-                return mod.run_fisher(sample, **_kw)
-            priors = dict(mod.DEFAULT_PRIORS)
-            if tracer_bin_cfg:
-                _nt_lo, _nt_hi = ntracers_range(tracer_bin)
-                priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
-            return priors, mod.TARGET_NAMES, ground_truth_fn, None
-        else:
-            raise ValueError(f"Unknown quantity for bao: {quantity}")
+            return priors, target_names, ground_truth_fn, gen
+
+        # quantity == "covar": Fourier-space Fisher σ.
+        import fourier_space
+        kw = {"tracer_bin": tracer_bin}
+        if tracer_bin_cfg:
+            kw.update(zrange=tracer_bin_cfg["zrange"], z_eff=tracer_bin_cfg["z_eff"])
+        def ground_truth_fn(_setup, sample, _kw=kw):
+            targets = fourier_space.run_fisher(sample, **_kw)
+            triplet = fourier_space._cov_to_sigma_triplet(targets)
+            return dict(zip(target_names, triplet))
+        return priors, target_names, ground_truth_fn, None
 
     else:
         raise ValueError(f"Unknown analysis: {analysis}")

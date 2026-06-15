@@ -10,7 +10,12 @@ import torch
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
-from .util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+try:
+    # Package context (deployed as bedcosmo.num_tracers.emulator).
+    from .util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+except ImportError:
+    # Script context (run directly from this dir; sys.path.insert above puts it first).
+    from util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
 
 def _log_bins(vals: np.ndarray, n_bins: int = 30) -> np.ndarray:
     """Return histogram bin edges appropriate for log/symlog data."""
@@ -89,7 +94,7 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     param_names = ckpt["param_names"]
     ckpt_target_names = ckpt["target_names"]
 
-    default_priors, target_names, ground_truth_fn, setup = get_pipeline(analysis, quantity, tracer_bin=tracer_bin)
+    default_priors, target_names, ground_truth_fn, setup = get_pipeline(analysis, quantity, tracer_bin=tracer_bin, param_names=param_names)
 
     true_rows = []
     param_rows = []
@@ -164,9 +169,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
         axes[i].set_visible(False)
     fig.suptitle(f"NN prediction {delta_label}", fontsize=14, y=1.02)
     fig.tight_layout()
-    fig.savefig(os.path.join(save_path, f"eval_nn_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(save_path, f"eval_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved evaluation plot to: {os.path.join(save_path, f'eval_nn_{timestamp}.png')}")
+    print(f"Saved evaluation plot to: {os.path.join(save_path, f'eval_{timestamp}.png')}")
 
     # --- Triangle plot of cosmo inputs, coloured by outlier status ---
     # A sample is an "outlier" if ANY target fails np.isclose
@@ -227,9 +232,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 ax.tick_params(labelbottom=False)
             if j != 0:
                 ax.tick_params(labelleft=False)
-    fig2.savefig(os.path.join(save_path, f"eval_nn_triangle_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig2.savefig(os.path.join(save_path, f"eval_triangle_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig2)
-    print(f"Saved triangle plot to: {os.path.join(save_path, f'eval_nn_triangle_{timestamp}.png')}")
+    print(f"Saved triangle plot to: {os.path.join(save_path, f'eval_triangle_{timestamp}.png')}")
 
     # --- Triangle plot of target outputs, coloured by outlier status ---
     target_names = list(ckpt_target_names)
@@ -283,9 +288,9 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 ax.tick_params(labelbottom=False)
             if j != 0:
                 ax.tick_params(labelleft=False)
-    fig3.savefig(os.path.join(save_path, f"eval_nn_triangle_targets_{timestamp}.png"), dpi=150, bbox_inches="tight")
+    fig3.savefig(os.path.join(save_path, f"eval_triangle_targets_{timestamp}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig3)
-    print(f"Saved target triangle plot to: {os.path.join(save_path, f'eval_nn_triangle_targets_{timestamp}.png')}")
+    print(f"Saved target triangle plot to: {os.path.join(save_path, f'eval_triangle_targets_{timestamp}.png')}")
 
 
 def main() -> None:
