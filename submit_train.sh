@@ -14,7 +14,7 @@
 # Options (SLURM flags consumed here):
 #   --time HH:MM:SS    walltime per job          (default: 01:00:00; shared max 04:00:00)
 #   --queue Q          SLURM queue               (default: regular)
-#                      shared: 1 GPU + 16 CPUs (Perlmutter); regular/debug: 1 GPU + 32 CPUs
+#                      shared: --gpus-per-task=1 + 32 CPUs; regular/debug: --gpus-per-node=1 + 32 CPUs
 #   --tracers "A B C"  space-separated subset     (default with --tracers alone: all 6 DR1 bins)
 #                      Omit --tracers for a single job (forwards --tracer-bin if given).
 # Everything else is forwarded to train.py (per-tracer jobs get --tracer-bin <name> appended).
@@ -98,14 +98,17 @@ submit_one_job() {
     echo "Submitting $job_name: time=$TIME, queue=$QUEUE"
     echo "train.py args: $args_str"
 
+    local -a sbatch_extra_args=()
     local -a sbatch_gpu_args
     if [[ "$QUEUE" == "shared" ]]; then
-        # Perlmutter shared: 1 GPU is bundled with 16 CPUs (not 32).
-        sbatch_gpu_args=(--gpus-per-task=1 --cpus-per-task=16)
-        echo "SLURM resources: 1 GPU, 16 CPUs (shared queue)"
+        # Shared GPU: partial-node allocation. Do NOT use -N 1 or --mem=0 (full node);
+        # those pass --test-only but fail real submission on gpu_shared_ss11.
+        sbatch_gpu_args=(--gpus-per-task=1 --cpus-per-task=32)
+        echo "SLURM resources: 1 GPU, 32 CPUs (--gpus-per-task, shared queue)"
     else
+        sbatch_extra_args=(-N 1 --mem=0)
         sbatch_gpu_args=(--gpus-per-node=1 --cpus-per-task=32)
-        echo "SLURM resources: 1 GPU, 32 CPUs"
+        echo "SLURM resources: 1 GPU, 32 CPUs (--gpus-per-node)"
     fi
 
     local batch_script
@@ -134,6 +137,13 @@ echo ""
 
 module load conda
 conda activate emulator
+
+# mpi4py (ABI build) has no bundled MPI; provide Cray MPICH's libmpi.so.12.
+# Needed for post-training eval (desilike import). Disable GPU MPI (no GTL lib).
+module load cray-mpich-abi
+export MPICH_GPU_SUPPORT_ENABLED=0
+export LD_LIBRARY_PATH="${CRAY_MPICH_DIR}/lib-abi-mpich:${LD_LIBRARY_PATH:-}"
+
 cd __SCRIPT_DIR__
 
 python __SCRIPT_DIR__/train.py __TRAIN_ARGS__
@@ -153,10 +163,9 @@ INNEREOF
         -A desi \
         -C gpu \
         -q "$QUEUE" \
-        -N 1 \
+        "${sbatch_extra_args[@]}" \
         --ntasks=1 \
         "${sbatch_gpu_args[@]}" \
-        --mem=0 \
         -t "$TIME" \
         -o /dev/null \
         -e /dev/null \
