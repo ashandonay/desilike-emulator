@@ -81,8 +81,24 @@ def run(dim, blocks, expand, seed):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
+    ap.add_argument("--lr", type=float, default=LR)
+    ap.add_argument("--restarts", type=int, default=N_RESTARTS)
+    ap.add_argument("--gamma", type=float, default=GAMMA)
+    ap.add_argument("--weight-decay", type=float, default=WEIGHT_DECAY)
+    ap.add_argument("--batch", type=int, default=BATCH)
+    ap.add_argument("--eval-every", type=int, default=EVAL_EVERY)
     ap.add_argument("configs", nargs="+", help="dim,blocks,expand,seed tokens")
     args = ap.parse_args()
+    # Allow schedule search for new configs (base_omegak_w_wa): override the
+    # default base-cosmo schedule. lr_mult()/run() read these module globals.
+    LR = args.lr
+    N_RESTARTS = args.restarts
+    GAMMA = args.gamma
+    WEIGHT_DECAY = args.weight_decay
+    BATCH = args.batch
+    EVAL_EVERY = args.eval_every
+    print(f"[schedule] lr={LR} restarts={N_RESTARTS} gamma={GAMMA} "
+          f"wd={WEIGHT_DECAY} batch={BATCH} eval_every={EVAL_EVERY}", flush=True)
     new = not os.path.exists(args.out)
     f = open(args.out, "a")
     if new:

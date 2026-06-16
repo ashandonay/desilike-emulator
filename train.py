@@ -431,10 +431,18 @@ def main() -> None:
     print(f"Artifacts: {artifacts_dir}")
     print(f"Log file: {log_file}")
 
-    # Log parameters immediately after starting run (same pattern as train.py)
+    # Resolve log_normalize (CLI flag OR per-config YAML default) before logging so
+    # the recorded value is the effective one and the two loops below can't collide.
+    args.log_normalize = bool(args.log_normalize or model_cfg.get("log_normalize", False))
+
+    # Log parameters immediately after starting run (same pattern as train.py).
+    # Skip model_cfg keys already logged from args (e.g. log_normalize) to avoid
+    # MLflow "changing param value" errors on duplicate keys.
     for key, value in vars(args).items():
         mlflow.log_param(key, value)
     for key, value in model_cfg.items():
+        if key in vars(args):
+            continue
         mlflow.log_param(key, value)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -444,6 +452,10 @@ def main() -> None:
     np.random.seed(args.seed)
 
     data = load_data(data_path, tracer_bin=args.tracer_bin)
+    # log_normalize already resolved (CLI flag OR per-config YAML default) and stored
+    # back into args before MLflow logging above. Configs whose raw targets span many
+    # decades (e.g. dr1_base_omegak_w_wa_config) set `log_normalize: true` in the YAML
+    # so the symlog transform can't be forgotten.
     x_train, y_train, x_test, y_test, stats = standardize(
         data["x_train"], data["y_train"], data["x_test"], data["y_test"],
         log_normalize=args.log_normalize,

@@ -69,7 +69,13 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     np.random.seed(seed)
 
     # Load trained model
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    # Prefer GPU 1 when 2+ are visible (leaves GPU 0 free); fall back to cuda:0 under
+    # a masked/single-GPU set (e.g. CUDA_VISIBLE_DEVICES=1). Override via EMULATOR_DEVICE.
+    if torch.cuda.is_available():
+        _default_dev = "cuda:1" if torch.cuda.device_count() > 1 else "cuda"
+        device = torch.device(os.environ.get("EMULATOR_DEVICE", _default_dev))
+    else:
+        device = torch.device("cpu")
     print(f"Using device: {device}")
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
     model = build_model(
