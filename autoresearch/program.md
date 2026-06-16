@@ -32,8 +32,13 @@ $PY prepare.py    # verify the data loads + print stats
 - **`validate.py`** — AUTHORITATIVE: faithful full production schedule (mirrors
   `train.py`: 10000 epochs, `scheduler_type=lambda`, 10 restarts, gamma 0.85),
   seed-swept. All decisions rest on this.
-- **`prepare.py`** — READ-ONLY: data loading, z-score standardization, and
-  `evaluate_test_mse` (the fixed metric). Do not modify.
+- **`prepare.py`** — READ-ONLY metric/loader (z-score + `evaluate_test_mse`). One
+  opt-in knob: `EMULATOR_LOG_NORMALIZE=1` applies the SAME symlog transform as
+  production `train.py --log-normalize` before the z-score. **Required** for configs
+  whose raw targets span many decades (e.g. `base_omegak_w_wa`: σ ranges ~10 orders
+  over degenerate w0/wa/Ok cosmologies) — without it the standardized MSE is
+  outlier-dominated (top 0.1% of samples = 99.95% of variance) and no architecture
+  trains. Default OFF (raw-σ, base behavior). Otherwise do not modify.
 - **`dev/`** — gitignored scratch for `screen.py`/`validate.py` `.tsv`/`.log` outputs.
 
 Width/depth/expand sweeps need no code edits — pass `dim,blocks,expand` tokens.
@@ -63,6 +68,10 @@ The architecture lives in **two** places, indexed by the config
   → **always** add/update a `bao/model_config.yaml` entry, keyed
   `<release>_<cosmo_model>_<space>` (e.g. `dr1_base_config`). Include
   `architecture: <name>` (default `resnet`).
+- **Target transform** → if the search used `EMULATOR_LOG_NORMALIZE=1`, set
+  **`log_normalize: true`** in the same YAML entry. `train.py` honors it as a default
+  (so the symlog can't be forgotten); `eval.py` inverts it automatically from the
+  checkpoint metadata.
 - **The architecture class** → **only if structurally new**: copy the winning
   `model.py` definition into `bao/model.py` as a new class, register it in
   `util.py:ARCHITECTURE_REGISTRY["bao"]` under a name, and point the YAML entry's
