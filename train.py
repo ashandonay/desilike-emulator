@@ -341,6 +341,9 @@ def main() -> None:
     )
     parser.add_argument("--log-normalize", action="store_true",
                         help="Apply symlog transform to targets before z-score standardization.")
+    parser.add_argument("--log-batch-metrics", action="store_true",
+                        help="Log per-batch train/test loss to MLflow. Off by default "
+                             "(adds ~25%% wall time); per-epoch metrics are always logged.")
     parser.add_argument("--eval-atol", type=float, default=2e-3,
                         help="Absolute tolerance for evaluation.")
     parser.add_argument("--eval-rtol", type=float, default=2e-3,
@@ -461,10 +464,50 @@ def main() -> None:
         log_normalize=args.log_normalize,
     )
 
-    train_ds = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
-    test_ds = TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test))
-    train_loader = DataLoader(train_ds, batch_size=model_cfg["batch_size"], shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=model_cfg["batch_size"], shuffle=False)
+    # Data feed: keep the whole (standardized) set GPU-resident and minibatch via an
+    # index permutation (no per-batch host->device copies) when it fits in GPU memory;
+    # otherwise fall back to a CPU DataLoader. The resident path is ~2.5x faster for
+    # these small emulators (per-batch H2D + DataLoader overhead dominates; see
+    # autoresearch/dev/bench_train.py). Behaviour-neutral on the trained model.
+    batch_size = model_cfg["batch_size"]
+    n_train, n_test = len(x_train), len(x_test)
+
+    def _fits_on_gpu(*arrays, margin=0.5):
+        if device.type != "cuda":
+            return False
+        try:
+            free, _ = torch.cuda.mem_get_info()
+        except Exception:
+            return False
+        return sum(a.nbytes for a in arrays) < margin * free
+
+    gpu_resident = _fits_on_gpu(x_train, y_train, x_test, y_test)
+    if gpu_resident:
+        _Xtr = torch.from_numpy(x_train).to(device)
+        _Ytr = torch.from_numpy(y_train).to(device)
+        _Xte = torch.from_numpy(x_test).to(device)
+        _Yte = torch.from_numpy(y_test).to(device)
+        batches_per_epoch = (n_train + batch_size - 1) // batch_size
+
+        def train_batches():
+            perm = torch.randperm(n_train, device=device)
+            for st in range(0, n_train, batch_size):
+                idx = perm[st:st + batch_size]
+                yield _Xtr[idx], _Ytr[idx]
+        print(f"Data feed: GPU-resident index-permutation (fast path), device={device}.")
+    else:
+        train_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train)),
+            batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test)),
+            batch_size=batch_size, shuffle=False)
+        batches_per_epoch = len(train_loader)
+
+        def train_batches():
+            for xb, yb in train_loader:
+                yield xb.to(device), yb.to(device)
+        print("Data feed: CPU DataLoader (fallback path, dataset too large for GPU).")
 
     in_dim = x_train.shape[1]
     out_dim = y_train.shape[1]
@@ -484,7 +527,6 @@ def main() -> None:
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=model_cfg.get("weight_decay", 1e-5))
     loss_fn = nn.MSELoss()
 
-    batches_per_epoch = len(train_loader)
     total_steps = args.epochs * batches_per_epoch
     scheduler = create_scheduler(opt, {
         "total_steps": total_steps,
@@ -538,8 +580,7 @@ def main() -> None:
         model.train()
         train_loss = 0.0
         max_batch_loss = 0.0
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
+        for xb, yb in train_batches():
             opt.zero_grad()
             pred = model(xb)
             loss = loss_fn(pred, yb)
@@ -554,25 +595,30 @@ def main() -> None:
             opt.step()
             scheduler.step()
             global_step += 1
-            mlflow.log_metric("batch_train_loss", batch_loss, step=global_step)
+            if args.log_batch_metrics:
+                mlflow.log_metric("batch_train_loss", batch_loss, step=global_step)
             train_loss += batch_loss * xb.size(0)
             if batch_loss > max_batch_loss:
                 max_batch_loss = batch_loss
-        epoch_train_loss = train_loss / len(train_ds)
+        epoch_train_loss = train_loss / n_train
 
         model.eval()
-        test_loss = 0.0
         with torch.no_grad():
-            for xb, yb in test_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                pred = model(xb)
-                batch_test = loss_fn(pred, yb).item()
-                global_step += 1
-                mlflow.log_metric("batch_test_loss", batch_test, step=global_step)
-                test_loss += batch_test * xb.size(0)
-        epoch_test_loss = test_loss / len(test_ds)
+            if gpu_resident:
+                # one vectorized forward on the resident test set == overall test MSE
+                epoch_test_loss = loss_fn(model(_Xte), _Yte).item()
+            else:
+                test_loss = 0.0
+                for xb, yb in test_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    batch_test = loss_fn(model(xb), yb).item()
+                    global_step += 1
+                    if args.log_batch_metrics:
+                        mlflow.log_metric("batch_test_loss", batch_test, step=global_step)
+                    test_loss += batch_test * xb.size(0)
+                epoch_test_loss = test_loss / n_test
 
-        if not np.isfinite(train_loss) or not np.isfinite(test_loss):
+        if not np.isfinite(epoch_train_loss) or not np.isfinite(epoch_test_loss):
             raise RuntimeError(
                 f"NaN/Inf MSE at epoch {epoch}. "
                 "Data may contain non-finite values or learning rate may be too high; try --lr 1e-3 or smaller."
