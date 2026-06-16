@@ -12,8 +12,9 @@
 #   bash submit_train.sh --analysis shapefit --quantity mean --lr 1e-3 --scheduler-type cosine
 #
 # Options (SLURM flags consumed here):
-#   --time HH:MM:SS    walltime per job          (default: 01:00:00)
+#   --time HH:MM:SS    walltime per job          (default: 01:00:00; shared max 04:00:00)
 #   --queue Q          SLURM queue               (default: regular)
+#                      shared: 1 GPU + 16 CPUs (Perlmutter); regular/debug: 1 GPU + 32 CPUs
 #   --tracers "A B C"  space-separated subset     (default with --tracers alone: all 6 DR1 bins)
 #                      Omit --tracers for a single job (forwards --tracer-bin if given).
 # Everything else is forwarded to train.py (per-tracer jobs get --tracer-bin <name> appended).
@@ -67,6 +68,22 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+_time_to_secs() {
+    local t="$1" h m s
+    IFS=: read -r h m s <<< "$t"
+    echo $((10#${h:-0} * 3600 + 10#${m:-0} * 60 + 10#${s:-0}))
+}
+
+if [[ "$QUEUE" == "shared" ]]; then
+    max_shared_secs=$((4 * 3600))
+    req_secs=$(_time_to_secs "$TIME")
+    if (( req_secs > max_shared_secs )); then
+        echo "Error: shared GPU queue max walltime is 04:00:00 (requested $TIME)." >&2
+        echo "Use --queue regular for longer jobs, or reduce --time." >&2
+        exit 1
+    fi
+fi
+
 submit_one_job() {
     local job_name="$1"
     local tracer_bin="$2"
@@ -80,6 +97,16 @@ submit_one_job() {
 
     echo "Submitting $job_name: time=$TIME, queue=$QUEUE"
     echo "train.py args: $args_str"
+
+    local -a sbatch_gpu_args
+    if [[ "$QUEUE" == "shared" ]]; then
+        # Perlmutter shared: 1 GPU is bundled with 16 CPUs (not 32).
+        sbatch_gpu_args=(--gpus-per-task=1 --cpus-per-task=16)
+        echo "SLURM resources: 1 GPU, 16 CPUs (shared queue)"
+    else
+        sbatch_gpu_args=(--gpus-per-node=1 --cpus-per-task=32)
+        echo "SLURM resources: 1 GPU, 32 CPUs"
+    fi
 
     local batch_script
     batch_script=$(mktemp /tmp/emulator_train_XXXXXX.sh)
@@ -128,8 +155,7 @@ INNEREOF
         -q "$QUEUE" \
         -N 1 \
         --ntasks=1 \
-        --cpus-per-task=32 \
-        --gpus-per-node=1 \
+        "${sbatch_gpu_args[@]}" \
         --mem=0 \
         -t "$TIME" \
         -o /dev/null \
