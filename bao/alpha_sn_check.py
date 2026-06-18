@@ -37,7 +37,7 @@ warnings.filterwarnings("ignore")
 
 import core
 import config_space as cc
-import reference_sigmas as rs
+import desi_reference as desi_ref
 from util import TRACER_CONFIGS
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -93,7 +93,7 @@ def _analyze(tracer):
     sig_a = cc.bundle_fisher_sigmas(tracer, cov_override=C_of_alpha(a_fit))
     sig_s = cc.bundle_fisher_sigmas(tracer, cov_override=s_glob * Cg)
     sig_b = cc.bundle_fisher_sigmas(tracer)            # DESI bundle cov
-    recon = rs._recon_sigmas(tracer, sig_b)
+    recon = desi_ref._recon_sigmas(tracer, sig_b)
 
     shot_frac = float(np.mean(np.diag(Csh) / np.diag(Cg)))  # how shot-dominated
     Ca = C_of_alpha(a_fit)

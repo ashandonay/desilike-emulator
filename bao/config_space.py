@@ -12,7 +12,7 @@ Frame map (config here  ↔  Fourier in core):
                                           driven for config space by mcmc.py --space config
 
 Space-agnostic DESI / Fourier *reference* σ (bao-recon, desi_data.csv, production
-Fisher) live in reference_sigmas.py — they are what BOTH frames are compared against.
+Fisher) live in desi_reference.py — they are what BOTH frames are compared against.
 
 What this module shares with core: ONLY the cosmology mapping
 (`_to_bao_cosmo_params`), the fiducial template, and the fiducial nuisance values

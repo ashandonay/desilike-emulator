@@ -30,7 +30,7 @@ sys.path.insert(0, str(_BAO))
 sys.path.insert(0, str(_BAO.parent))
 
 import config_space as cc          # noqa: E402
-import reference_sigmas as rs      # noqa: E402
+import desi_reference as desi_ref      # noqa: E402
 from util import TRACER_CONFIGS    # noqa: E402
 
 _DEFAULT_DIR = "/home/ashandonay/scratch/bedcosmo/num_tracers/emulator/training_data/bao/dr1/base/config/v1"
@@ -102,7 +102,7 @@ def analyze(data_dir):
         dv_mcmc = float(np.mean(dvs)) if dvs else np.nan
         # DESI recon at the analytic fiducial distances
         DHf, DMf, DVf = _fid_distances(z, FID_OM, FID_HRD)
-        recon = rs._recon_sigmas(t, {"DH_over_rd_fid": DHf, "DM_over_rd_fid": DMf,
+        recon = desi_ref._recon_sigmas(t, {"DH_over_rd_fid": DHf, "DM_over_rd_fid": DMf,
                                      "DV_over_rd_fid": DVf})
         dv_recon = recon.get("DV_over_rs", np.nan)
         rows[t] = dict(coeffs=coeffs, passed=passed, pos=(passed - lo) / (hi - lo),

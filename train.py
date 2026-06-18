@@ -366,6 +366,8 @@ def main() -> None:
                         help="Absolute tolerance for evaluation.")
     parser.add_argument("--eval-rtol", type=float, default=2e-3,
                         help="Relative tolerance for evaluation.")
+    parser.add_argument("--skip-eval", action="store_true",
+                        help="Skip post-training Fisher ground-truth evaluation.")
     parser.add_argument(
         "--tracer-bin",
         dest="tracer_bin",
@@ -755,18 +757,21 @@ def main() -> None:
 
     # Run evaluation using best model
     best_model_path = os.path.join(ckpt_dir, "model_best.pt")
-    print("\nRunning evaluation...")
-    run_eval(
-        best_model_path,
-        save_path=artifacts_dir,
-        analysis=args.analysis,
-        quantity=args.quantity,
-        n_samples=1000,
-        atol=args.eval_atol,
-        rtol=args.eval_rtol,
-        log_scale=True,
-        tracer_bin=args.tracer_bin,
-    )
+    if not args.skip_eval:
+        print("\nRunning evaluation...")
+        run_eval(
+            best_model_path,
+            save_path=artifacts_dir,
+            analysis=args.analysis,
+            quantity=args.quantity,
+            n_samples=1000,
+            atol=args.eval_atol,
+            rtol=args.eval_rtol,
+            log_scale=True,
+            tracer_bin=args.tracer_bin,
+        )
+    else:
+        print("\nSkipping evaluation (--skip-eval).")
 
     deploy_path = deploy_checkpoint_path(data_path, args.analysis, args.tracer_bin)
     if deploy_path is not None:

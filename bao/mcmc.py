@@ -17,7 +17,7 @@ combined seed-sweep file:
 
 Sparse tracers (BGS, QSO) use the isotropic qiso fit — DH/DM are degenerate and
 reported NaN; DV is the constrained quantity. Reference σ is DESI bao-recon
-stat-only (reference_sigmas.py), NOT desi_data.csv.
+stat-only (desi_reference.py), NOT desi_data.csv.
 
 Usage (from bao/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 warnings.filterwarnings("ignore")
 
-from reference_sigmas import _recon_sigmas
+from desi_reference import _recon_sigmas
 from util import TRACER_CONFIGS
 
 _HERE = Path(__file__).resolve().parent
