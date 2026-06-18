@@ -1,6 +1,7 @@
 *.png
 *.csv
 __pycache__/
+*.egg-info/
 *.log
 notebooks/
 

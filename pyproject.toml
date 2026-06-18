@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desilike_emulator"
+version = "0.1.0"
+description = "Neural emulator utilities and training scripts for num_tracers BAO/shapefit covariances."
+requires-python = ">=3.8"
+
+# Flat repo layout: the top-level directory is the importable package
+# `desilike_emulator` (build_model / cov_from_triplet live in util.py).
+[tool.setuptools]
+packages = ["desilike_emulator", "desilike_emulator.bao", "desilike_emulator.shapefit"]
+
+[tool.setuptools.package-dir]
+desilike_emulator = "."
+"desilike_emulator.bao" = "bao"
+"desilike_emulator.shapefit" = "shapefit"

@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import mlflow
@@ -13,11 +13,27 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 try:
     # Package context (deployed as bedcosmo.num_tracers.emulator).
-    from .util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from .util import (
+        get_default_save_path,
+        _next_version,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+        transform_emulator_targets_forward,
+        deploy_checkpoint_path,
+    )
     from .eval import run_eval
 except ImportError:
     # Script context (run directly from this dir; sys.path.insert above puts it first).
-    from util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from util import (
+        get_default_save_path,
+        _next_version,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+        transform_emulator_targets_forward,
+        deploy_checkpoint_path,
+    )
     from eval import run_eval
 
 def load_data(data_path: str, tracer_bin: str | None = None) -> Dict[str, np.ndarray]:
@@ -235,18 +251,19 @@ def standardize(
     y_train: np.ndarray,
     x_test: np.ndarray,
     y_test: np.ndarray,
+    target_names: List[str],
     log_normalize: bool = False,
+    log_sigma: bool = False,
+    sigma_floor: float = 1e-8,
 ):
-    # Optional log normalization of targets before z-score
-    y_linthresh = None
-    if log_normalize:
-        # Per-column linthresh = min absolute nonzero value
-        y_linthresh = np.empty((1, y_train.shape[1]), dtype=np.float32)
-        for col in range(y_train.shape[1]):
-            abs_nz = np.abs(y_train[:, col][y_train[:, col] != 0])
-            y_linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
-        y_train = _symlog_transform(y_train, y_linthresh)
-        y_test = _symlog_transform(y_test, y_linthresh)
+    y_train, y_linthresh = transform_emulator_targets_forward(
+        y_train, target_names,
+        log_sigma=log_sigma, log_normalize=log_normalize, sigma_floor=sigma_floor,
+    )
+    y_test, _ = transform_emulator_targets_forward(
+        y_test, target_names,
+        log_sigma=log_sigma, log_normalize=log_normalize, sigma_floor=sigma_floor,
+    )
 
     # Use minimum sigma to avoid huge normalized values (e.g. constant columns)
     x_mu = x_train.mean(axis=0, keepdims=True)
@@ -274,7 +291,8 @@ def standardize(
             )
 
     stats = {"x_mu": x_mu, "x_sigma": x_sigma, "y_mu": y_mu, "y_sigma": y_sigma,
-             "log_normalize": log_normalize, "y_linthresh": y_linthresh}
+             "log_normalize": log_normalize, "y_linthresh": y_linthresh,
+             "log_sigma": log_sigma, "sigma_floor": sigma_floor}
     return x_train_n, y_train_n, x_test_n, y_test_n, stats
 
 def main() -> None:
@@ -437,6 +455,7 @@ def main() -> None:
     # Resolve log_normalize (CLI flag OR per-config YAML default) before logging so
     # the recorded value is the effective one and the two loops below can't collide.
     args.log_normalize = bool(args.log_normalize or model_cfg.get("log_normalize", False))
+    log_sigma = bool(model_cfg.get("log_sigma", False))
 
     # Log parameters immediately after starting run (same pattern as train.py).
     # Skip model_cfg keys already logged from args (e.g. log_normalize) to avoid
@@ -459,9 +478,12 @@ def main() -> None:
     # back into args before MLflow logging above. Configs whose raw targets span many
     # decades (e.g. dr1_base_omegak_w_wa_config) set `log_normalize: true` in the YAML
     # so the symlog transform can't be forgotten.
+    target_names = data["target_names"].tolist()
     x_train, y_train, x_test, y_test, stats = standardize(
         data["x_train"], data["y_train"], data["x_test"], data["y_test"],
+        target_names=target_names,
         log_normalize=args.log_normalize,
+        log_sigma=log_sigma,
     )
 
     # Data feed: keep the whole (standardized) set GPU-resident and minibatch via an
@@ -545,6 +567,7 @@ def main() -> None:
     global_step = 0
     best_test_loss = float("inf")
     best_state_dict = None
+    best_epoch = 0
     epochs_without_improvement = 0
 
     ckpt_dir = os.path.join(artifacts_dir, "checkpoints")
@@ -558,6 +581,8 @@ def main() -> None:
             "y_mu": torch.from_numpy(stats["y_mu"]),
             "y_sigma": torch.from_numpy(stats["y_sigma"]),
             "log_normalize": stats["log_normalize"],
+            "log_sigma": stats["log_sigma"],
+            "sigma_floor": stats["sigma_floor"],
             "y_linthresh": torch.from_numpy(stats["y_linthresh"]) if stats["y_linthresh"] is not None else None,
             "param_names": data["param_names"].tolist(),
             "target_names": data["target_names"].tolist(),
@@ -635,6 +660,7 @@ def main() -> None:
         # Track best model and early stopping
         if epoch_test_loss < best_test_loss:
             best_test_loss = epoch_test_loss
+            best_epoch = epoch
             best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
             torch.save(_make_payload(best_state_dict, epoch=epoch, test_loss=best_test_loss),
                        os.path.join(ckpt_dir, "model_best.pt"))
@@ -672,9 +698,15 @@ def main() -> None:
     model.eval()
     with torch.no_grad():
         yhat_n = model(torch.from_numpy(x_test).to(device)).cpu().numpy()
-    yhat = yhat_n * stats["y_sigma"] + stats["y_mu"]
-    if stats["log_normalize"]:
-        yhat = _symlog_inverse(yhat, stats["y_linthresh"])
+    yhat = decode_emulator_outputs(
+        yhat_n,
+        stats["y_mu"],
+        stats["y_sigma"],
+        target_names,
+        log_normalize=stats["log_normalize"],
+        y_linthresh=stats["y_linthresh"],
+        log_sigma=stats["log_sigma"],
+    )
     mae = np.mean(np.abs(yhat - data["y_test"]), axis=0)
     rms = np.sqrt(np.mean((yhat - data["y_test"]) ** 2, axis=0))
     target_names = data["target_names"].tolist()
@@ -735,6 +767,25 @@ def main() -> None:
         log_scale=True,
         tracer_bin=args.tracer_bin,
     )
+
+    deploy_path = deploy_checkpoint_path(data_path, args.analysis, args.tracer_bin)
+    if deploy_path is not None:
+        os.makedirs(os.path.dirname(deploy_path), exist_ok=True)
+        deploy_state = best_state_dict
+        if deploy_state is None:
+            deploy_state = {k: v.clone() for k, v in model.state_dict().items()}
+        torch.save(
+            _make_payload(deploy_state, epoch=best_epoch or final_epoch, test_loss=best_test_loss),
+            deploy_path,
+        )
+        print(f"Saved deploy checkpoint: {deploy_path}")
+    elif args.tracer_bin is None:
+        print("Skipping deploy checkpoint (no --tracer-bin).")
+    else:
+        print(
+            f"Warning: could not resolve deploy checkpoint path from data_path={data_path!r}; "
+            f"expected under training_data/{args.analysis}/."
+        )
 
     mlflow.end_run()
     print(f"MLflow run completed: {mlflow_run_id}")

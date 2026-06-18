@@ -12,8 +12,10 @@ Two interchangeable backends, selected with ``--space``:
   config  : Config-space (ξ) Fisher with the first-principles Grieb Gaussian
             ξ-covariance (config_space.XiSigmaGenerator), the emulator σ-driver.
 
-Both spaces emit the SAME target vector (SIGMA_TARGET_NAMES), so the two datasets
-are directly comparable. The sampling (constrained Latin-hypercube), the spawn
+Both spaces emit per-tracer emulator targets (see core.emulator_target_names):
+  isotropic (BGS; BGS+QSO for dr1): [sigma_DV_over_rd]
+  anisotropic: [sigma_DH_over_rd, sigma_DM_over_rd, rho_DH_DM]
+The sampling (constrained Latin-hypercube), the spawn
 worker Pool, the progress/ETA loop, and the train/test .npz writer are all shared
 (reused from core) — only the per-sample compute differs by space and lives
 in its own module (core for fourier, config_space for config).
@@ -50,7 +52,7 @@ from core import (
     COSMO_MODELS,
     DEFAULT_PRIORS,
     PARAM_DEFAULTS,
-    SIGMA_TARGET_NAMES,
+    emulator_target_names,
     generate_dataset,
 )
 from util import (
@@ -186,12 +188,17 @@ def main() -> None:
     if args.space == "fourier":
         import fourier_space
         worker_fn = fourier_space._worker_run_fisher_sigma
-        make_task = None  # default builder (Fisher arg tuple) is what this worker expects
+        make_task = lambda s: (  # noqa: E731
+            s, args.tracer_bin, zrange, z_eff, param_defaults, args.area,
+            args.nz_slices_path, args.dataset,
+        )
     else:
         import config_space
         tracer = args.tracer_bin
         worker_fn = config_space._worker_xi_sigma
-        make_task = lambda s: (s, tracer)  # noqa: E731
+        make_task = lambda s: (s, tracer, args.dataset)  # noqa: E731
+
+    target_names = emulator_target_names(args.tracer_bin, args.dataset)
 
     print(f"Space: {args.space}")
     print(f"Tracer bin: {args.tracer_bin}")
@@ -211,7 +218,7 @@ def main() -> None:
     else:
         print("Config space: survey frame (window + area + z_eff) fixed by the "
               "DESI DR1 bundle.")
-    print(f"Target: {SIGMA_TARGET_NAMES}")
+    print(f"Target: {target_names}")
     print("Writing dataset to:", save_path)
 
     try:
@@ -239,7 +246,7 @@ def main() -> None:
             X=X,
             y=y,
             test_size=args.test_size,
-            target_names=SIGMA_TARGET_NAMES,
+            target_names=target_names,
             name=args.name if args.name is not None else args.tracer_bin,
             version=args.version,
         )

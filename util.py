@@ -14,13 +14,18 @@ from scipy.stats import truncnorm
 import matplotlib.pyplot as plt
 
 try:
-    # Preferred when importing as package code (e.g. from bedcosmo/ scripts).
-    from bedcosmo.num_tracers.emulator.bao import model as bao_model
-    from bedcosmo.num_tracers.emulator.shapefit import model as shapefit_model
+    # Preferred when installed as the desilike_emulator package (pip install -e).
+    from desilike_emulator.bao import model as bao_model
+    from desilike_emulator.shapefit import model as shapefit_model
 except ModuleNotFoundError:
-    # Backward-compatible fallback for running from emulator/ as a script.
-    from bao import model as bao_model  # type: ignore[reportMissingImports]
-    from shapefit import model as shapefit_model  # type: ignore[reportMissingImports]
+    try:
+        # Legacy location when this code lived inside the bedcosmo package.
+        from bedcosmo.num_tracers.emulator.bao import model as bao_model
+        from bedcosmo.num_tracers.emulator.shapefit import model as shapefit_model
+    except ModuleNotFoundError:
+        # Backward-compatible fallback for running from emulator/ as a script.
+        from bao import model as bao_model  # type: ignore[reportMissingImports]
+        from shapefit import model as shapefit_model  # type: ignore[reportMissingImports]
 
 # analysis -> architecture name -> nn.Module subclass (hyperparameters passed at build time).
 ARCHITECTURE_REGISTRY: Dict[str, Dict[str, Type[nn.Module]]] = {
@@ -405,7 +410,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             sys.path.insert(0, _bao_dir)
         import core as bao_core
 
-        target_names = list(bao_core.SIGMA_TARGET_NAMES)
+        target_names = list(bao_core.emulator_target_names(tracer_bin, dataset="dr1"))
 
         # Restrict priors to the trained model's varied params (param_names),
         # else default to N_tracers + the base cosmo set. N_tracers bounds come
@@ -424,11 +429,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             def ground_truth_fn(_setup, sample, _gen=gen):
                 cosmo = {k: v for k, v in sample.items() if k != "N_tracers"}
                 s = _gen.sigma_triplet(N_tracers=sample["N_tracers"], **cosmo)
-                return {
-                    "sigma_DH_over_rd": s["DH_over_rs"],
-                    "sigma_DM_over_rd": s["DM_over_rs"],
-                    "sigma_DV_over_rd": s["DV_over_rs"],
-                }
+                vals = bao_core.fisher_sigmas_to_emulator_targets(s, tracer_bin, "dr1")
+                return dict(zip(target_names, vals))
             return priors, target_names, ground_truth_fn, gen
 
         # quantity == "covar": Fourier-space Fisher σ.
@@ -438,8 +440,10 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             kw.update(zrange=tracer_bin_cfg["zrange"], z_eff=tracer_bin_cfg["z_eff"])
         def ground_truth_fn(_setup, sample, _kw=kw):
             targets = fourier_space.run_fisher(sample, **_kw)
-            triplet = fourier_space._cov_to_sigma_triplet(targets)
-            return dict(zip(target_names, triplet))
+            vals = fourier_space._fisher_targets_to_emulator_targets(
+                targets, tracer_bin, "dr1",
+            )
+            return dict(zip(target_names, vals))
         return priors, target_names, ground_truth_fn, None
 
     else:
@@ -460,6 +464,34 @@ def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
         parts.append(cosmo_model)
     parts.append(quantity)
     return os.path.join(*parts)
+
+
+def deploy_checkpoint_path(
+    data_path: str,
+    analysis: str,
+    tracer_bin: str | None,
+) -> str | None:
+    """Deploy path for a per-tracer .pt mirroring training_data under models/.
+
+    ``training_data/bao/dr1/base/config/v2`` + ``LRG1`` →
+    ``models/dr1/base/config/v2/LRG1.pt`` (under SCRATCH/bedcosmo/num_tracers/emulator).
+    Returns None if ``tracer_bin`` is unset or ``data_path`` is not under
+    ``training_data/{analysis}/``.
+    """
+    if not tracer_bin:
+        return None
+    marker = os.path.join("training_data", analysis) + os.sep
+    norm = os.path.normpath(data_path)
+    idx = norm.find(marker)
+    if idx < 0:
+        return None
+    rel = norm[idx + len(marker):]
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    deploy_dir = os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", "models", rel,
+    )
+    return os.path.join(deploy_dir, f"{tracer_bin}.pt")
+
 
 def compare_losses(
         run_ids: list,
@@ -540,3 +572,235 @@ def compare_losses(
 
     fig.tight_layout()
     plt.show()
+
+
+# Minimum σ(D/rd) used when reconstructing 2×2 blocks from emulator triplets.
+# Prevents triplet inversion blow-ups when the network predicts σ≈0 or negative.
+DEFAULT_SIGMA_FLOOR = 1e-4
+_RHO_CLIP = 1.0 - 1e-6
+
+
+def _symlog_transform_np(y: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
+    return np.sign(y) * np.log1p(np.abs(y) / linthresh)
+
+
+def _symlog_inverse_np(y_log: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
+    return np.sign(y_log) * linthresh * np.expm1(np.abs(y_log))
+
+
+def transform_emulator_targets_forward(
+    y: np.ndarray,
+    target_names: List[str],
+    *,
+    log_sigma: bool = False,
+    log_normalize: bool = False,
+    sigma_floor: float = 1e-8,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Map physical emulator targets to training space (before z-score)."""
+    y = np.array(y, dtype=np.float64, copy=True)
+    y_linthresh = None
+    if log_normalize:
+        y_linthresh = np.empty((1, y.shape[1]), dtype=np.float64)
+        for col, name in enumerate(target_names):
+            if not name.startswith("sigma_"):
+                y_linthresh[0, col] = 1.0
+                continue
+            abs_nz = np.abs(y[:, col][y[:, col] != 0])
+            y_linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
+
+    for col, name in enumerate(target_names):
+        if name.startswith("sigma_"):
+            if log_sigma:
+                y[:, col] = np.log(np.maximum(y[:, col], sigma_floor))
+            if log_normalize and y_linthresh is not None:
+                y[:, col] = _symlog_transform_np(y[:, col, None], y_linthresh[:, col, None])[:, 0]
+        elif name.startswith("rho_"):
+            y[:, col] = np.arctanh(np.clip(y[:, col], -_RHO_CLIP, _RHO_CLIP))
+    return y.astype(np.float32), y_linthresh.astype(np.float32) if y_linthresh is not None else None
+
+
+def transform_emulator_targets_inverse(
+    y: np.ndarray,
+    target_names: List[str],
+    *,
+    log_sigma: bool = False,
+    log_normalize: bool = False,
+    y_linthresh: np.ndarray | None = None,
+    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
+    apply_sigma_floor: bool = True,
+) -> np.ndarray:
+    """Map denormalized training-space targets back to physical units."""
+    import torch
+
+    if isinstance(y, torch.Tensor):
+        out = y.clone()
+        for col, name in enumerate(target_names):
+            if name.startswith("rho_"):
+                out[..., col] = torch.tanh(out[..., col])
+            elif name.startswith("sigma_"):
+                if log_normalize and y_linthresh is not None:
+                    lt = y_linthresh[..., col]
+                    out[..., col] = torch.sign(out[..., col]) * lt * torch.expm1(torch.abs(out[..., col]))
+                if log_sigma:
+                    out[..., col] = torch.exp(out[..., col])
+                if apply_sigma_floor and sigma_floor > 0:
+                    out[..., col] = torch.clamp(out[..., col], min=sigma_floor)
+        return out
+
+    out = np.array(y, dtype=np.float64, copy=True)
+    for col, name in enumerate(target_names):
+        if name.startswith("rho_"):
+            out[..., col] = np.tanh(out[..., col])
+        elif name.startswith("sigma_"):
+            if log_normalize and y_linthresh is not None:
+                lt = y_linthresh[..., col]
+                out[..., col] = np.sign(out[..., col]) * lt * np.expm1(np.abs(out[..., col]))
+            if log_sigma:
+                out[..., col] = np.exp(out[..., col])
+            if apply_sigma_floor and sigma_floor > 0:
+                out[..., col] = np.maximum(out[..., col], sigma_floor)
+    return out
+
+
+def cov_block_from_marginals(s_DH, s_DM, rho):
+    """2×2 (DH/rd, DM/rd) covariance from marginal σ and correlation (PSD if |ρ|≤1)."""
+    import torch
+
+    if isinstance(s_DH, torch.Tensor):
+        c11 = s_DH * s_DH
+        c22 = s_DM * s_DM
+        c12 = rho * s_DH * s_DM
+        return c11, c12, c22
+    c11 = s_DH * s_DH
+    c22 = s_DM * s_DM
+    c12 = rho * s_DH * s_DM
+    return c11, c12, c22
+
+
+def project_2x2_spd(c11, c12, c22, var_floor: float = 1e-12):
+    """Project a symmetric 2×2 block to PSD by clamping the off-diagonal.
+
+    Accepts numpy or torch tensors (including batched leading dimensions).
+    """
+    import torch
+
+    if isinstance(c11, torch.Tensor):
+        c11 = torch.clamp(c11, min=var_floor)
+        c22 = torch.clamp(c22, min=var_floor)
+        max_off = torch.sqrt(c11 * c22)
+        c12 = torch.clamp(c12, min=-max_off, max=max_off)
+        return c11, c12, c22
+
+    c11 = np.maximum(c11, var_floor)
+    c22 = np.maximum(c22, var_floor)
+    max_off = np.sqrt(c11 * c22)
+    c12 = np.clip(c12, -max_off, max_off)
+    return c11, c12, c22
+
+
+def cov_block_from_sigma_triplet_raw(s_DH, s_DM, s_DV, DH, DM, DV):
+    """Raw 2×2 block from σ triplet — no σ floor, no PSD projection."""
+    cov_ln = (9.0 * (s_DV / DV) ** 2 - (s_DH / DH) ** 2 - 4.0 * (s_DM / DM) ** 2) / 4.0
+    cov_DH_DM = cov_ln * DH * DM
+    c11 = s_DH * s_DH
+    c22 = s_DM * s_DM
+    return c11, cov_DH_DM, c22
+
+
+def rho_from_cov_block(c11, c12, c22):
+    """Correlation ρ = c12 / sqrt(c11 c22); inf when denominators vanish."""
+    import torch
+
+    if isinstance(c11, torch.Tensor):
+        denom = torch.sqrt(torch.clamp(c11 * c22, min=0.0))
+        rho = c12 / denom.clamp(min=1e-30)
+        return torch.where(denom > 0, rho, torch.full_like(rho, float("inf")))
+    denom = np.sqrt(np.maximum(c11 * c22, 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rho = np.where(denom > 0, c12 / denom, np.inf)
+    return rho
+
+
+def cov_block_from_sigma_triplet(
+    s_DH,
+    s_DM,
+    s_DV,
+    DH,
+    DM,
+    DV,
+    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
+):
+    """2×2 (DH/rd, DM/rd) covariance from σ triplet, with σ floor and PSD projection.
+
+    ``DH``, ``DM``, ``DV`` are the reference D/rd values used in the triplet
+    inversion (sampled cosmology in BED; fiducial in offline checks). Works with
+    numpy scalars/arrays or torch tensors (batched leading dims supported).
+    """
+    import torch
+
+    is_torch = isinstance(s_DH, torch.Tensor)
+    clamp = torch.clamp if is_torch else np.maximum
+    square = (lambda x: x * x)
+
+    s_DH = clamp(s_DH, min=sigma_floor)
+    s_DM = clamp(s_DM, min=sigma_floor)
+    s_DV = clamp(s_DV, min=sigma_floor)
+
+    cov_ln = (9.0 * (s_DV / DV) ** 2 - (s_DH / DH) ** 2 - 4.0 * (s_DM / DM) ** 2) / 4.0
+    cov_DH_DM = cov_ln * DH * DM
+    c11 = square(s_DH)
+    c22 = square(s_DM)
+    c11, cov_DH_DM, c22 = project_2x2_spd(c11, cov_DH_DM, c22)
+    return c11, cov_DH_DM, c22
+
+
+def decode_emulator_outputs(
+    y_norm,
+    y_mu,
+    y_sigma,
+    target_names: List[str],
+    *,
+    log_normalize: bool = False,
+    y_linthresh=None,
+    log_sigma: bool = False,
+    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
+    apply_sigma_floor: bool = True,
+):
+    """Invert z-score and per-target transforms to physical emulator targets."""
+    y = y_norm * y_sigma + y_mu
+    return transform_emulator_targets_inverse(
+        y,
+        target_names,
+        log_sigma=log_sigma,
+        log_normalize=log_normalize,
+        y_linthresh=y_linthresh,
+        sigma_floor=sigma_floor,
+        apply_sigma_floor=apply_sigma_floor,
+    )
+
+
+def cov_from_triplet(triplet):
+    """2×2 covariance of (DH/rd, DM/rd) from a σ(D/rd) triplet.
+
+    Inverse of the forward AP→triplet map used by the BAO pipelines
+    (config_space.py / fourier_space.py / reference_sigmas.py). The diagonals are
+    just σ²; the off-diagonal is recovered from σ_DV, since
+        var(ln DV) = (1/9)var(ln DH) + (4/9)var(ln DM) + (4/9)cov(ln DH, ln DM).
+
+    `triplet` is the dict the pipeline / emulator emits, carrying the σ's
+    (DH_over_rs, DM_over_rs, DV_over_rs) and the fiducial D/rd values
+    (DH_over_rd_fid, DM_over_rd_fid, DV_over_rd_fid). Returns a (2, 2) array
+    ordered [DH/rd, DM/rd].
+
+    Only meaningful for ANISOTROPIC tracers (LRG1/2, LRG3+ELG1, ELG2). For qiso
+    tracers (BGS, QSO) the matrix is rank-1 (ρ=1) by construction and DH/DM are
+    not separately measured — use σ_DV directly instead of this function.
+    """
+    DH = triplet["DH_over_rd_fid"]; DM = triplet["DM_over_rd_fid"]; DV = triplet["DV_over_rd_fid"]
+    sDH = triplet["DH_over_rs"]; sDM = triplet["DM_over_rs"]; sDV = triplet["DV_over_rs"]
+    floor = triplet.get("sigma_floor", DEFAULT_SIGMA_FLOOR)
+    c11, cov_DH_DM, c22 = cov_block_from_sigma_triplet(
+        sDH, sDM, sDV, DH, DM, DV, sigma_floor=floor,
+    )
+    return np.array([[c11, cov_DH_DM],
+                     [cov_DH_DM, c22]])

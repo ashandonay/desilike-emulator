@@ -94,12 +94,63 @@ _N_S_FID = 0.9649
 _LN10A_S_FID = 3.044
 _H_FID = 0.6736
 
-# Unified distance-error target shared by the Fourier and config-space emulator
-# generators (see generate_emulator_data.py). The Fourier path converts its 2x2
-# covariance to this triplet via fourier_space._cov_to_sigma_triplet; the config
-# path produces it natively (config_space.bundle_fisher_sigmas). The legacy 2x2
-# cov triplet (fourier_space.TARGET_NAMES) lives with the Fourier backend.
+# Legacy σ-triplet target (superseded by per-tracer emulator_target_names).
 SIGMA_TARGET_NAMES = ["sigma_DH_over_rd", "sigma_DM_over_rd", "sigma_DV_over_rd"]
+
+# Per-tracer emulator outputs: isotropic → σ(DV/rd) only; anisotropic → 2×2 via
+# (σ_DH/rd, σ_DM/rd, ρ) — PSD by construction, no σ_DV inversion at inference.
+ISO_TRACER_BINS_BY_DATASET = {
+    "dr1": ("BGS", "QSO"),
+    "dr2": ("BGS",),
+}
+ISO_EMULATOR_TARGET_NAMES = ["sigma_DV_over_rd"]
+ANISO_EMULATOR_TARGET_NAMES = [
+    "sigma_DH_over_rd",
+    "sigma_DM_over_rd",
+    "rho_DH_DM",
+]
+_RHO_CLIP = 1.0 - 1e-6
+
+
+def is_iso_tracer_bin(tracer_bin: str, dataset: str = "dr1") -> bool:
+    """True if the tracer uses a single isotropic σ(DV/rd) emulator output."""
+    iso = ISO_TRACER_BINS_BY_DATASET.get(dataset, ISO_TRACER_BINS_BY_DATASET["dr1"])
+    return tracer_bin in iso
+
+
+def emulator_target_names(tracer_bin: str, dataset: str = "dr1") -> List[str]:
+    """Emulator output names for a tracer bin and DESI release."""
+    if is_iso_tracer_bin(tracer_bin, dataset):
+        return list(ISO_EMULATOR_TARGET_NAMES)
+    return list(ANISO_EMULATOR_TARGET_NAMES)
+
+
+def fisher_sigmas_to_emulator_targets(
+    sigmas: Dict[str, float],
+    tracer_bin: str,
+    dataset: str = "dr1",
+) -> List[float]:
+    """Map a Fisher σ dict to the per-tracer emulator training/inference vector."""
+    if is_iso_tracer_bin(tracer_bin, dataset):
+        return [float(sigmas["DV_over_rs"])]
+
+    sig_dh = float(sigmas["DH_over_rs"])
+    sig_dm = float(sigmas["DM_over_rs"])
+    if "rho_DH_DM" in sigmas:
+        rho = float(sigmas["rho_DH_DM"])
+    else:
+        cov_q = sigmas.get("cov_q")
+        if cov_q is not None and sigmas.get("apmode") == "qparqper":
+            sig_qpar = float(np.sqrt(max(cov_q[0, 0], 0.0)))
+            sig_qper = float(np.sqrt(max(cov_q[1, 1], 0.0)))
+            denom = max(sig_qpar * sig_qper, 1e-30)
+            rho = float(cov_q[0, 1] / denom)
+        else:
+            c_hm = float(sigmas.get("cov_DH_DM", 0.0))
+            denom = max(sig_dh * sig_dm, 1e-30)
+            rho = c_hm / denom
+    rho = float(np.clip(rho, -_RHO_CLIP, _RHO_CLIP))
+    return [sig_dh, sig_dm, rho]
 
 # Integration settings for displacement / reconstruction model
 _K_DISP_MIN = 1.0e-4
