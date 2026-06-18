@@ -574,8 +574,7 @@ def compare_losses(
     plt.show()
 
 
-# Minimum σ(D/rd) used when reconstructing 2×2 blocks from emulator triplets.
-# Prevents triplet inversion blow-ups when the network predicts σ≈0 or negative.
+# Minimum σ(D/rd) applied at decode time for sigma_* emulator outputs.
 DEFAULT_SIGMA_FLOOR = 1e-4
 _RHO_CLIP = 1.0 - 1e-6
 
@@ -677,83 +676,6 @@ def cov_block_from_marginals(s_DH, s_DM, rho):
     return c11, c12, c22
 
 
-def project_2x2_spd(c11, c12, c22, var_floor: float = 1e-12):
-    """Project a symmetric 2×2 block to PSD by clamping the off-diagonal.
-
-    Accepts numpy or torch tensors (including batched leading dimensions).
-    """
-    import torch
-
-    if isinstance(c11, torch.Tensor):
-        c11 = torch.clamp(c11, min=var_floor)
-        c22 = torch.clamp(c22, min=var_floor)
-        max_off = torch.sqrt(c11 * c22)
-        c12 = torch.clamp(c12, min=-max_off, max=max_off)
-        return c11, c12, c22
-
-    c11 = np.maximum(c11, var_floor)
-    c22 = np.maximum(c22, var_floor)
-    max_off = np.sqrt(c11 * c22)
-    c12 = np.clip(c12, -max_off, max_off)
-    return c11, c12, c22
-
-
-def cov_block_from_sigma_triplet_raw(s_DH, s_DM, s_DV, DH, DM, DV):
-    """Raw 2×2 block from σ triplet — no σ floor, no PSD projection."""
-    cov_ln = (9.0 * (s_DV / DV) ** 2 - (s_DH / DH) ** 2 - 4.0 * (s_DM / DM) ** 2) / 4.0
-    cov_DH_DM = cov_ln * DH * DM
-    c11 = s_DH * s_DH
-    c22 = s_DM * s_DM
-    return c11, cov_DH_DM, c22
-
-
-def rho_from_cov_block(c11, c12, c22):
-    """Correlation ρ = c12 / sqrt(c11 c22); inf when denominators vanish."""
-    import torch
-
-    if isinstance(c11, torch.Tensor):
-        denom = torch.sqrt(torch.clamp(c11 * c22, min=0.0))
-        rho = c12 / denom.clamp(min=1e-30)
-        return torch.where(denom > 0, rho, torch.full_like(rho, float("inf")))
-    denom = np.sqrt(np.maximum(c11 * c22, 0.0))
-    with np.errstate(divide="ignore", invalid="ignore"):
-        rho = np.where(denom > 0, c12 / denom, np.inf)
-    return rho
-
-
-def cov_block_from_sigma_triplet(
-    s_DH,
-    s_DM,
-    s_DV,
-    DH,
-    DM,
-    DV,
-    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
-):
-    """2×2 (DH/rd, DM/rd) covariance from σ triplet, with σ floor and PSD projection.
-
-    ``DH``, ``DM``, ``DV`` are the reference D/rd values used in the triplet
-    inversion (sampled cosmology in BED; fiducial in offline checks). Works with
-    numpy scalars/arrays or torch tensors (batched leading dims supported).
-    """
-    import torch
-
-    is_torch = isinstance(s_DH, torch.Tensor)
-    clamp = torch.clamp if is_torch else np.maximum
-    square = (lambda x: x * x)
-
-    s_DH = clamp(s_DH, min=sigma_floor)
-    s_DM = clamp(s_DM, min=sigma_floor)
-    s_DV = clamp(s_DV, min=sigma_floor)
-
-    cov_ln = (9.0 * (s_DV / DV) ** 2 - (s_DH / DH) ** 2 - 4.0 * (s_DM / DM) ** 2) / 4.0
-    cov_DH_DM = cov_ln * DH * DM
-    c11 = square(s_DH)
-    c22 = square(s_DM)
-    c11, cov_DH_DM, c22 = project_2x2_spd(c11, cov_DH_DM, c22)
-    return c11, cov_DH_DM, c22
-
-
 def decode_emulator_outputs(
     y_norm,
     y_mu,
@@ -777,30 +699,3 @@ def decode_emulator_outputs(
         sigma_floor=sigma_floor,
         apply_sigma_floor=apply_sigma_floor,
     )
-
-
-def cov_from_triplet(triplet):
-    """2×2 covariance of (DH/rd, DM/rd) from a σ(D/rd) triplet.
-
-    Inverse of the forward AP→triplet map used by the BAO pipelines
-    (config_space.py / fourier_space.py / reference_sigmas.py). The diagonals are
-    just σ²; the off-diagonal is recovered from σ_DV, since
-        var(ln DV) = (1/9)var(ln DH) + (4/9)var(ln DM) + (4/9)cov(ln DH, ln DM).
-
-    `triplet` is the dict the pipeline / emulator emits, carrying the σ's
-    (DH_over_rs, DM_over_rs, DV_over_rs) and the fiducial D/rd values
-    (DH_over_rd_fid, DM_over_rd_fid, DV_over_rd_fid). Returns a (2, 2) array
-    ordered [DH/rd, DM/rd].
-
-    Only meaningful for ANISOTROPIC tracers (LRG1/2, LRG3+ELG1, ELG2). For qiso
-    tracers (BGS, QSO) the matrix is rank-1 (ρ=1) by construction and DH/DM are
-    not separately measured — use σ_DV directly instead of this function.
-    """
-    DH = triplet["DH_over_rd_fid"]; DM = triplet["DM_over_rd_fid"]; DV = triplet["DV_over_rd_fid"]
-    sDH = triplet["DH_over_rs"]; sDM = triplet["DM_over_rs"]; sDV = triplet["DV_over_rs"]
-    floor = triplet.get("sigma_floor", DEFAULT_SIGMA_FLOOR)
-    c11, cov_DH_DM, c22 = cov_block_from_sigma_triplet(
-        sDH, sDM, sDV, DH, DM, DV, sigma_floor=floor,
-    )
-    return np.array([[c11, cov_DH_DM],
-                     [cov_DH_DM, c22]])

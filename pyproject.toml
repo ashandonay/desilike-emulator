@@ -9,7 +9,7 @@ description = "Neural emulator utilities and training scripts for num_tracers BA
 requires-python = ">=3.8"
 
 # Flat repo layout: the top-level directory is the importable package
-# `desilike_emulator` (build_model / cov_from_triplet live in util.py).
+# `desilike_emulator` (build_model / decode_emulator_outputs live in util.py).
 [tool.setuptools]
 packages = ["desilike_emulator", "desilike_emulator.bao", "desilike_emulator.shapefit"]
 
