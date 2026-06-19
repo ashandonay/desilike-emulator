@@ -180,6 +180,23 @@ def _recon_sigmas(tracer, fid):
     return _triplet_from_recon_cov(_LIK_DIR / _BAO_RECON_FILE[tracer], fid)
 
 
+def _recon_rho(tracer):
+    """ρ(D_H, D_M) = ρ(qpar, qper) from the bao-recon stat-only 2×2 cov.
+
+    DH = qpar·DH_fid and DM = qper·DM_fid are positive rescalings, so the
+    correlation is identical in q- and (D/rd)-space. Returns NaN for isotropic
+    (1×1) tracers, which carry no DH–DM correlation."""
+    p = _LIK_DIR / _BAO_RECON_FILE[tracer]
+    if not p.exists():
+        return float("nan")
+    with h5py.File(p, "r") as h:
+        cov = np.atleast_2d(np.asarray(h["covariance/value"][...]))
+    if cov.shape != (2, 2):
+        return float("nan")
+    denom = np.sqrt(cov[0, 0] * cov[1, 1])
+    return float(cov[0, 1] / denom) if denom > 0 else float("nan")
+
+
 # ---------------------------------------------------------------------------
 # DESI systematic-error layer (post-emulator)
 # ---------------------------------------------------------------------------
