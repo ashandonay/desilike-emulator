@@ -265,7 +265,7 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     # --- Triangle plot of target outputs, coloured by outlier status ---
     target_names = list(ckpt_target_names)
     n_tgt = len(target_names)
-    fig3, axes3 = plt.subplots(n_tgt, n_tgt, figsize=(panel_size * n_tgt, panel_size * n_tgt))
+    fig3, axes3 = plt.subplots(n_tgt, n_tgt, figsize=(panel_size * n_tgt, panel_size * n_tgt), squeeze=False)
 
     for i in range(n_tgt):
         for j in range(n_tgt):
