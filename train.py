@@ -253,16 +253,13 @@ def standardize(
     y_test: np.ndarray,
     target_names: List[str],
     log_normalize: bool = False,
-    log_sigma: bool = False,
     sigma_floor: float = 1e-8,
 ):
     y_train, y_linthresh = transform_emulator_targets_forward(
-        y_train, target_names,
-        log_sigma=log_sigma, log_normalize=log_normalize, sigma_floor=sigma_floor,
+        y_train, target_names, log_normalize=log_normalize,
     )
     y_test, _ = transform_emulator_targets_forward(
-        y_test, target_names,
-        log_sigma=log_sigma, log_normalize=log_normalize, sigma_floor=sigma_floor,
+        y_test, target_names, log_normalize=log_normalize,
     )
 
     # Use minimum sigma to avoid huge normalized values (e.g. constant columns)
@@ -292,7 +289,7 @@ def standardize(
 
     stats = {"x_mu": x_mu, "x_sigma": x_sigma, "y_mu": y_mu, "y_sigma": y_sigma,
              "log_normalize": log_normalize, "y_linthresh": y_linthresh,
-             "log_sigma": log_sigma, "sigma_floor": sigma_floor}
+             "sigma_floor": sigma_floor}
     return x_train_n, y_train_n, x_test_n, y_test_n, stats
 
 def main() -> None:
@@ -457,7 +454,6 @@ def main() -> None:
     # Resolve log_normalize (CLI flag OR per-config YAML default) before logging so
     # the recorded value is the effective one and the two loops below can't collide.
     args.log_normalize = bool(args.log_normalize or model_cfg.get("log_normalize", False))
-    log_sigma = bool(model_cfg.get("log_sigma", False))
 
     # Log parameters immediately after starting run (same pattern as train.py).
     # Skip model_cfg keys already logged from args (e.g. log_normalize) to avoid
@@ -485,7 +481,6 @@ def main() -> None:
         data["x_train"], data["y_train"], data["x_test"], data["y_test"],
         target_names=target_names,
         log_normalize=args.log_normalize,
-        log_sigma=log_sigma,
     )
 
     # Data feed: keep the whole (standardized) set GPU-resident and minibatch via an
@@ -583,7 +578,6 @@ def main() -> None:
             "y_mu": torch.from_numpy(stats["y_mu"]),
             "y_sigma": torch.from_numpy(stats["y_sigma"]),
             "log_normalize": stats["log_normalize"],
-            "log_sigma": stats["log_sigma"],
             "sigma_floor": stats["sigma_floor"],
             "y_linthresh": torch.from_numpy(stats["y_linthresh"]) if stats["y_linthresh"] is not None else None,
             "param_names": data["param_names"].tolist(),
@@ -707,7 +701,6 @@ def main() -> None:
         target_names,
         log_normalize=stats["log_normalize"],
         y_linthresh=stats["y_linthresh"],
-        log_sigma=stats["log_sigma"],
     )
     mae = np.mean(np.abs(yhat - data["y_test"]), axis=0)
     rms = np.sqrt(np.mean((yhat - data["y_test"]) ** 2, axis=0))

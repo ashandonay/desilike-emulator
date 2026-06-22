@@ -110,7 +110,6 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     y_mu = ckpt["y_mu"].cpu().numpy()
     y_sigma = ckpt["y_sigma"].cpu().numpy()
     log_normalize = ckpt.get("log_normalize", False)
-    log_sigma = ckpt.get("log_sigma", False)
     y_linthresh = ckpt["y_linthresh"].cpu().numpy() if ckpt.get("y_linthresh") is not None else None
     param_names = ckpt["param_names"]
     ckpt_target_names = ckpt["target_names"]
@@ -156,7 +155,6 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
         ckpt_target_names,
         log_normalize=log_normalize,
         y_linthresh=y_linthresh,
-        log_sigma=log_sigma,
     )
 
     # Absolute error for covariance elements (off-diagonal can be near zero),

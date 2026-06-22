@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 
 import config_space as cc
 import desi_reference as rs
-from util import build_model
+from util import build_model, decode_emulator_outputs
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
@@ -98,12 +98,17 @@ def _emulator_predict(model_path, tracer):
     y_mu = ckpt["y_mu"].cpu().numpy(); y_sigma = ckpt["y_sigma"].cpu().numpy()
     x_norm = (x_raw - x_mu) / x_sigma
     with torch.no_grad():
-        y_pred = model(torch.from_numpy(x_norm)).cpu().numpy()
-    y_pred = y_pred * y_sigma + y_mu
-    if ckpt.get("log_normalize", False) and ckpt.get("y_linthresh") is not None:
-        lt = ckpt["y_linthresh"].cpu().numpy()
-        y_pred = np.sign(y_pred) * lt * np.expm1(np.abs(y_pred))
-    y_pred = y_pred.ravel()
+        y_pred_norm = model(torch.from_numpy(x_norm)).cpu().numpy()
+    # Invert z-score + per-target transforms (tanh for rho, exp/symlog for sigma)
+    # via the shared helper so this stays consistent with eval.run_eval.
+    y_linthresh = ckpt.get("y_linthresh")
+    if y_linthresh is not None:
+        y_linthresh = y_linthresh.cpu().numpy()
+    y_pred = decode_emulator_outputs(
+        y_pred_norm, y_mu, y_sigma, list(ckpt["target_names"]),
+        log_normalize=ckpt.get("log_normalize", False),
+        y_linthresh=y_linthresh,
+    ).ravel()
     return {_TGT_TO_Q[t]: float(v) for t, v in zip(ckpt["target_names"], y_pred)}
 
 

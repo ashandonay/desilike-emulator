@@ -591,9 +591,7 @@ def transform_emulator_targets_forward(
     y: np.ndarray,
     target_names: List[str],
     *,
-    log_sigma: bool = False,
     log_normalize: bool = False,
-    sigma_floor: float = 1e-8,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Map physical emulator targets to training space (before z-score)."""
     y = np.array(y, dtype=np.float64, copy=True)
@@ -609,8 +607,6 @@ def transform_emulator_targets_forward(
 
     for col, name in enumerate(target_names):
         if name.startswith("sigma_"):
-            if log_sigma:
-                y[:, col] = np.log(np.maximum(y[:, col], sigma_floor))
             if log_normalize and y_linthresh is not None:
                 y[:, col] = _symlog_transform_np(y[:, col, None], y_linthresh[:, col, None])[:, 0]
         elif name.startswith("rho_"):
@@ -622,7 +618,6 @@ def transform_emulator_targets_inverse(
     y: np.ndarray,
     target_names: List[str],
     *,
-    log_sigma: bool = False,
     log_normalize: bool = False,
     y_linthresh: np.ndarray | None = None,
     sigma_floor: float = DEFAULT_SIGMA_FLOOR,
@@ -640,8 +635,6 @@ def transform_emulator_targets_inverse(
                 if log_normalize and y_linthresh is not None:
                     lt = y_linthresh[..., col]
                     out[..., col] = torch.sign(out[..., col]) * lt * torch.expm1(torch.abs(out[..., col]))
-                if log_sigma:
-                    out[..., col] = torch.exp(out[..., col])
                 if apply_sigma_floor and sigma_floor > 0:
                     out[..., col] = torch.clamp(out[..., col], min=sigma_floor)
         return out
@@ -654,8 +647,6 @@ def transform_emulator_targets_inverse(
             if log_normalize and y_linthresh is not None:
                 lt = y_linthresh[..., col]
                 out[..., col] = np.sign(out[..., col]) * lt * np.expm1(np.abs(out[..., col]))
-            if log_sigma:
-                out[..., col] = np.exp(out[..., col])
             if apply_sigma_floor and sigma_floor > 0:
                 out[..., col] = np.maximum(out[..., col], sigma_floor)
     return out
@@ -684,7 +675,6 @@ def decode_emulator_outputs(
     *,
     log_normalize: bool = False,
     y_linthresh=None,
-    log_sigma: bool = False,
     sigma_floor: float = DEFAULT_SIGMA_FLOOR,
     apply_sigma_floor: bool = True,
 ):
@@ -693,7 +683,6 @@ def decode_emulator_outputs(
     return transform_emulator_targets_inverse(
         y,
         target_names,
-        log_sigma=log_sigma,
         log_normalize=log_normalize,
         y_linthresh=y_linthresh,
         sigma_floor=sigma_floor,

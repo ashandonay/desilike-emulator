@@ -62,7 +62,6 @@ dr1_base_config:
   n_hidden: 6
   expand: 4
   dropout: 0.0
-  log_sigma: false
   lr: 1.0e-3
   final_lr_frac: 0.01
   weight_decay: 1.0e-5
@@ -92,7 +91,6 @@ dr1_base_omegak_w_wa_config:
   expand: 4
   dropout: 0.0
   log_normalize: true
-  log_sigma: false
   lr: 1.0e-3
   final_lr_frac: 0.01
   weight_decay: 1.0e-5
