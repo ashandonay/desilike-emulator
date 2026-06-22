@@ -22,6 +22,14 @@ TOTAL_EPOCHS = 10000  # total epochs for the full training run (matches train.py
 
 TRACER = os.environ.get("EMULATOR_TRACER", "LRG2")            # set to "" for no tracer prefix
 
+# Opt-in log target normalization (default OFF -> identical to the base campaign).
+# When EMULATOR_LOG_NORMALIZE=1, targets are symlog-transformed BEFORE the z-score,
+# EXACTLY matching production train.py --log-normalize (sign * log1p(|y|/linthresh),
+# per-column linthresh = min abs nonzero of the train split). Required for configs
+# whose raw sigma spans many decades (e.g. base_omegak_w_wa), where raw-sigma MSE is
+# outlier-dominated and not the objective production trains on.
+LOG_NORMALIZE = os.environ.get("EMULATOR_LOG_NORMALIZE", "0") == "1"
+
 _DEFAULT_DATA_DIR = os.path.expanduser("~/scratch/bedcosmo/num_tracers/emulator/training_data/bao/base_omegak_w_wa/covar/v3")
 DATA_DIR = os.environ.get("EMULATOR_DATA_DIR", _DEFAULT_DATA_DIR)
 
@@ -62,6 +70,17 @@ def load_data():
     return x_train, y_train, x_test, y_test
 
 
+def _symlog_targets(y_train, y_test):
+    """Per-column symlog matching production train.py: sign(y)*log1p(|y|/linthresh),
+    linthresh = min abs nonzero value in the train split. Applied before z-score."""
+    linthresh = np.empty((1, y_train.shape[1]), dtype=np.float32)
+    for col in range(y_train.shape[1]):
+        abs_nz = np.abs(y_train[:, col][y_train[:, col] != 0])
+        linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
+    f = lambda y: np.sign(y) * np.log1p(np.abs(y) / linthresh)
+    return f(y_train).astype(np.float32), f(y_test).astype(np.float32)
+
+
 def standardize(x_train, y_train, x_test, y_test):
     """Z-score normalization with min-sigma guard. Stats computed from training set only."""
     x_mu = x_train.mean(axis=0, keepdims=True)
@@ -97,6 +116,11 @@ def standardize(x_train, y_train, x_test, y_test):
 # ---------------------------------------------------------------------------
 
 _raw = load_data()
+if LOG_NORMALIZE:
+    _xt, _yt, _xv, _yv = _raw
+    _yt, _yv = _symlog_targets(_yt, _yv)
+    _raw = (_xt, _yt, _xv, _yv)
+    print("LOG_NORMALIZE=1: targets symlog-transformed (matches train.py --log-normalize).")
 _x_train_n, _y_train_n, _x_test_n, _y_test_n = standardize(*_raw)
 
 _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

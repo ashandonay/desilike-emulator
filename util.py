@@ -14,13 +14,18 @@ from scipy.stats import truncnorm
 import matplotlib.pyplot as plt
 
 try:
-    # Preferred when importing as package code (e.g. from bedcosmo/ scripts).
-    from bedcosmo.num_tracers.emulator.bao import model as bao_model
-    from bedcosmo.num_tracers.emulator.shapefit import model as shapefit_model
+    # Preferred when installed as the desilike_emulator package (pip install -e).
+    from desilike_emulator.bao import model as bao_model
+    from desilike_emulator.shapefit import model as shapefit_model
 except ModuleNotFoundError:
-    # Backward-compatible fallback for running from emulator/ as a script.
-    from bao import model as bao_model  # type: ignore[reportMissingImports]
-    from shapefit import model as shapefit_model  # type: ignore[reportMissingImports]
+    try:
+        # Legacy location when this code lived inside the bedcosmo package.
+        from bedcosmo.num_tracers.emulator.bao import model as bao_model
+        from bedcosmo.num_tracers.emulator.shapefit import model as shapefit_model
+    except ModuleNotFoundError:
+        # Backward-compatible fallback for running from emulator/ as a script.
+        from bao import model as bao_model  # type: ignore[reportMissingImports]
+        from shapefit import model as shapefit_model  # type: ignore[reportMissingImports]
 
 # analysis -> architecture name -> nn.Module subclass (hyperparameters passed at build time).
 ARCHITECTURE_REGISTRY: Dict[str, Dict[str, Type[nn.Module]]] = {
@@ -405,7 +410,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             sys.path.insert(0, _bao_dir)
         import core as bao_core
 
-        target_names = list(bao_core.SIGMA_TARGET_NAMES)
+        target_names = list(bao_core.emulator_target_names(tracer_bin, dataset="dr1"))
 
         # Restrict priors to the trained model's varied params (param_names),
         # else default to N_tracers + the base cosmo set. N_tracers bounds come
@@ -424,11 +429,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             def ground_truth_fn(_setup, sample, _gen=gen):
                 cosmo = {k: v for k, v in sample.items() if k != "N_tracers"}
                 s = _gen.sigma_triplet(N_tracers=sample["N_tracers"], **cosmo)
-                return {
-                    "sigma_DH_over_rd": s["DH_over_rs"],
-                    "sigma_DM_over_rd": s["DM_over_rs"],
-                    "sigma_DV_over_rd": s["DV_over_rs"],
-                }
+                vals = bao_core.fisher_sigmas_to_emulator_targets(s, tracer_bin, "dr1")
+                return dict(zip(target_names, vals))
             return priors, target_names, ground_truth_fn, gen
 
         # quantity == "covar": Fourier-space Fisher σ.
@@ -438,8 +440,10 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             kw.update(zrange=tracer_bin_cfg["zrange"], z_eff=tracer_bin_cfg["z_eff"])
         def ground_truth_fn(_setup, sample, _kw=kw):
             targets = fourier_space.run_fisher(sample, **_kw)
-            triplet = fourier_space._cov_to_sigma_triplet(targets)
-            return dict(zip(target_names, triplet))
+            vals = fourier_space._fisher_targets_to_emulator_targets(
+                targets, tracer_bin, "dr1",
+            )
+            return dict(zip(target_names, vals))
         return priors, target_names, ground_truth_fn, None
 
     else:
@@ -460,6 +464,34 @@ def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
         parts.append(cosmo_model)
     parts.append(quantity)
     return os.path.join(*parts)
+
+
+def deploy_checkpoint_path(
+    data_path: str,
+    analysis: str,
+    tracer_bin: str | None,
+) -> str | None:
+    """Deploy path for a per-tracer .pt mirroring training_data under models/.
+
+    ``training_data/bao/dr1/base/config/v2`` + ``LRG1`` →
+    ``models/dr1/base/config/v2/LRG1.pt`` (under SCRATCH/bedcosmo/num_tracers/emulator).
+    Returns None if ``tracer_bin`` is unset or ``data_path`` is not under
+    ``training_data/{analysis}/``.
+    """
+    if not tracer_bin:
+        return None
+    marker = os.path.join("training_data", analysis) + os.sep
+    norm = os.path.normpath(data_path)
+    idx = norm.find(marker)
+    if idx < 0:
+        return None
+    rel = norm[idx + len(marker):]
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    deploy_dir = os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", "models", rel,
+    )
+    return os.path.join(deploy_dir, f"{tracer_bin}.pt")
+
 
 def compare_losses(
         run_ids: list,
@@ -540,3 +572,119 @@ def compare_losses(
 
     fig.tight_layout()
     plt.show()
+
+
+# Minimum σ(D/rd) applied at decode time for sigma_* emulator outputs.
+DEFAULT_SIGMA_FLOOR = 1e-4
+_RHO_CLIP = 1.0 - 1e-6
+
+
+def _symlog_transform_np(y: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
+    return np.sign(y) * np.log1p(np.abs(y) / linthresh)
+
+
+def _symlog_inverse_np(y_log: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
+    return np.sign(y_log) * linthresh * np.expm1(np.abs(y_log))
+
+
+def transform_emulator_targets_forward(
+    y: np.ndarray,
+    target_names: List[str],
+    *,
+    log_normalize: bool = False,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Map physical emulator targets to training space (before z-score)."""
+    y = np.array(y, dtype=np.float64, copy=True)
+    y_linthresh = None
+    if log_normalize:
+        y_linthresh = np.empty((1, y.shape[1]), dtype=np.float64)
+        for col, name in enumerate(target_names):
+            if not name.startswith("sigma_"):
+                y_linthresh[0, col] = 1.0
+                continue
+            abs_nz = np.abs(y[:, col][y[:, col] != 0])
+            y_linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
+
+    for col, name in enumerate(target_names):
+        if name.startswith("sigma_"):
+            if log_normalize and y_linthresh is not None:
+                y[:, col] = _symlog_transform_np(y[:, col, None], y_linthresh[:, col, None])[:, 0]
+        elif name.startswith("rho_"):
+            y[:, col] = np.arctanh(np.clip(y[:, col], -_RHO_CLIP, _RHO_CLIP))
+    return y.astype(np.float32), y_linthresh.astype(np.float32) if y_linthresh is not None else None
+
+
+def transform_emulator_targets_inverse(
+    y: np.ndarray,
+    target_names: List[str],
+    *,
+    log_normalize: bool = False,
+    y_linthresh: np.ndarray | None = None,
+    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
+    apply_sigma_floor: bool = True,
+) -> np.ndarray:
+    """Map denormalized training-space targets back to physical units."""
+    import torch
+
+    if isinstance(y, torch.Tensor):
+        out = y.clone()
+        for col, name in enumerate(target_names):
+            if name.startswith("rho_"):
+                out[..., col] = torch.tanh(out[..., col])
+            elif name.startswith("sigma_"):
+                if log_normalize and y_linthresh is not None:
+                    lt = y_linthresh[..., col]
+                    out[..., col] = torch.sign(out[..., col]) * lt * torch.expm1(torch.abs(out[..., col]))
+                if apply_sigma_floor and sigma_floor > 0:
+                    out[..., col] = torch.clamp(out[..., col], min=sigma_floor)
+        return out
+
+    out = np.array(y, dtype=np.float64, copy=True)
+    for col, name in enumerate(target_names):
+        if name.startswith("rho_"):
+            out[..., col] = np.tanh(out[..., col])
+        elif name.startswith("sigma_"):
+            if log_normalize and y_linthresh is not None:
+                lt = y_linthresh[..., col]
+                out[..., col] = np.sign(out[..., col]) * lt * np.expm1(np.abs(out[..., col]))
+            if apply_sigma_floor and sigma_floor > 0:
+                out[..., col] = np.maximum(out[..., col], sigma_floor)
+    return out
+
+
+def cov_block_from_marginals(s_DH, s_DM, rho):
+    """2×2 (DH/rd, DM/rd) covariance from marginal σ and correlation (PSD if |ρ|≤1)."""
+    import torch
+
+    if isinstance(s_DH, torch.Tensor):
+        c11 = s_DH * s_DH
+        c22 = s_DM * s_DM
+        c12 = rho * s_DH * s_DM
+        return c11, c12, c22
+    c11 = s_DH * s_DH
+    c22 = s_DM * s_DM
+    c12 = rho * s_DH * s_DM
+    return c11, c12, c22
+
+
+def decode_emulator_outputs(
+    y_norm,
+    y_mu,
+    y_sigma,
+    target_names: List[str],
+    *,
+    log_normalize: bool = False,
+    y_linthresh=None,
+    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
+    apply_sigma_floor: bool = True,
+):
+    """Invert z-score and per-target transforms to physical emulator targets."""
+    y = y_norm * y_sigma + y_mu
+    return transform_emulator_targets_inverse(
+        y,
+        target_names,
+        log_normalize=log_normalize,
+        y_linthresh=y_linthresh,
+        sigma_floor=sigma_floor,
+        apply_sigma_floor=apply_sigma_floor,
+    )

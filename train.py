@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import mlflow
@@ -13,11 +13,27 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 try:
     # Package context (deployed as bedcosmo.num_tracers.emulator).
-    from .util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from .util import (
+        get_default_save_path,
+        _next_version,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+        transform_emulator_targets_forward,
+        deploy_checkpoint_path,
+    )
     from .eval import run_eval
 except ImportError:
     # Script context (run directly from this dir; sys.path.insert above puts it first).
-    from util import get_default_save_path, _next_version, TRACER_TYPE_CHOICES, build_model
+    from util import (
+        get_default_save_path,
+        _next_version,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+        transform_emulator_targets_forward,
+        deploy_checkpoint_path,
+    )
     from eval import run_eval
 
 def load_data(data_path: str, tracer_bin: str | None = None) -> Dict[str, np.ndarray]:
@@ -235,18 +251,16 @@ def standardize(
     y_train: np.ndarray,
     x_test: np.ndarray,
     y_test: np.ndarray,
+    target_names: List[str],
     log_normalize: bool = False,
+    sigma_floor: float = 1e-8,
 ):
-    # Optional log normalization of targets before z-score
-    y_linthresh = None
-    if log_normalize:
-        # Per-column linthresh = min absolute nonzero value
-        y_linthresh = np.empty((1, y_train.shape[1]), dtype=np.float32)
-        for col in range(y_train.shape[1]):
-            abs_nz = np.abs(y_train[:, col][y_train[:, col] != 0])
-            y_linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
-        y_train = _symlog_transform(y_train, y_linthresh)
-        y_test = _symlog_transform(y_test, y_linthresh)
+    y_train, y_linthresh = transform_emulator_targets_forward(
+        y_train, target_names, log_normalize=log_normalize,
+    )
+    y_test, _ = transform_emulator_targets_forward(
+        y_test, target_names, log_normalize=log_normalize,
+    )
 
     # Use minimum sigma to avoid huge normalized values (e.g. constant columns)
     x_mu = x_train.mean(axis=0, keepdims=True)
@@ -274,7 +288,8 @@ def standardize(
             )
 
     stats = {"x_mu": x_mu, "x_sigma": x_sigma, "y_mu": y_mu, "y_sigma": y_sigma,
-             "log_normalize": log_normalize, "y_linthresh": y_linthresh}
+             "log_normalize": log_normalize, "y_linthresh": y_linthresh,
+             "sigma_floor": sigma_floor}
     return x_train_n, y_train_n, x_test_n, y_test_n, stats
 
 def main() -> None:
@@ -341,10 +356,15 @@ def main() -> None:
     )
     parser.add_argument("--log-normalize", action="store_true",
                         help="Apply symlog transform to targets before z-score standardization.")
+    parser.add_argument("--log-batch-metrics", action="store_true",
+                        help="Log per-batch train/test loss to MLflow. Off by default "
+                             "(adds ~25%% wall time); per-epoch metrics are always logged.")
     parser.add_argument("--eval-atol", type=float, default=2e-3,
                         help="Absolute tolerance for evaluation.")
     parser.add_argument("--eval-rtol", type=float, default=2e-3,
                         help="Relative tolerance for evaluation.")
+    parser.add_argument("--skip-eval", action="store_true",
+                        help="Skip post-training Fisher ground-truth evaluation.")
     parser.add_argument(
         "--tracer-bin",
         dest="tracer_bin",
@@ -431,10 +451,18 @@ def main() -> None:
     print(f"Artifacts: {artifacts_dir}")
     print(f"Log file: {log_file}")
 
-    # Log parameters immediately after starting run (same pattern as train.py)
+    # Resolve log_normalize (CLI flag OR per-config YAML default) before logging so
+    # the recorded value is the effective one and the two loops below can't collide.
+    args.log_normalize = bool(args.log_normalize or model_cfg.get("log_normalize", False))
+
+    # Log parameters immediately after starting run (same pattern as train.py).
+    # Skip model_cfg keys already logged from args (e.g. log_normalize) to avoid
+    # MLflow "changing param value" errors on duplicate keys.
     for key, value in vars(args).items():
         mlflow.log_param(key, value)
     for key, value in model_cfg.items():
+        if key in vars(args):
+            continue
         mlflow.log_param(key, value)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -444,15 +472,61 @@ def main() -> None:
     np.random.seed(args.seed)
 
     data = load_data(data_path, tracer_bin=args.tracer_bin)
+    # log_normalize already resolved (CLI flag OR per-config YAML default) and stored
+    # back into args before MLflow logging above. Configs whose raw targets span many
+    # decades (e.g. dr1_base_omegak_w_wa_config) set `log_normalize: true` in the YAML
+    # so the symlog transform can't be forgotten.
+    target_names = data["target_names"].tolist()
     x_train, y_train, x_test, y_test, stats = standardize(
         data["x_train"], data["y_train"], data["x_test"], data["y_test"],
+        target_names=target_names,
         log_normalize=args.log_normalize,
     )
 
-    train_ds = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
-    test_ds = TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test))
-    train_loader = DataLoader(train_ds, batch_size=model_cfg["batch_size"], shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=model_cfg["batch_size"], shuffle=False)
+    # Data feed: keep the whole (standardized) set GPU-resident and minibatch via an
+    # index permutation (no per-batch host->device copies) when it fits in GPU memory;
+    # otherwise fall back to a CPU DataLoader. The resident path is ~2.5x faster for
+    # these small emulators (per-batch H2D + DataLoader overhead dominates; see
+    # autoresearch/dev/bench_train.py). Behaviour-neutral on the trained model.
+    batch_size = model_cfg["batch_size"]
+    n_train, n_test = len(x_train), len(x_test)
+
+    def _fits_on_gpu(*arrays, margin=0.5):
+        if device.type != "cuda":
+            return False
+        try:
+            free, _ = torch.cuda.mem_get_info()
+        except Exception:
+            return False
+        return sum(a.nbytes for a in arrays) < margin * free
+
+    gpu_resident = _fits_on_gpu(x_train, y_train, x_test, y_test)
+    if gpu_resident:
+        _Xtr = torch.from_numpy(x_train).to(device)
+        _Ytr = torch.from_numpy(y_train).to(device)
+        _Xte = torch.from_numpy(x_test).to(device)
+        _Yte = torch.from_numpy(y_test).to(device)
+        batches_per_epoch = (n_train + batch_size - 1) // batch_size
+
+        def train_batches():
+            perm = torch.randperm(n_train, device=device)
+            for st in range(0, n_train, batch_size):
+                idx = perm[st:st + batch_size]
+                yield _Xtr[idx], _Ytr[idx]
+        print(f"Data feed: GPU-resident index-permutation (fast path), device={device}.")
+    else:
+        train_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train)),
+            batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test)),
+            batch_size=batch_size, shuffle=False)
+        batches_per_epoch = len(train_loader)
+
+        def train_batches():
+            for xb, yb in train_loader:
+                yield xb.to(device), yb.to(device)
+        print("Data feed: CPU DataLoader (fallback path, dataset too large for GPU).")
 
     in_dim = x_train.shape[1]
     out_dim = y_train.shape[1]
@@ -472,7 +546,6 @@ def main() -> None:
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=model_cfg.get("weight_decay", 1e-5))
     loss_fn = nn.MSELoss()
 
-    batches_per_epoch = len(train_loader)
     total_steps = args.epochs * batches_per_epoch
     scheduler = create_scheduler(opt, {
         "total_steps": total_steps,
@@ -491,6 +564,7 @@ def main() -> None:
     global_step = 0
     best_test_loss = float("inf")
     best_state_dict = None
+    best_epoch = 0
     epochs_without_improvement = 0
 
     ckpt_dir = os.path.join(artifacts_dir, "checkpoints")
@@ -504,6 +578,7 @@ def main() -> None:
             "y_mu": torch.from_numpy(stats["y_mu"]),
             "y_sigma": torch.from_numpy(stats["y_sigma"]),
             "log_normalize": stats["log_normalize"],
+            "sigma_floor": stats["sigma_floor"],
             "y_linthresh": torch.from_numpy(stats["y_linthresh"]) if stats["y_linthresh"] is not None else None,
             "param_names": data["param_names"].tolist(),
             "target_names": data["target_names"].tolist(),
@@ -526,8 +601,7 @@ def main() -> None:
         model.train()
         train_loss = 0.0
         max_batch_loss = 0.0
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
+        for xb, yb in train_batches():
             opt.zero_grad()
             pred = model(xb)
             loss = loss_fn(pred, yb)
@@ -542,25 +616,30 @@ def main() -> None:
             opt.step()
             scheduler.step()
             global_step += 1
-            mlflow.log_metric("batch_train_loss", batch_loss, step=global_step)
+            if args.log_batch_metrics:
+                mlflow.log_metric("batch_train_loss", batch_loss, step=global_step)
             train_loss += batch_loss * xb.size(0)
             if batch_loss > max_batch_loss:
                 max_batch_loss = batch_loss
-        epoch_train_loss = train_loss / len(train_ds)
+        epoch_train_loss = train_loss / n_train
 
         model.eval()
-        test_loss = 0.0
         with torch.no_grad():
-            for xb, yb in test_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                pred = model(xb)
-                batch_test = loss_fn(pred, yb).item()
-                global_step += 1
-                mlflow.log_metric("batch_test_loss", batch_test, step=global_step)
-                test_loss += batch_test * xb.size(0)
-        epoch_test_loss = test_loss / len(test_ds)
+            if gpu_resident:
+                # one vectorized forward on the resident test set == overall test MSE
+                epoch_test_loss = loss_fn(model(_Xte), _Yte).item()
+            else:
+                test_loss = 0.0
+                for xb, yb in test_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    batch_test = loss_fn(model(xb), yb).item()
+                    global_step += 1
+                    if args.log_batch_metrics:
+                        mlflow.log_metric("batch_test_loss", batch_test, step=global_step)
+                    test_loss += batch_test * xb.size(0)
+                epoch_test_loss = test_loss / n_test
 
-        if not np.isfinite(train_loss) or not np.isfinite(test_loss):
+        if not np.isfinite(epoch_train_loss) or not np.isfinite(epoch_test_loss):
             raise RuntimeError(
                 f"NaN/Inf MSE at epoch {epoch}. "
                 "Data may contain non-finite values or learning rate may be too high; try --lr 1e-3 or smaller."
@@ -577,6 +656,7 @@ def main() -> None:
         # Track best model and early stopping
         if epoch_test_loss < best_test_loss:
             best_test_loss = epoch_test_loss
+            best_epoch = epoch
             best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
             torch.save(_make_payload(best_state_dict, epoch=epoch, test_loss=best_test_loss),
                        os.path.join(ckpt_dir, "model_best.pt"))
@@ -614,9 +694,14 @@ def main() -> None:
     model.eval()
     with torch.no_grad():
         yhat_n = model(torch.from_numpy(x_test).to(device)).cpu().numpy()
-    yhat = yhat_n * stats["y_sigma"] + stats["y_mu"]
-    if stats["log_normalize"]:
-        yhat = _symlog_inverse(yhat, stats["y_linthresh"])
+    yhat = decode_emulator_outputs(
+        yhat_n,
+        stats["y_mu"],
+        stats["y_sigma"],
+        target_names,
+        log_normalize=stats["log_normalize"],
+        y_linthresh=stats["y_linthresh"],
+    )
     mae = np.mean(np.abs(yhat - data["y_test"]), axis=0)
     rms = np.sqrt(np.mean((yhat - data["y_test"]) ** 2, axis=0))
     target_names = data["target_names"].tolist()
@@ -665,18 +750,40 @@ def main() -> None:
 
     # Run evaluation using best model
     best_model_path = os.path.join(ckpt_dir, "model_best.pt")
-    print("\nRunning evaluation...")
-    run_eval(
-        best_model_path,
-        save_path=artifacts_dir,
-        analysis=args.analysis,
-        quantity=args.quantity,
-        n_samples=1000,
-        atol=args.eval_atol,
-        rtol=args.eval_rtol,
-        log_scale=True,
-        tracer_bin=args.tracer_bin,
-    )
+    if not args.skip_eval:
+        print("\nRunning evaluation...")
+        run_eval(
+            best_model_path,
+            save_path=artifacts_dir,
+            analysis=args.analysis,
+            quantity=args.quantity,
+            n_samples=1000,
+            atol=args.eval_atol,
+            rtol=args.eval_rtol,
+            log_scale=True,
+            tracer_bin=args.tracer_bin,
+        )
+    else:
+        print("\nSkipping evaluation (--skip-eval).")
+
+    deploy_path = deploy_checkpoint_path(data_path, args.analysis, args.tracer_bin)
+    if deploy_path is not None:
+        os.makedirs(os.path.dirname(deploy_path), exist_ok=True)
+        deploy_state = best_state_dict
+        if deploy_state is None:
+            deploy_state = {k: v.clone() for k, v in model.state_dict().items()}
+        torch.save(
+            _make_payload(deploy_state, epoch=best_epoch or final_epoch, test_loss=best_test_loss),
+            deploy_path,
+        )
+        print(f"Saved deploy checkpoint: {deploy_path}")
+    elif args.tracer_bin is None:
+        print("Skipping deploy checkpoint (no --tracer-bin).")
+    else:
+        print(
+            f"Warning: could not resolve deploy checkpoint path from data_path={data_path!r}; "
+            f"expected under training_data/{args.analysis}/."
+        )
 
     mlflow.end_run()
     print(f"MLflow run completed: {mlflow_run_id}")

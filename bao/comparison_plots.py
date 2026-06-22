@@ -41,7 +41,7 @@ warnings.filterwarnings("ignore")
 import core
 import config_space as cc
 import fourier_space
-import reference_sigmas as rs
+import desi_reference as desi_ref
 from util import TRACER_CONFIGS
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -98,7 +98,7 @@ def _fourier_bundle_fisher(tracer):
     apmode = "qiso" if _is_sparse(tracer) else "qparqper"
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
     info = core.build_bao_likelihood(
-        N_tracers=rs._get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
+        N_tracers=desi_ref._get_ntracers(tracer), theta_cosmo=theta, hrdrag=hrdrag,
         tracer_bin=tracer, zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]),
         area=cc._AREA, apmode=apmode)
     lik = info["likelihood"]
@@ -155,7 +155,7 @@ def _gather_config():
         fisher_bun = cc.bundle_fisher_sigmas(t)
         _, Cg = cc.gaussxi_cov_on_bundle_grid(t, info, bundle)
         fisher_ana = cc.bundle_fisher_sigmas(t, cov_override=Cg)
-        recon = rs._recon_sigmas(t, fisher_bun)
+        recon = desi_ref._recon_sigmas(t, fisher_bun)
         mcmc_ana, mcmc_ana_err = _mcmc_sweep(t, mcmc_raw, "gaussxi")
         mcmc_bun, mcmc_bun_err = _mcmc_sweep(t, mcmc_raw, "bundle")
         out[t] = _assemble(t, recon, fisher_ana, mcmc_ana, fisher_bun,
@@ -168,8 +168,8 @@ def _gather_fourier():
     out = {}
     for t in _TRACERS:
         print(f"== {t} (fourier) ==", flush=True)
-        fisher_ana = rs._prod_fisher_sigmas(t)
-        recon = rs._recon_sigmas(t, fisher_ana)
+        fisher_ana = desi_ref._prod_fisher_sigmas(t)
+        recon = desi_ref._recon_sigmas(t, fisher_ana)
         fisher_bun = _fourier_bundle_fisher(t)
         mcmc_ana, mcmc_ana_err = _mcmc_sweep(t, mcmc_raw, "analytic")
         mcmc_bun, mcmc_bun_err = _mcmc_sweep(t, mcmc_raw, "bundle")

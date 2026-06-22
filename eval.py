@@ -12,10 +12,24 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 try:
     # Package context (deployed as bedcosmo.num_tracers.emulator).
-    from .util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+    from .util import (
+        latin_hypercube_samples,
+        get_default_save_path,
+        get_pipeline,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+    )
 except ImportError:
     # Script context (run directly from this dir; sys.path.insert above puts it first).
-    from util import latin_hypercube_samples, get_default_save_path, get_pipeline, TRACER_TYPE_CHOICES, build_model
+    from util import (
+        latin_hypercube_samples,
+        get_default_save_path,
+        get_pipeline,
+        TRACER_TYPE_CHOICES,
+        build_model,
+        decode_emulator_outputs,
+    )
 
 def _log_bins(vals: np.ndarray, n_bins: int = 30) -> np.ndarray:
     """Return histogram bin edges appropriate for log/symlog data."""
@@ -69,7 +83,13 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     np.random.seed(seed)
 
     # Load trained model
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    # Prefer GPU 1 when 2+ are visible (leaves GPU 0 free); fall back to cuda:0 under
+    # a masked/single-GPU set (e.g. CUDA_VISIBLE_DEVICES=1). Override via EMULATOR_DEVICE.
+    if torch.cuda.is_available():
+        _default_dev = "cuda:1" if torch.cuda.device_count() > 1 else "cuda"
+        device = torch.device(os.environ.get("EMULATOR_DEVICE", _default_dev))
+    else:
+        device = torch.device("cpu")
     print(f"Using device: {device}")
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
     model = build_model(
@@ -128,10 +148,14 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     x_norm = (x_raw - x_mu) / x_sigma
     with torch.no_grad():
         y_pred_norm = model(torch.from_numpy(x_norm).to(device)).cpu().numpy()
-    y_pred = y_pred_norm * y_sigma + y_mu
-    if log_normalize and y_linthresh is not None:
-        # Invert symlog: sign(z) * linthresh * expm1(|z|)
-        y_pred = np.sign(y_pred) * y_linthresh * np.expm1(np.abs(y_pred))
+    y_pred = decode_emulator_outputs(
+        y_pred_norm,
+        y_mu,
+        y_sigma,
+        ckpt_target_names,
+        log_normalize=log_normalize,
+        y_linthresh=y_linthresh,
+    )
 
     # Absolute error for covariance elements (off-diagonal can be near zero),
     # percentage error for other targets.
@@ -239,7 +263,7 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     # --- Triangle plot of target outputs, coloured by outlier status ---
     target_names = list(ckpt_target_names)
     n_tgt = len(target_names)
-    fig3, axes3 = plt.subplots(n_tgt, n_tgt, figsize=(panel_size * n_tgt, panel_size * n_tgt))
+    fig3, axes3 = plt.subplots(n_tgt, n_tgt, figsize=(panel_size * n_tgt, panel_size * n_tgt), squeeze=False)
 
     for i in range(n_tgt):
         for j in range(n_tgt):
