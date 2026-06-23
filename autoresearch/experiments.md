@@ -164,3 +164,44 @@ used (and the sandbox stops duplicating prod code):
   prior corners). Confirms the promoted pipeline works end to end.
 Workflow going forward is documented in program.md: search on a branch → promote
 to bao/ indexed by config → train.py → eval.py → merge to main.
+
+## Target transform check: is `log_normalize` (symlog) useful for base? (2026-06-22)
+Open question revisited: `log_normalize` was adopted for the EXTENDED
+`base_omegak_w_wa` box (σ spans ~10 orders, raw z-scoring fails). Does it also
+help base? Re-checked the base σ distribution first: NOT the "median ~1, narrow"
+case assumed earlier — base σ spans **~3–4 orders** (LRG2 v2 train: σ_DH p1=0.015,
+median 3.4, p99 52, max 62; DM/DV similar), so raw z-scoring is large-σ-tail-
+dominated and *could* hurt relative accuracy on the small-σ (tight-constraint)
+cosmologies. Worth an A/B.
+
+Setup (branch `autoresearch/dr1-base-config`, merged up to main's pipeline):
+two full prod runs, LRG2, `dr1_base_config` (24/6/4), identical except the flag —
+`train.py … [--log-normalize]`. MLflow exp `base_lognorm_compare`
+(raw=edef9aa6, lognorm=f5d15252). Compared per-sample **relative** σ-error on the
+10k test set (decoded to physical units via each ckpt's own metadata).
+
+| target  | RAW median | RAW p99 | LOGNORM median | LOGNORM p99 |
+|---------|-----------:|--------:|---------------:|------------:|
+| σ_DH/rd |   0.029%   |  8.3%   |     1.27%      |    2.4%     |
+| σ_DM/rd |   0.011%   | 10.6%   |     1.10%      |    2.3%     |
+| σ_DV/rd |   0.021%   | 10.0%   |     1.06%      |    2.5%     |
+
+Small-σ third (tightest constraints), p90 relErr: RAW ~2.0–2.2% vs LOGNORM ~1.0–1.4%.
+Physical-unit MAE (large-σ-weighted) is 50–115× better for RAW.
+
+**Finding**: symlog does exactly what it should — **equalizes relative error across
+the decades** (~1% everywhere, bounded p99 ~2.4%, and it does beat raw on the
+small-σ p90 tail) — but pays ~50–100× the typical-case precision to get there. RAW
+is spectacular in the bulk (median ~0.02%) with a harmless fat tail (~1% of
+cosmologies at 8–11%; small-σ p90 ~2%).
+
+**Decision: do NOT promote `log_normalize` to `dr1_base_config`.** Unlike the
+extended box, raw z-scoring does NOT fail on base (no plateau/blowup) — it's
+already 0.02% typical / ~2% worst at small σ, negligible vs the ~20–30%
+physics-level differences the Fisher forecast resolves. Trading uniform ~1%
+everywhere for a rare-tail that's already harmless is a net loss for the forecast,
+which is evaluated near realistic (often near-fiducial) cosmologies where raw
+shines. The current production config (raw, no `log_normalize`) stands; thread
+closed. Single seed each suffices — the gap (100× median) is mechanistic, not a
+close call. (Deploy path `models/dr1/base/config/v2/LRG2.pt` was rewritten by the
+RAW run, which finished last — consistent with production config, no harm.)
