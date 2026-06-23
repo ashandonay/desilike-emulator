@@ -170,14 +170,14 @@ def get_bao_fisher_covariance(
     include_fog: bool = True,
     float_sigma_bao: bool = True,
     kmax_cov: float | None = None,
+    dataset: str = "dr1",
 ) -> Dict[str, float]:
     """Compute the 2x2 BAO covariance matrix from a single-bin Fisher forecast.
 
-    Sparse tracers (_ISO_TRACERS) use an isotropic qiso fit: the 1-parameter
-    Fisher is mapped to a rank-1 (DH/rd, DM/rd) covariance so the returned triplet
-    keeps its shape, and σ(DV/rd) recovered from it equals the direct qiso error.
+    Isotropic tracer bins (dataset-dependent; see core.is_iso_tracer_bin) use a
+    qiso fit; all others use qpar/qper.
     """
-    apmode = "qiso" if tracer_bin in _ISO_TRACERS else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, dataset) else "qparqper"
     info = build_bao_likelihood(
         N_tracers=N_tracers,
         theta_cosmo=theta_cosmo,
@@ -245,6 +245,7 @@ def get_bao_fisher_covariance_sliced_nz(
     n_iter: int = 1,
     include_fog: bool = True,
     float_sigma_bao: bool = True,
+    dataset: str = "dr1",
 ) -> Dict[str, float]:
     """
     Compute BAO covariance using redshift-sliced n(z).
@@ -253,7 +254,7 @@ def get_bao_fisher_covariance_sliced_nz(
     N_tracers, each slice gets N_i = N_tracers * slice_fraction_i.
 
     We marginalize each slice over its own nuisance parameters and sum only
-    the BAO (qpar/qper, or qiso for sparse tracers) Fisher information.
+    the BAO (qpar/qper, or qiso for isotropic tracers) Fisher information.
     """
     slices = _load_nz_slices(nz_slices_path)
 
@@ -261,7 +262,7 @@ def get_bao_fisher_covariance_sliced_nz(
     if z_eff_bin is None:
         z_eff_bin = float(cfg["z_eff"])
 
-    apmode = "qiso" if tracer_bin in _ISO_TRACERS else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, dataset) else "qparqper"
     n_q = 1 if apmode == "qiso" else 2
     F_q_total = np.zeros((n_q, n_q), dtype=np.float64)
 
@@ -348,6 +349,7 @@ def run_fisher(
     float_sigma_bao: bool = True,
     nz_slices_path: str | Path | None = None,
     kmax_cov: float | None = None,
+    dataset: str = "dr1",
 ) -> Dict[str, float]:
     """Convert a sample dict (with N_tracers + cosmo params) to Fisher covariance elements."""
     if param_defaults:
@@ -369,6 +371,7 @@ def run_fisher(
             n_iter=n_iter,
             include_fog=include_fog,
             float_sigma_bao=float_sigma_bao,
+            dataset=dataset,
         )
 
     return get_bao_fisher_covariance(
@@ -384,7 +387,28 @@ def run_fisher(
         include_fog=include_fog,
         float_sigma_bao=float_sigma_bao,
         kmax_cov=kmax_cov,
+        dataset=dataset,
     )
+
+
+def _fisher_targets_to_emulator_targets(
+    targets: Dict[str, float],
+    tracer_bin: str,
+    dataset: str = "dr1",
+) -> List[float]:
+    """Convert run_fisher output to per-tracer emulator training targets."""
+    if core.is_iso_tracer_bin(tracer_bin, dataset):
+        triplet = _cov_to_sigma_triplet(targets)
+        return [triplet[2]]
+
+    c_hh = float(targets["cov_DH_over_rd_DH_over_rd"])
+    c_hm = float(targets["cov_DH_over_rd_DM_over_rd"])
+    c_mm = float(targets["cov_DM_over_rd_DM_over_rd"])
+    s_dh = float(np.sqrt(max(c_hh, 0.0)))
+    s_dm = float(np.sqrt(max(c_mm, 0.0)))
+    denom = max(s_dh * s_dm, 1e-30)
+    rho = float(np.clip(c_hm / denom, -core._RHO_CLIP, core._RHO_CLIP))
+    return [s_dh, s_dm, rho]
 
 
 def _cov_to_sigma_triplet(targets: Dict[str, float]) -> List[float]:
@@ -437,10 +461,10 @@ def _worker_run_fisher(args_tuple):
 
 def _worker_run_fisher_sigma(args_tuple):
     """Fourier-space worker for the unified emulator generator. Same Fisher as
-    _worker_run_fisher, but emits the distance-error triplet (σ_DH, σ_DM, σ_DV)
-    so its output matches the config-space generator. Top-level + picklable for
-    the spawn Pool. Returns (sample, target_vals, tb_str)."""
-    sample, tracer_bin, zrange, z_eff, param_defaults, area, nz_slices_path = args_tuple
+    _worker_run_fisher, but emits per-tracer emulator targets (σ_DV for isotropic
+    tracers; σ_DH, σ_DM, ρ for anisotropic). Top-level + picklable for the spawn
+    Pool. Returns (sample, target_vals, tb_str)."""
+    sample, tracer_bin, zrange, z_eff, param_defaults, area, nz_slices_path, dataset = args_tuple
     try:
         targets = run_fisher(
             sample,
@@ -450,8 +474,9 @@ def _worker_run_fisher_sigma(args_tuple):
             param_defaults=param_defaults,
             area=area,
             nz_slices_path=nz_slices_path,
+            dataset=dataset,
         )
-        target_vals = _cov_to_sigma_triplet(targets)
+        target_vals = _fisher_targets_to_emulator_targets(targets, tracer_bin, dataset)
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
         return sample, target_vals, None

@@ -60,7 +60,7 @@ _BAO_RECON_SYST_FILE = {t: f.replace("stat-only", "syst") for t, f in _BAO_RECON
 # so this ratio already folds in the quadrature). Clamped to ≥1 (systematics only
 # inflate; sub-noise negatives → 1.0, e.g. ELG2 D_H). Isotropic tracers (BGS, QSO)
 # carry the single qiso factor on all three (DH/DM/DV are degenerate projections).
-# Regenerate with `python reference_sigmas.py --regen-syst` (needs the _syst .h5).
+# Regenerate with `python desi_reference.py --regen-syst` (needs the _syst .h5).
 DESI_SYST_INFLATION = {
     "BGS":       {"DH_over_rs": 1.0071, "DM_over_rs": 1.0071, "DV_over_rs": 1.0071},
     "LRG1":      {"DH_over_rs": 1.0428, "DM_over_rs": 1.0020, "DV_over_rs": 1.0241},
@@ -180,6 +180,23 @@ def _recon_sigmas(tracer, fid):
     return _triplet_from_recon_cov(_LIK_DIR / _BAO_RECON_FILE[tracer], fid)
 
 
+def _recon_rho(tracer):
+    """ρ(D_H, D_M) = ρ(qpar, qper) from the bao-recon stat-only 2×2 cov.
+
+    DH = qpar·DH_fid and DM = qper·DM_fid are positive rescalings, so the
+    correlation is identical in q- and (D/rd)-space. Returns NaN for isotropic
+    (1×1) tracers, which carry no DH–DM correlation."""
+    p = _LIK_DIR / _BAO_RECON_FILE[tracer]
+    if not p.exists():
+        return float("nan")
+    with h5py.File(p, "r") as h:
+        cov = np.atleast_2d(np.asarray(h["covariance/value"][...]))
+    if cov.shape != (2, 2):
+        return float("nan")
+    denom = np.sqrt(cov[0, 0] * cov[1, 1])
+    return float(cov[0, 1] / denom) if denom > 0 else float("nan")
+
+
 # ---------------------------------------------------------------------------
 # DESI systematic-error layer (post-emulator)
 # ---------------------------------------------------------------------------
@@ -200,6 +217,32 @@ def apply_desi_syst(sigma_triplet, tracer, ratios=None):
         return {k: sigma_triplet[k] * float(R.get(k, 1.0)) for k in sigma_triplet}
     factors = np.array([float(R.get(k, 1.0)) for k in _SIGMA_KEYS])
     return np.asarray(sigma_triplet, dtype=float) * factors
+
+
+# Map emulator output names -> DESI_SYST_INFLATION keys. ρ (and anything absent)
+# scales by 1.0: a per-distance σ inflation is diagonal, and ρ is scale-invariant
+# (cov and σ_DH·σ_DM both pick up R_DH·R_DM), so the correlation is unchanged —
+# DESI's budget measures no systematic on the DH–DM correlation itself.
+_TARGET_TO_SYST_KEY = {
+    "sigma_DH_over_rd": "DH_over_rs",
+    "sigma_DM_over_rd": "DM_over_rs",
+    "sigma_DV_over_rd": "DV_over_rs",
+}
+
+
+def apply_desi_syst_targets(targets, tracer_bin, dataset="dr1", ratios=None):
+    """Inflate an emulator output VECTOR from σ_stat → σ_tot (new per-tracer shape).
+
+    `targets` is in :func:`core.emulator_target_names` order for the tracer/dataset:
+    isotropic ``[σ_DV]`` (scaled by R[DV]); anisotropic ``[σ_DH, σ_DM, ρ]`` (σ's
+    scaled by R[DH], R[DM]; ρ passed through untouched). Diagonal, fiducial-
+    calibrated, cosmology-independent — same semantics as :func:`apply_desi_syst`.
+    Returns a new list. Unknown tracers / missing factors scale by 1.0 (no-op).
+    """
+    R = (ratios or DESI_SYST_INFLATION).get(tracer_bin, {})
+    names = core.emulator_target_names(tracer_bin, dataset)
+    return [float(v) * float(R.get(_TARGET_TO_SYST_KEY.get(nm, ""), 1.0))
+            for nm, v in zip(names, targets)]
 
 
 def compute_syst_inflation(tracer):

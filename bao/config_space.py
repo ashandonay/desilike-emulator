@@ -12,7 +12,7 @@ Frame map (config here  ↔  Fourier in core):
                                           driven for config space by mcmc.py --space config
 
 Space-agnostic DESI / Fourier *reference* σ (bao-recon, desi_data.csv, production
-Fisher) live in reference_sigmas.py — they are what BOTH frames are compared against.
+Fisher) live in desi_reference.py — they are what BOTH frames are compared against.
 
 What this module shares with core: ONLY the cosmology mapping
 (`_to_bao_cosmo_params`), the fiducial template, and the fiducial nuisance values
@@ -465,7 +465,7 @@ def _validate_shotnoise_limit(verbose: bool = True) -> bool:
 # ===========================================================================
 # §3  Native ξ-theory + Fisher  (↔ fourier_space.run_fisher / get_bao_fisher_covariance)
 # ===========================================================================
-def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None):
+def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, dataset="dr1"):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from native-ξ Fisher.
 
     cov_override: optional ndarray to substitute for bundle['cov']. Pass the
@@ -477,7 +477,7 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None):
     passes them in, so this function doesn't redundantly rebuild the template.
     """
     cfg = TRACER_CONFIGS[tracer]
-    apmode = "qiso" if tracer in ("BGS", "QSO") else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
     if info is None:
         # lean=True: skip the desilike observable/Fourier-cov/likelihood build.
         # This path uses only the template + fiducial nuisance values; the ξ-cov
@@ -602,10 +602,17 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None):
         # σ²(ln DV) = (1/3)² var(qpar) + (2/3)² var(qper) + 2·(1/3)·(2/3)·cov(qpar, qper)
         var_lnDV = (cov_q[0, 0] / 9.0) + (4.0 * cov_q[1, 1] / 9.0) + (4.0 * cov_q[0, 1] / 9.0)
         sig_DV = float(np.sqrt(max(var_lnDV, 0.0))) * DV
+        denom = max(sig_qpar * sig_qper, 1e-30)
+        rho_DH_DM = float(np.clip(cov_q[0, 1] / denom, -core._RHO_CLIP, core._RHO_CLIP))
+        cov_DH_DM = rho_DH_DM * sig_DH * sig_DM
 
-    return {"DH_over_rs": sig_DH, "DM_over_rs": sig_DM, "DV_over_rs": sig_DV,
+    out = {"DH_over_rs": sig_DH, "DM_over_rs": sig_DM, "DV_over_rs": sig_DV,
             "DH_over_rd_fid": DH, "DM_over_rd_fid": DM, "DV_over_rd_fid": DV,
             "apmode": apmode, "cov_q": cov_q}
+    if apmode == "qparqper":
+        out["rho_DH_DM"] = rho_DH_DM
+        out["cov_DH_DM"] = cov_DH_DM
+    return out
 
 
 # ===========================================================================
@@ -630,10 +637,11 @@ class XiSigmaGenerator:
     survey geometry + Bessel basis), then call ``sigma_triplet(**cosmo)`` for
     each sampled cosmology. Thread the same instance across a cosmology sweep."""
 
-    def __init__(self, tracer):
+    def __init__(self, tracer, dataset="dr1"):
         self.tracer = tracer
+        self.dataset = dataset
         self.cfg = TRACER_CONFIGS[tracer]
-        self.apmode = "qiso" if tracer in ("BGS", "QSO") else "qparqper"
+        self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
         self.bundle = load_bundle(tracer)
 
         # FKP volume/n̄ at the FIDUCIAL frame (frame-fixed, like the window —
@@ -702,12 +710,11 @@ class XiSigmaGenerator:
             lean=True)
         cov = self.windowed_cov(info, N_tracers=N)
         return bundle_fisher_sigmas(self.tracer, cov_override=cov,
-                                    info=info, bundle=self.bundle)
+                                    info=info, bundle=self.bundle, dataset=self.dataset)
 
 
-# Unified distance-error target (shared with the Fourier path; see
-# core.SIGMA_TARGET_NAMES). The config worker emits it natively.
-XI_SIGMA_TARGET_NAMES = ["sigma_DH_over_rd", "sigma_DM_over_rd", "sigma_DV_over_rd"]
+# Per-tracer emulator targets (see core.emulator_target_names).
+XI_SIGMA_TARGET_NAMES = core.ANISO_EMULATOR_TARGET_NAMES  # legacy alias
 
 # Per-worker-process generator cache: building an XiSigmaGenerator loads the DESI
 # bundle + builds the Bessel basis (the costly one-time setup), so each spawn
@@ -717,19 +724,20 @@ _XI_GEN_CACHE: Dict[str, "XiSigmaGenerator"] = {}
 
 def _worker_xi_sigma(args_tuple):
     """Config-space worker for the unified emulator generator. Maps a sample
-    {N_tracers + cosmo} to the distance-error triplet via a cached per-process
+    {N_tracers + cosmo} to per-tracer emulator targets via a cached per-process
     XiSigmaGenerator. Top-level + picklable for the spawn Pool. Returns
     (sample, target_vals, tb_str) — tb_str None on success."""
-    sample, tracer = args_tuple
+    sample, tracer, dataset = args_tuple
     try:
-        gen = _XI_GEN_CACHE.get(tracer)
+        cache_key = (tracer, dataset)
+        gen = _XI_GEN_CACHE.get(cache_key)
         if gen is None:
-            gen = XiSigmaGenerator(tracer)
-            _XI_GEN_CACHE[tracer] = gen
+            gen = XiSigmaGenerator(tracer, dataset=dataset)
+            _XI_GEN_CACHE[cache_key] = gen
         N_tracers = sample.get("N_tracers")
         cosmo_overrides = {k: v for k, v in sample.items() if k != "N_tracers"}
         s = gen.sigma_triplet(N_tracers=N_tracers, **cosmo_overrides)
-        target_vals = [s["DH_over_rs"], s["DM_over_rs"], s["DV_over_rs"]]
+        target_vals = core.fisher_sigmas_to_emulator_targets(s, tracer, dataset)
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
         return sample, target_vals, None

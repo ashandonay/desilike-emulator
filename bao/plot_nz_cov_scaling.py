@@ -150,21 +150,77 @@ def plot_cov(theta, hrdrag, out, n_pts=8):
     print(f"Saved {out}")
 
 
+def plot_corr(tracers, theta, hrdrag, out, n_pts=8, title=None):
+    """Corner-plot 2x2 triangle vs N_tracers for the given tracers: the diagonals
+    carry σ(DH/rd) and σ(DM/rd) (amplitude, which scales with N), the lower
+    off-diagonal the correlation coefficient ρ(DH/rd, DM/rd) (shape, which does
+    not). A *pure* correlation matrix has 1s on the diagonal, so this mixes σ on
+    the diagonal so all three panels are informative — same layout as plot_cov.
+
+    The 2x2 (DH/rd, DM/rd) cov uses the anisotropic qparqper fit, so isotropic
+    sparse tracers (BGS, QSO) are shown here as the degenerate ellipse they would
+    yield if DH/DM were fit separately.
+    """
+    xfac = np.linspace(N_FACTORS[0], N_FACTORS[-1], n_pts)
+    sig, rho = {}, {}
+    for t in tracers:
+        passed = ntracers(t, "dr1")
+        C = np.array([cov2x2(t, theta, hrdrag, f * passed) for f in xfac])
+        sig[t] = np.sqrt(C[:, [0, 1], [0, 1]])                     # (n_pts, 2)
+        rho[t] = C[:, 0, 1] / np.sqrt(C[:, 0, 0] * C[:, 1, 1])
+        print(f"  {t}: ρ(DH,DM)={rho[t][0]:.3f}->{rho[t][-1]:.3f} over {n_pts} N_tracers")
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9), constrained_layout=True)
+    axes[0, 1].axis("off")
+    for t in tracers:
+        lbl = DISPLAY.get(t, t)
+        axes[0, 0].plot(xfac, sig[t][:, 0], color=TRACER_COLOR[t], lw=1.6, label=lbl)
+        axes[1, 1].plot(xfac, sig[t][:, 1], color=TRACER_COLOR[t], lw=1.6, label=lbl)
+        axes[1, 0].plot(xfac, rho[t], color=TRACER_COLOR[t], lw=1.6, label=lbl)
+    axes[0, 0].set_title(r"$\sigma(D_H/r_d)$"); axes[0, 0].set_yscale("log")
+    axes[1, 1].set_title(r"$\sigma(D_M/r_d)$"); axes[1, 1].set_yscale("log")
+    axes[1, 0].set_title(r"$\rho(D_H/r_d,\ D_M/r_d)$")
+    # 1/sqrt(N) shot-noise reference on the σ panels (σ = sqrt(Var), Var ∝ 1/N),
+    # one per tracer anchored to its own left-edge value (shape comparison only).
+    for ax, col in ((axes[0, 0], 0), (axes[1, 1], 1)):
+        for i, t in enumerate(tracers):
+            ax.plot(xfac, sig[t][0, col] * np.sqrt(xfac[0] / xfac),
+                    color=TRACER_COLOR[t], lw=1.0, ls=":",
+                    label=r"$\propto 1/\sqrt{N_{\rm tracers}}$" if i == 0 else None)
+    # fully autoscaled (no ρ=0 reference line) so the ~1% N-dependence is visible
+    for ax in (axes[0, 0], axes[1, 0], axes[1, 1]):
+        ax.set_xlabel(r"$N_{\rm tracers} / {\rm passed}$")
+        ax.grid(alpha=0.25, ls="--", lw=0.6)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    # legend just to the right of the upper-left box (top-left of the empty quadrant)
+    axes[0, 1].legend(handles, labels, fontsize=10, title="tracer", loc="upper left")
+    fig.suptitle(title or "(DH/rd, DM/rd) corner view vs N_tracers", fontsize=13)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {out}")
+
+
 def plot_dv_sparse(theta, hrdrag, out, n_pts=8):
     xfac = np.linspace(N_FACTORS[0], N_FACTORS[-1], n_pts)
     fig, ax = plt.subplots(figsize=(8, 6), constrained_layout=True)
-    for t in SPARSE:
+    for i, t in enumerate(SPARSE):
         passed = ntracers(t, "dr1")
-        sig = [sigma_dv_iso(t, theta, hrdrag, f * passed) for f in xfac]
-        ax.plot(xfac, sig, color=TRACER_COLOR[t], lw=1.8, label=DISPLAY.get(t, t))
+        sig = np.array([sigma_dv_iso(t, theta, hrdrag, f * passed) for f in xfac])
+        ax.plot(xfac, sig, color=TRACER_COLOR[t], lw=1.6, label=DISPLAY.get(t, t))
+        # 1/sqrt(N) shot-noise reference anchored to this tracer's left-edge value
+        ax.plot(xfac, sig[0] * np.sqrt(xfac[0] / xfac), color=TRACER_COLOR[t],
+                lw=1.0, ls=":", label=r"$\propto 1/\sqrt{N_{\rm tracers}}$" if i == 0 else None)
         print(f"  {t}: σ(DV) over {n_pts} N_tracers")
-    ax.axvline(1.0, color="gray", lw=0.8, ls=":")
     ax.set_xlabel(r"$N_{\rm tracers} / {\rm passed}$")
     ax.set_ylabel(r"$\sigma(D_V/r_d)$")
     ax.set_yscale("log"); ax.grid(alpha=0.25, ls="--", lw=0.6)
-    ax.legend(fontsize=11, title="sparse tracer (qiso)")
-    ax.set_title("σ(DV/rd) vs N_tracers — isotropic sparse tracers\n"
-                 "(dotted line = passed)", fontsize=12)
+    # reorder so the 1/sqrt(N) reference entry sits last, after the tracers
+    h, l = ax.get_legend_handles_labels()
+    order = [i for i, lb in enumerate(l) if "sqrt" not in lb] + \
+            [i for i, lb in enumerate(l) if "sqrt" in lb]
+    ax.legend([h[i] for i in order], [l[i] for i in order],
+              fontsize=10, title="sparse tracer (qiso)",
+              loc="upper left", bbox_to_anchor=(1.02, 1.0))
+    ax.set_title("σ(DV/rd) vs N_tracers — isotropic sparse tracers", fontsize=12)
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {out}")
@@ -177,6 +233,11 @@ def main():
     plot_nz(cosmo, str(_HERE / "nz_vs_ntracers.png"))
     print("=== covariance scaling figure (anisotropic) ===")
     plot_cov(theta, hrdrag, str(_HERE / "cov_scaling_vs_ntracers.png"))
+    print("=== correlation-coefficient scaling figure (anisotropic) ===")
+    plot_corr(ANISO, theta, hrdrag, str(_HERE / "corr_scaling_vs_ntracers.png"))
+    print("=== correlation-coefficient scaling figure (sparse BGS, QSO) ===")
+    plot_corr(SPARSE, theta, hrdrag, str(_HERE / "corr_scaling_vs_ntracers_sparse.png"),
+              title="(DH/rd, DM/rd) corner view vs N_tracers — sparse tracers (BGS, QSO)")
     print("=== DV scaling figure (sparse) ===")
     plot_dv_sparse(theta, hrdrag, str(_HERE / "dv_scaling_sparse.png"))
 

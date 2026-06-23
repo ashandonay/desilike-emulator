@@ -28,7 +28,15 @@ mcmc.py                 unified BAO MCMC                      (--space fourier|c
 reference_sigmas.py      DESI reference σ (bao-recon, desi_data.csv) — frame-agnostic
 comparison_plots.py      comparison plots: [forecast|cov|theory] (default forecast)
 alpha_sn_check.py        α_SN fit to the bundle cov + amplitude/structure decomposition
+
+model.py                 production emulator architecture(s) (autoresearch promotion target)
+analyze_training_data.py physical sanity checks + plot for the generated training data
+parse_desi_nz.py         parse DESI _nz.txt -> BAO-bin redshift slices (input prep)
+plot_nz_cov_scaling.py   diagnostic: emulator inputs/outputs vs N_tracers, fiducial cosmo
 ```
+
+The N_tracers box itself is anchored by `ntracers_range` in the repo-root
+`util.py`, reading repo-root `tracers.yaml` / `hod.yaml` (shared with `../train.py`).
 
 ### Dependency direction (acyclic)
 
@@ -250,4 +258,4 @@ sigma_tot = apply_desi_syst(sigma_stat_triplet, "LRG2")   # array (...,3) or dic
 | `_ISO_TRACERS` | `("BGS", "QSO")` — isotropic (qiso) tracers |
 | `fourier_space.run_fisher` / `_worker_run_fisher_sigma` | Fourier Fisher + σ-triplet worker |
 | `config_space.XiSigmaGenerator` | per-tracer config σ-triplet generator (varies cosmology + N_tracers) |
-| `config_space.make_log_prob` / `run_mcmc` | config-space MCMC engine (§4) |
+| `config_space.build_native_theory_mcmc` / `make_log_prob` | config-space MCMC engine (§4); emcee driver `_run_emcee` is in `mcmc.py` |
