@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Submit SLURM job(s) to train the NN emulator on NERSC Perlmutter (GPU).
-# With --tracers, submits ONE JOB PER TRACER so bins train in parallel.
+# Submits ONE JOB PER TRACER so bins train in parallel (same default as
+# submit_generate_training_data.sh / bao/generate_training_data.sh).
 #
 # Usage:
 #   bash submit_train.sh --analysis bao --quantity config --epochs 5000
-#   bash submit_train.sh --tracers --analysis bao --dataset dr1 --quantity config \
+#   bash submit_train.sh --analysis bao --dataset dr1 --quantity config \
 #       --cosmo-model base --nn-model dr1_base_config --data-dir v2
 #   bash submit_train.sh --tracers "BGS LRG2" --queue debug --time 00:30:00 \
 #       --analysis bao --dataset dr1 --quantity config --nn-model dr1_base_config \
@@ -15,9 +16,9 @@
 #   --time HH:MM:SS    walltime per job          (default: 01:00:00; shared max 04:00:00)
 #   --queue Q          SLURM queue               (default: regular)
 #                      shared: --gpus-per-task=1 + 32 CPUs; regular/debug: --gpus-per-node=1 + 32 CPUs
-#   --tracers "A B C"  space-separated subset     (default with --tracers alone: all 6 DR1 bins)
-#                      Omit --tracers for a single job (forwards --tracer-bin if given).
-# Everything else is forwarded to train.py (per-tracer jobs get --tracer-bin <name> appended).
+#   --tracers "A B C"  space-separated subset     (default: all 6 DR1 bins)
+#   --tracer-bin NAME  train a single tracer      (alias for --tracers NAME)
+# Everything else is forwarded to train.py (each job gets --tracer-bin <name> appended).
 
 set -euo pipefail
 
@@ -27,9 +28,7 @@ LOG_DIR="/pscratch/sd/a/ashandon/bedcosmo/num_tracers/emulator/logs"
 # ── Defaults ──
 TIME="01:00:00"
 QUEUE="regular"
-TRACERS_DEFAULT="BGS LRG1 LRG2 LRG3_ELG1 ELG2 QSO"
-TRACERS=""
-MULTI_TRACER=false
+TRACERS="BGS LRG1 LRG2 LRG3_ELG1 ELG2 QSO"
 
 # ── Parse SLURM flags vs train.py flags ──
 TRAIN_ARGS=()
@@ -40,29 +39,23 @@ while [[ $# -gt 0 ]]; do
         --queue)
             QUEUE="$2"; shift 2 ;;
         --tracers)
-            MULTI_TRACER=true
             if [[ $# -ge 2 && ! "$2" =~ ^-- ]]; then
                 TRACERS="$2"; shift 2
             else
-                TRACERS="$TRACERS_DEFAULT"; shift
+                shift
             fi
             ;;
         --tracer-bin)
-            if $MULTI_TRACER; then
-                echo "Warning: ignoring --tracer-bin $2 (--tracers submits one job per tracer)" >&2
-            else
-                TRAIN_ARGS+=("$1" "$2")
-            fi
-            shift 2 ;;
+            TRACERS="$2"; shift 2 ;;
         *)
             TRAIN_ARGS+=("$1"); shift ;;
     esac
 done
 
-if [[ ${#TRAIN_ARGS[@]} -eq 0 && ! $MULTI_TRACER ]]; then
-    echo "Usage: bash submit_train.sh [--time HH:MM:SS] [--queue Q] [--tracers [\"A B ...\"]] [train.py args ...]"
-    echo "  With --tracers: one GPU job per tracer (default list: all 6 DR1 bins)."
-    echo "  Without --tracers: single job; all other flags forwarded to train.py."
+if [[ ${#TRAIN_ARGS[@]} -eq 0 ]]; then
+    echo "Usage: bash submit_train.sh [--time HH:MM:SS] [--queue Q] [--tracers \"A B ...\"] [train.py args ...]"
+    echo "  Submits one GPU job per tracer (default: all 6 DR1 bins)."
+    echo "  Use --tracers or --tracer-bin to restrict to a subset."
     exit 1
 fi
 
@@ -172,33 +165,11 @@ INNEREOF
         "$batch_script"
 }
 
-if ! $MULTI_TRACER; then
-    submit_one_job "emulator_train" "" "${TRAIN_ARGS[@]}"
-    exit 0
-fi
-
 read -r -a TRACER_NAMES <<< "$TRACERS"
 if [[ ${#TRACER_NAMES[@]} -eq 0 ]]; then
     echo "Error: no tracers given"
     exit 1
 fi
-
-# Drop any --tracer-bin from forwarded args (each job sets its own).
-FILTERED_ARGS=()
-skip_next=false
-for arg in "${TRAIN_ARGS[@]}"; do
-    if $skip_next; then
-        skip_next=false
-        echo "Warning: ignoring --tracer-bin $arg (--tracers submits one job per tracer)" >&2
-        continue
-    fi
-    if [[ "$arg" == "--tracer-bin" ]]; then
-        skip_next=true
-        continue
-    fi
-    FILTERED_ARGS+=("$arg")
-done
-TRAIN_ARGS=("${FILTERED_ARGS[@]}")
 
 # Optional job-name tags from common train.py flags.
 ANALYSIS="train"
