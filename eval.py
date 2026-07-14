@@ -31,19 +31,52 @@ except ImportError:
         decode_emulator_outputs,
     )
 
-def _log_bins(vals: np.ndarray, n_bins: int = 30) -> np.ndarray:
-    """Return histogram bin edges appropriate for log/symlog data."""
-    if np.all(vals > 0):
+def _pick_scale(vals: np.ndarray, min_decades: float = 2.0) -> str:
+    """Choose 'log', 'symlog', or 'linear' from the data's dynamic range, not its sign.
+
+    A log/symlog axis is used only when the values genuinely span at least
+    ``min_decades`` orders of magnitude, measured robustly from the 2.5-97.5 percentile
+    range of |value|. This prevents a single sample near zero from collapsing the symlog
+    linthresh and forcing a spurious log axis, so bounded O(1)-range parameters (e.g. the
+    Ok/w0/wa uniform priors) render linear while genuine multi-decade quantities (the
+    sigma targets) stay log.
+    """
+    v = np.asarray(vals, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return "linear"
+    abs_nonzero = np.abs(v[v != 0])
+    if abs_nonzero.size == 0:
+        return "linear"
+    lo, hi = np.percentile(abs_nonzero, [2.5, 97.5])
+    if lo <= 0 or hi / lo < 10.0 ** min_decades:
+        return "linear"
+    return "log" if np.all(v > 0) else "symlog"
+
+
+def _robust_linthresh(vals: np.ndarray) -> float:
+    """Symlog linthresh from the 10th percentile of |nonzero value| (not the min, which a
+    single near-zero sample would collapse into ~5 fake decades of axis)."""
+    abs_nonzero = np.abs(vals[np.isfinite(vals) & (vals != 0)])
+    if abs_nonzero.size == 0:
+        return 1e-6
+    return max(float(np.percentile(abs_nonzero, 10)), 1e-12)
+
+
+def _log_bins(vals: np.ndarray, n_bins: int = 30, min_decades: float = 2.0) -> np.ndarray:
+    """Return histogram bin edges matching the axis scale chosen by _pick_scale."""
+    scale = _pick_scale(vals, min_decades)
+    if scale == "log":
         return np.geomspace(vals.min(), vals.max(), n_bins + 1)
-    # Symlog: evenly space bins in transformed coordinates
-    abs_nonzero = np.abs(vals[vals != 0])
-    linthresh = float(np.min(abs_nonzero)) if len(abs_nonzero) > 0 else 1e-6
-    def fwd(x):
-        return np.sign(x) * np.log10(1 + np.abs(x) / linthresh)
-    def inv(y):
-        return np.sign(y) * linthresh * (10 ** np.abs(y) - 1)
-    t_min, t_max = fwd(vals.min()), fwd(vals.max())
-    return inv(np.linspace(t_min, t_max, n_bins + 1))
+    if scale == "symlog":
+        linthresh = _robust_linthresh(vals)
+        def fwd(x):
+            return np.sign(x) * np.log10(1 + np.abs(x) / linthresh)
+        def inv(y):
+            return np.sign(y) * linthresh * (10 ** np.abs(y) - 1)
+        t_min, t_max = fwd(vals.min()), fwd(vals.max())
+        return inv(np.linspace(t_min, t_max, n_bins + 1))
+    return np.linspace(vals.min(), vals.max(), n_bins + 1)
 
 
 def _set_plain_formatter(ax) -> None:
@@ -64,20 +97,21 @@ def _set_plain_formatter(ax) -> None:
         axis.get_offset_text().set_visible(False)
 
 
-def _set_log_or_symlog(ax, axis: str, vals: np.ndarray) -> None:
-    """Set log scale for all-positive data, symlog for mixed-sign data."""
+def _set_log_or_symlog(ax, axis: str, vals: np.ndarray, min_decades: float = 2.0) -> None:
+    """Set an axis scale from the data's dynamic range (see _pick_scale). Bounded,
+    low-dynamic-range data (e.g. Ok/w0/wa) stays linear even under --log-scale."""
     setter = ax.set_xscale if axis == "x" else ax.set_yscale
-    if np.all(vals > 0):
+    scale = _pick_scale(vals, min_decades)
+    if scale == "log":
         setter("log")
-    else:
-        abs_nonzero = np.abs(vals[vals != 0])
-        linthresh = float(np.min(abs_nonzero)) if len(abs_nonzero) > 0 else 1e-6
-        setter("symlog", linthresh=linthresh)
+    elif scale == "symlog":
+        setter("symlog", linthresh=_robust_linthresh(vals))
+    # linear: leave the matplotlib default
 
 
 
 
-def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quantity: str = "covar", n_samples: int = 500, seed: int = 42, hist_xlims: dict[str, tuple[float, float]] | None = None, rtol: float = 5e-3, atol: float = 1e-4, log_scale: bool = False, tracer_bin: str | None = None) -> None:
+def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quantity: str = "covar", n_samples: int = 500, seed: int = 42, hist_xlims: dict[str, tuple[float, float]] | None = None, rtol: float = 5e-3, atol: float = 1e-4, log_scale: bool = False, tracer_bin: str | None = None, min_decades: float = 2.0) -> None:
     os.makedirs(save_path, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     np.random.seed(seed)
@@ -215,17 +249,17 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 continue
             if i == j:
                 all_vals = x_raw[:, i]
-                bins = _log_bins(all_vals) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
+                bins = _log_bins(all_vals, min_decades=min_decades) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
                 ax.hist(x_raw[inlier, i], bins=bins, color="tab:blue", alpha=0.6, label="pass")
                 ax.hist(x_raw[is_outlier, i], bins=bins, color="tab:red", alpha=0.6, label="fail")
             else:
                 ax.scatter(x_raw[inlier, j], x_raw[inlier, i], s=4, alpha=0.4, color="tab:blue", label="pass")
                 ax.scatter(x_raw[is_outlier, j], x_raw[is_outlier, i], s=4, alpha=0.6, color="tab:red", label="fail")
                 if log_scale:
-                    _set_log_or_symlog(ax, "x", x_raw[:, j])
-                    _set_log_or_symlog(ax, "y", x_raw[:, i])
+                    _set_log_or_symlog(ax, "x", x_raw[:, j], min_decades=min_decades)
+                    _set_log_or_symlog(ax, "y", x_raw[:, i], min_decades=min_decades)
             if log_scale and i == j:
-                _set_log_or_symlog(ax, "x", x_raw[:, i])
+                _set_log_or_symlog(ax, "x", x_raw[:, i], min_decades=min_decades)
             _set_plain_formatter(ax)
             ax.tick_params(axis="both", labelsize=8)
             if i == n_params - 1:
@@ -273,17 +307,17 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
                 continue
             if i == j:
                 all_vals = y_true[:, i]
-                bins = _log_bins(all_vals) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
+                bins = _log_bins(all_vals, min_decades=min_decades) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
                 ax.hist(y_true[inlier, i], bins=bins, color="tab:blue", alpha=0.6, label="pass")
                 ax.hist(y_true[is_outlier, i], bins=bins, color="tab:red", alpha=0.6, label="fail")
             else:
                 ax.scatter(y_true[inlier, j], y_true[inlier, i], s=4, alpha=0.4, color="tab:blue", label="pass")
                 ax.scatter(y_true[is_outlier, j], y_true[is_outlier, i], s=4, alpha=0.6, color="tab:red", label="fail")
                 if log_scale:
-                    _set_log_or_symlog(ax, "x", y_true[:, j])
-                    _set_log_or_symlog(ax, "y", y_true[:, i])
+                    _set_log_or_symlog(ax, "x", y_true[:, j], min_decades=min_decades)
+                    _set_log_or_symlog(ax, "y", y_true[:, i], min_decades=min_decades)
             if log_scale and i == j:
-                _set_log_or_symlog(ax, "x", y_true[:, i])
+                _set_log_or_symlog(ax, "x", y_true[:, i], min_decades=min_decades)
             _set_plain_formatter(ax)
             ax.tick_params(axis="both", labelsize=8)
             if i == n_tgt - 1:
@@ -348,6 +382,11 @@ def main() -> None:
     parser.add_argument("--rtol", type=float, default=2e-3, help="Relative tolerance for allclose outlier check (default: 2e-3).")
     parser.add_argument("--atol", type=float, default=2e-3, help="Absolute tolerance for allclose outlier check (default: 2e-3).")
     parser.add_argument("--log-scale", action="store_true", help="Use log scale on triangle plot axes.")
+    parser.add_argument("--min-decades", type=float, default=2.0,
+                        help="With --log-scale, only use a log/symlog axis when the data spans at "
+                             "least this many orders of magnitude (robust 2.5-97.5 pct of |value|); "
+                             "otherwise linear. Prevents bounded params (Ok/w0/wa) from getting a "
+                             "spurious symlog axis. Default: 2.0.")
     parser.add_argument(
         "--analysis",
         type=str,
@@ -412,6 +451,7 @@ def main() -> None:
         atol=args.atol,
         log_scale=args.log_scale,
         tracer_bin=args.tracer_bin,
+        min_decades=args.min_decades,
     )
 
 

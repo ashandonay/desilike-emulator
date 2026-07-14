@@ -340,7 +340,26 @@ def main() -> None:
     )
     parser.add_argument("--epochs", type=int, default=10000)
     parser.add_argument("--patience", type=int, default=0,
-                        help="Early stopping patience (epochs without test loss improvement). 0 = disabled.")
+                        help="Early stopping patience (epochs without improvement in the selection "
+                             "metric). 0 = disabled.")
+    parser.add_argument(
+        "--select-metric",
+        type=str,
+        default="phys",
+        choices=["phys", "test_loss"],
+        help="Metric used to pick the deployed best checkpoint. 'phys' (default) = median "
+             "|log10(pred/true)| over sigma targets on the detectable subset (true sigma < "
+             "--select-detect-cap); robust to the non-detection tail and penalises multiplicative "
+             "bias. 'test_loss' = raw symlog MSE (legacy; can deploy a physically biased checkpoint "
+             "whose symlog loss happens to be lowest).",
+    )
+    parser.add_argument(
+        "--select-detect-cap",
+        type=float,
+        default=100.0,
+        help="Upper cap on true sigma for the 'phys' selection metric. Samples above this are in "
+             "the data-starved non-detection tail and are excluded from checkpoint selection.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--mlflow-exp",
@@ -562,10 +581,46 @@ def main() -> None:
     train_losses = []
     test_losses = []
     global_step = 0
+    best_score = float("inf")
     best_test_loss = float("inf")
     best_state_dict = None
     best_epoch = 0
     epochs_without_improvement = 0
+
+    # Indices of sigma_ targets used by the 'phys' selection metric.
+    _sigma_target_idx = [j for j, t in enumerate(target_names) if t.startswith("sigma")]
+
+    def _phys_score(model):
+        """Median |log10(pred/true)| over sigma targets on the detectable subset.
+
+        Robust to the non-detection tail (true sigma huge, unlearnable) and, unlike the raw
+        symlog MSE, directly penalises a multiplicative bias in the predicted sigma. Returns
+        None if there are no sigma targets so the caller can fall back to the test loss.
+        """
+        if not _sigma_target_idx:
+            return None
+        model.eval()
+        with torch.no_grad():
+            yhn = model(torch.from_numpy(x_test).to(device)).cpu().numpy()
+        yhat = decode_emulator_outputs(
+            yhn, stats["y_mu"], stats["y_sigma"], target_names,
+            log_normalize=stats["log_normalize"], y_linthresh=stats["y_linthresh"],
+        )
+        ytrue = data["y_test"]
+        per_target = []
+        for j in _sigma_target_idx:
+            yt = ytrue[:, j]
+            mask = yt < args.select_detect_cap
+            if not mask.any():
+                continue
+            logratio = np.abs(
+                np.log10(np.clip(yhat[mask, j], 1e-12, None))
+                - np.log10(np.clip(yt[mask], 1e-12, None))
+            )
+            per_target.append(float(np.median(logratio)))
+        if not per_target:
+            return None
+        return float(np.mean(per_target))
 
     ckpt_dir = os.path.join(artifacts_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -653,14 +708,27 @@ def main() -> None:
         if epoch == 1 or epoch % 50 == 0 or epoch == args.epochs:
             print(f"epoch={epoch:4d} train_mse={epoch_train_loss:.6e} test_mse={epoch_test_loss:.6e}")
 
-        # Track best model and early stopping
-        if epoch_test_loss < best_test_loss:
+        # Track best model and early stopping. The selection metric decides which checkpoint
+        # is deployed: 'phys' (default) minimises the physical median |log10(pred/true)| so a
+        # checkpoint with low symlog MSE but a biased sigma (e.g. an undertrained isotropic
+        # tracer) is not deployed; 'test_loss' is the legacy raw-MSE behaviour.
+        if args.select_metric == "phys":
+            phys_score = _phys_score(model)
+            if phys_score is not None:
+                mlflow.log_metric("epoch_phys_score", phys_score, step=epoch)
+            current_score = phys_score if phys_score is not None else epoch_test_loss
+        else:
+            current_score = epoch_test_loss
+
+        if current_score < best_score:
+            best_score = current_score
             best_test_loss = epoch_test_loss
             best_epoch = epoch
             best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
-            torch.save(_make_payload(best_state_dict, epoch=epoch, test_loss=best_test_loss),
+            torch.save(_make_payload(best_state_dict, epoch=epoch, test_loss=epoch_test_loss),
                        os.path.join(ckpt_dir, "model_best.pt"))
-            print(f"  Saved best model (test loss: {best_test_loss:.6e}, epoch {epoch})")
+            print(f"  Saved best model ({args.select_metric} score: {best_score:.6e}, "
+                  f"test loss: {epoch_test_loss:.6e}, epoch {epoch})")
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -673,8 +741,9 @@ def main() -> None:
             print(f"  Saved checkpoint: model_epoch_{epoch}.pt")
 
         if args.patience > 0 and epochs_without_improvement >= args.patience:
-            print(f"Early stopping at epoch {epoch} (no improvement for {args.patience} epochs). "
-                  f"Best test loss: {best_test_loss:.6e}")
+            print(f"Early stopping at epoch {epoch} (no {args.select_metric} improvement for "
+                  f"{args.patience} epochs). Best: epoch {best_epoch}, {args.select_metric} score "
+                  f"{best_score:.6e}, test loss {best_test_loss:.6e}")
             break
 
     # Save final model as model_latest.pt
@@ -689,7 +758,8 @@ def main() -> None:
     # Evaluate using best model
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
-        print(f"Restored best model (test loss: {best_test_loss:.6e})")
+        print(f"Restored best model (epoch {best_epoch}, {args.select_metric} score "
+              f"{best_score:.6e}, test loss {best_test_loss:.6e})")
 
     model.eval()
     with torch.no_grad():

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Submit SLURM job(s) to train the NN emulator on NERSC Perlmutter (GPU).
-# Submits ONE JOB PER TRACER so bins train in parallel (same default as
-# submit_generate_training_data.sh / bao/generate_training_data.sh).
+# Submit / launch NN emulator training — one job (or local process) per tracer.
+#
+# Auto-detects SLURM (sbatch). On NERSC Perlmutter submits GPU jobs; elsewhere
+# (or with --local) runs train.py directly. Scratch paths follow $SCRATCH
+# (same convention as ~/bedcosmo/submit.sh).
 #
 # Usage:
 #   bash submit_train.sh --analysis bao --quantity config --epochs 5000
@@ -10,27 +12,39 @@
 #   bash submit_train.sh --tracers "BGS LRG2" --queue debug --time 00:30:00 \
 #       --analysis bao --dataset dr1 --quantity config --nn-model dr1_base_config \
 #       --data-dir v2 --epochs 500
+#   bash submit_train.sh --local --tracers BGS --analysis bao --quantity config \
+#       --epochs 100
 #   bash submit_train.sh --analysis shapefit --quantity mean --lr 1e-3 --scheduler-type cosine
 #
-# Options (SLURM flags consumed here):
-#   --time HH:MM:SS    walltime per job          (default: 01:00:00; shared max 04:00:00)
-#   --queue Q          SLURM queue               (default: regular)
+# Options (consumed here; everything else is forwarded to train.py):
+#   --time HH:MM:SS    walltime per SLURM job     (default: 01:00:00; shared max 04:00:00)
+#   --queue Q          SLURM queue                (default: regular)
 #                      shared: --gpus-per-task=1 + 32 CPUs; regular/debug: --gpus-per-node=1 + 32 CPUs
 #   --tracers "A B C"  space-separated subset     (default: all 6 DR1 bins)
 #   --tracer-bin NAME  train a single tracer      (alias for --tracers NAME)
-# Everything else is forwarded to train.py (each job gets --tracer-bin <name> appended).
+#   --local            force local execution even if sbatch is available
+#   --slurm            force SLURM submission even if sbatch is not detected
+#   (default: auto-detect based on sbatch availability)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="/pscratch/sd/a/ashandon/bedcosmo/num_tracers/emulator/logs"
+
+# Ensure SCRATCH is set (logs, MLflow, models — same as ~/bedcosmo/submit.sh).
+if [[ -z "${SCRATCH:-}" ]]; then
+    export SCRATCH="$HOME/scratch"
+    echo "SCRATCH was unset; set to: $SCRATCH"
+fi
+LOG_DIR="${SCRATCH}/bedcosmo/num_tracers/emulator/logs"
 
 # ── Defaults ──
 TIME="01:00:00"
 QUEUE="regular"
 TRACERS="BGS LRG1 LRG2 LRG3_ELG1 ELG2 QSO"
+FORCE_LOCAL=false
+FORCE_SLURM=false
 
-# ── Parse SLURM flags vs train.py flags ──
+# ── Parse SLURM / mode flags vs train.py flags ──
 TRAIN_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,16 +61,36 @@ while [[ $# -gt 0 ]]; do
             ;;
         --tracer-bin)
             TRACERS="$2"; shift 2 ;;
+        --local)
+            FORCE_LOCAL=true; shift ;;
+        --slurm)
+            FORCE_SLURM=true; shift ;;
         *)
             TRAIN_ARGS+=("$1"); shift ;;
     esac
 done
 
 if [[ ${#TRAIN_ARGS[@]} -eq 0 ]]; then
-    echo "Usage: bash submit_train.sh [--time HH:MM:SS] [--queue Q] [--tracers \"A B ...\"] [train.py args ...]"
-    echo "  Submits one GPU job per tracer (default: all 6 DR1 bins)."
+    echo "Usage: bash submit_train.sh [--time HH:MM:SS] [--queue Q] [--tracers \"A B ...\"] [--local|--slurm] [train.py args ...]"
+    echo "  One GPU job/process per tracer (default: all 6 DR1 bins)."
     echo "  Use --tracers or --tracer-bin to restrict to a subset."
+    echo "  Mode: auto (sbatch if present), or --local / --slurm."
     exit 1
+fi
+
+if [[ "$FORCE_LOCAL" == true && "$FORCE_SLURM" == true ]]; then
+    echo "Error: --local and --slurm are mutually exclusive" >&2
+    exit 1
+fi
+
+if [[ "$FORCE_LOCAL" == true ]]; then
+    EXECUTION_MODE="local"
+elif [[ "$FORCE_SLURM" == true ]]; then
+    EXECUTION_MODE="slurm"
+elif command -v sbatch &>/dev/null; then
+    EXECUTION_MODE="slurm"
+else
+    EXECUTION_MODE="local"
 fi
 
 mkdir -p "$LOG_DIR"
@@ -67,15 +101,32 @@ _time_to_secs() {
     echo $((10#${h:-0} * 3600 + 10#${m:-0} * 60 + 10#${s:-0}))
 }
 
-if [[ "$QUEUE" == "shared" ]]; then
-    max_shared_secs=$((4 * 3600))
-    req_secs=$(_time_to_secs "$TIME")
-    if (( req_secs > max_shared_secs )); then
-        echo "Error: shared GPU queue max walltime is 04:00:00 (requested $TIME)." >&2
-        echo "Use --queue regular for longer jobs, or reduce --time." >&2
-        exit 1
+_activate_emulator_env() {
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "emulator" ]]; then
+        echo "Using existing conda environment: emulator"
+        return 0
     fi
-fi
+    local conda_base=""
+    if [[ -n "${CONDA_PREFIX:-}" && "$CONDA_PREFIX" == *"/envs/"* ]]; then
+        conda_base="${CONDA_PREFIX%/envs/*}"
+    else
+        conda_base="$(conda info --base 2>/dev/null || true)"
+    fi
+    if [[ -n "$conda_base" && -f "$conda_base/etc/profile.d/conda.sh" ]]; then
+        # shellcheck source=/dev/null
+        source "$conda_base/etc/profile.d/conda.sh"
+    else
+        eval "$(conda shell.bash hook 2>/dev/null)" || {
+            echo "Error: conda not found. Activate the emulator env first: conda activate emulator" >&2
+            exit 1
+        }
+    fi
+    conda activate emulator
+    echo "Activated conda environment: emulator"
+    if [[ -n "${CONDA_PREFIX:-}" && -d "$CONDA_PREFIX/lib" ]]; then
+        export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+}
 
 submit_one_job() {
     local job_name="$1"
@@ -123,6 +174,7 @@ echo "Job ID:       $SLURM_JOB_ID"
 echo "Job Name:     $SLURM_JOB_NAME"
 echo "Node:         $(hostname)"
 echo "Tracer:       __TRACER__"
+echo "SCRATCH:      ${SCRATCH:-<unset>}"
 echo "Start Time:   $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Args:         __TRAIN_ARGS__"
 echo "=========================================="
@@ -165,6 +217,33 @@ INNEREOF
         "$batch_script"
 }
 
+run_one_local() {
+    local job_name="$1"
+    local tracer_bin="$2"
+    shift 2
+    local -a args=("$@")
+
+    if [[ -n "$tracer_bin" ]]; then
+        args+=(--tracer-bin "$tracer_bin")
+    fi
+
+    local timestamp
+    timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
+    local log_file="${LOG_DIR}/${timestamp}_${job_name}.log"
+
+    echo "Launching local $job_name"
+    echo "train.py args: ${args[*]}"
+    echo "Logging to: $log_file"
+
+    cd "$SCRIPT_DIR"
+    # Prefer env python if already in emulator; else rely on PATH after activate.
+    local py="${CONDA_PREFIX:-}/bin/python"
+    if [[ ! -x "$py" ]]; then
+        py="python"
+    fi
+    "$py" "$SCRIPT_DIR/train.py" "${args[@]}" > >(tee -a "$log_file") 2>&1
+}
+
 read -r -a TRACER_NAMES <<< "$TRACERS"
 if [[ ${#TRACER_NAMES[@]} -eq 0 ]]; then
     echo "Error: no tracers given"
@@ -186,19 +265,50 @@ for ((i = 0; i < ${#TRAIN_ARGS[@]}; i++)); do
 done
 
 echo "=== emulator train: analysis=$ANALYSIS quantity=${QUANTITY:-<default>} cosmo=${COSMO_MODEL:-<default>} nn_model=${NN_MODEL:-<default>} ==="
-echo "Submitting one job per tracer: ${TRACER_NAMES[*]}"
+echo "Execution mode: $EXECUTION_MODE"
+echo "SCRATCH: $SCRATCH"
+echo "Logs: $LOG_DIR"
+echo "One job/process per tracer: ${TRACER_NAMES[*]}"
 echo "Shared train.py args: ${TRAIN_ARGS[*]}"
-echo "SLURM: time=$TIME, queue=$QUEUE"
+if [[ "$EXECUTION_MODE" == "slurm" ]]; then
+    echo "SLURM: time=$TIME, queue=$QUEUE"
+fi
 echo
 
-for NAME in "${TRACER_NAMES[@]}"; do
-    JOB_NAME="train_${ANALYSIS}"
-    [[ -n "$QUANTITY" ]] && JOB_NAME+="_${QUANTITY}"
-    [[ -n "$COSMO_MODEL" ]] && JOB_NAME+="_${COSMO_MODEL}"
-    [[ -n "$NN_MODEL" ]] && JOB_NAME+="_${NN_MODEL}"
-    JOB_NAME+="_${NAME}"
-    submit_one_job "$JOB_NAME" "$NAME" "${TRAIN_ARGS[@]}"
-done
-
-echo
-echo "All jobs submitted (${#TRACER_NAMES[@]} tracers)."
+if [[ "$EXECUTION_MODE" == "slurm" ]]; then
+    if ! command -v sbatch &>/dev/null; then
+        echo "Error: --slurm requested but sbatch not found on PATH" >&2
+        exit 1
+    fi
+    if [[ "$QUEUE" == "shared" ]]; then
+        max_shared_secs=$((4 * 3600))
+        req_secs=$(_time_to_secs "$TIME")
+        if (( req_secs > max_shared_secs )); then
+            echo "Error: shared GPU queue max walltime is 04:00:00 (requested $TIME)." >&2
+            echo "Use --queue regular for longer jobs, or reduce --time." >&2
+            exit 1
+        fi
+    fi
+    for NAME in "${TRACER_NAMES[@]}"; do
+        JOB_NAME="train_${ANALYSIS}"
+        [[ -n "$QUANTITY" ]] && JOB_NAME+="_${QUANTITY}"
+        [[ -n "$COSMO_MODEL" ]] && JOB_NAME+="_${COSMO_MODEL}"
+        [[ -n "$NN_MODEL" ]] && JOB_NAME+="_${NN_MODEL}"
+        JOB_NAME+="_${NAME}"
+        submit_one_job "$JOB_NAME" "$NAME" "${TRAIN_ARGS[@]}"
+    done
+    echo
+    echo "All jobs submitted (${#TRACER_NAMES[@]} tracers)."
+else
+    _activate_emulator_env
+    for NAME in "${TRACER_NAMES[@]}"; do
+        JOB_NAME="train_${ANALYSIS}"
+        [[ -n "$QUANTITY" ]] && JOB_NAME+="_${QUANTITY}"
+        [[ -n "$COSMO_MODEL" ]] && JOB_NAME+="_${COSMO_MODEL}"
+        [[ -n "$NN_MODEL" ]] && JOB_NAME+="_${NN_MODEL}"
+        JOB_NAME+="_${NAME}"
+        run_one_local "$JOB_NAME" "$NAME" "${TRAIN_ARGS[@]}"
+    done
+    echo
+    echo "All local runs finished (${#TRACER_NAMES[@]} tracers)."
+fi
