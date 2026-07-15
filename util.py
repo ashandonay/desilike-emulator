@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Tuple, Type
 
 import numpy as np
 import json
@@ -583,10 +583,6 @@ def _symlog_transform_np(y: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
     return np.sign(y) * np.log1p(np.abs(y) / linthresh)
 
 
-def _symlog_inverse_np(y_log: np.ndarray, linthresh: np.ndarray) -> np.ndarray:
-    return np.sign(y_log) * linthresh * np.expm1(np.abs(y_log))
-
-
 def transform_emulator_targets_forward(
     y: np.ndarray,
     target_names: List[str],
@@ -620,35 +616,65 @@ def transform_emulator_targets_inverse(
     *,
     log_normalize: bool = False,
     y_linthresh: np.ndarray | None = None,
-    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
-    apply_sigma_floor: bool = True,
+    sigma_floor: float | None = DEFAULT_SIGMA_FLOOR,
+    sigma_ceiling: float | None = None,
 ) -> np.ndarray:
-    """Map denormalized training-space targets back to physical units."""
+    """Map denormalized training-space targets back to physical units.
+
+    sigma bounds are two optional clamps, each disabled by passing ``None``:
+    ``sigma_floor`` clamps from below (default ``DEFAULT_SIGMA_FLOOR``);
+    ``sigma_ceiling`` clamps from above and maps inf/nan -> ceiling (default
+    ``None`` = off, so training/eval see the raw, possibly overflowing tail). A
+    covariance consumer that needs finite, well-conditioned blocks passes a
+    finite ceiling to encode "no information" instead of +inf (see
+    ``cov_block_from_marginals``). rho is always pulled strictly inside (-1, 1)
+    via ``_RHO_CLIP`` -- mirroring the forward transform's arctanh clip -- so the
+    decode never returns a saturated +-1 that would make a 2x2 block singular.
+    """
     import torch
+
+    # -inf sigma (from a negative symlog pre-image) collapses to the floor, or
+    # to 0 when the floor is disabled -- sigma is a standard deviation, never < 0.
+    neg_fill = sigma_floor if sigma_floor is not None else 0.0
 
     if isinstance(y, torch.Tensor):
         out = y.clone()
         for col, name in enumerate(target_names):
             if name.startswith("rho_"):
-                out[..., col] = torch.tanh(out[..., col])
+                out[..., col] = torch.clamp(
+                    torch.tanh(out[..., col]), min=-_RHO_CLIP, max=_RHO_CLIP
+                )
             elif name.startswith("sigma_"):
                 if log_normalize and y_linthresh is not None:
                     lt = y_linthresh[..., col]
                     out[..., col] = torch.sign(out[..., col]) * lt * torch.expm1(torch.abs(out[..., col]))
-                if apply_sigma_floor and sigma_floor > 0:
-                    out[..., col] = torch.clamp(out[..., col], min=sigma_floor)
+                if sigma_ceiling is not None:
+                    out[..., col] = torch.nan_to_num(
+                        out[..., col],
+                        nan=sigma_ceiling,
+                        posinf=sigma_ceiling,
+                        neginf=neg_fill,
+                    )
+                if sigma_floor is not None or sigma_ceiling is not None:
+                    out[..., col] = torch.clamp(out[..., col], min=sigma_floor, max=sigma_ceiling)
         return out
 
     out = np.array(y, dtype=np.float64, copy=True)
     for col, name in enumerate(target_names):
         if name.startswith("rho_"):
-            out[..., col] = np.tanh(out[..., col])
+            out[..., col] = np.clip(np.tanh(out[..., col]), -_RHO_CLIP, _RHO_CLIP)
         elif name.startswith("sigma_"):
             if log_normalize and y_linthresh is not None:
                 lt = y_linthresh[..., col]
                 out[..., col] = np.sign(out[..., col]) * lt * np.expm1(np.abs(out[..., col]))
-            if apply_sigma_floor and sigma_floor > 0:
+            if sigma_ceiling is not None:
+                out[..., col] = np.nan_to_num(
+                    out[..., col], nan=sigma_ceiling, posinf=sigma_ceiling, neginf=neg_fill
+                )
+            if sigma_floor is not None:
                 out[..., col] = np.maximum(out[..., col], sigma_floor)
+            if sigma_ceiling is not None:
+                out[..., col] = np.minimum(out[..., col], sigma_ceiling)
     return out
 
 
@@ -675,8 +701,8 @@ def decode_emulator_outputs(
     *,
     log_normalize: bool = False,
     y_linthresh=None,
-    sigma_floor: float = DEFAULT_SIGMA_FLOOR,
-    apply_sigma_floor: bool = True,
+    sigma_floor: float | None = DEFAULT_SIGMA_FLOOR,
+    sigma_ceiling: float | None = None,
 ):
     """Invert z-score and per-target transforms to physical emulator targets."""
     y = y_norm * y_sigma + y_mu
@@ -686,5 +712,5 @@ def decode_emulator_outputs(
         log_normalize=log_normalize,
         y_linthresh=y_linthresh,
         sigma_floor=sigma_floor,
-        apply_sigma_floor=apply_sigma_floor,
+        sigma_ceiling=sigma_ceiling,
     )
