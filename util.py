@@ -588,11 +588,21 @@ def transform_emulator_targets_forward(
     target_names: List[str],
     *,
     log_normalize: bool = False,
+    y_linthresh: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Map physical emulator targets to training space (before z-score)."""
+    """Map physical emulator targets to training space (before z-score).
+
+    ``y_linthresh`` (the symlog scale) is derived from ``y`` when None, and returned
+    so the caller can reuse it. Pass the TRAIN split's value when transforming any
+    other split: linthresh is ``min|nonzero|``, an extreme order statistic that
+    differs between splits, so re-deriving it per split puts each split on its own
+    scale -- the model then predicts in train-space while the target sits in
+    test-space, adding a spurious ~ln(lt_other/lt_train) offset to every large
+    target. The inverse (``transform_emulator_targets_inverse``) already takes
+    linthresh as an argument for the same reason.
+    """
     y = np.array(y, dtype=np.float64, copy=True)
-    y_linthresh = None
-    if log_normalize:
+    if log_normalize and y_linthresh is None:
         y_linthresh = np.empty((1, y.shape[1]), dtype=np.float64)
         for col, name in enumerate(target_names):
             if not name.startswith("sigma_"):
@@ -600,6 +610,10 @@ def transform_emulator_targets_forward(
                 continue
             abs_nz = np.abs(y[:, col][y[:, col] != 0])
             y_linthresh[0, col] = float(np.min(abs_nz)) if len(abs_nz) > 0 else 1e-8
+    elif not log_normalize:
+        y_linthresh = None
+    else:
+        y_linthresh = np.asarray(y_linthresh, dtype=np.float64).reshape(1, -1)
 
     for col, name in enumerate(target_names):
         if name.startswith("sigma_"):

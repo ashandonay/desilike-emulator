@@ -1617,10 +1617,31 @@ def build_bao_likelihood(
     # BAO MODEL
     # ------------------------------------------------------------------
 
+    # with_now: the no-wiggle (dewiggling) method. MUST be set explicitly --
+    # desilike's BAOPowerSpectrumTemplate defaults to 'peakaverage', which is NOT
+    # what DESI uses: the DR1 BAO template follows Wallisch (2018) (Chen et al.
+    # 2024, arXiv:2402.14070 §7.4 and §8(v), which quotes a 0.02%/0.09% max
+    # systematic on alpha_iso/alpha_ap from this choice).
+    #
+    # The distinction matters far more here than it does for DESI, because this
+    # prior spans r_drag ~50-150 Mpc. 'peakaverage' averages the wiggle
+    # minima/maxima *at fiducial positions rescaled by r_drag/r_drag_fid*, so it
+    # assumes it already knows where the wiggles are; at r_drag ~51 Mpc (high
+    # omega_cdm) that rescale is ~2.9x and the assumption breaks -- the
+    # Eisenstein-Hu no-wiggle reference overshoots pk ~57x, the polynomial
+    # de-trend can't flatten it, and scipy's find_peaks lands exactly on its
+    # threshold. Measured consequences: sigma mislabelled ~2x (0.20 vs the 0.108
+    # that wallish2018/hinton2017/savgol agree on), spurious sigma~1e6 outliers,
+    # and a chaotic crash (w0 +-1e-9 flips PipelineError on/off via an unguarded
+    # ik[-1] at cosmoprimo/bao_filter.py:561) that silently censored ~60% of
+    # samples in those pockets. 'wallish2018' sine-transforms to real space and
+    # cuts the peak, assuming nothing about peak location, and stays smooth
+    # there. On ordinary cosmologies the two agree to ~0.35% median / 1.0% max.
     template = BAOPowerSpectrumTemplate(
         z=z,
         fiducial=("DESI", dict(theta_cosmo)),
         apmode=apmode,
+        with_now="wallish2018",
     )
 
     if lean:

@@ -258,8 +258,12 @@ def standardize(
     y_train, y_linthresh = transform_emulator_targets_forward(
         y_train, target_names, log_normalize=log_normalize,
     )
+    # Transform the test split on the TRAIN linthresh (and, below, the train z-score
+    # stats). Re-deriving linthresh from y_test put the two splits on different symlog
+    # scales, inflating the logged test_loss ~1.1-3.6x and making it bottom early then
+    # rise -- an artifact that also corrupted the legacy --select-metric test_loss path.
     y_test, _ = transform_emulator_targets_forward(
-        y_test, target_names, log_normalize=log_normalize,
+        y_test, target_names, log_normalize=log_normalize, y_linthresh=y_linthresh,
     )
 
     # Use minimum sigma to avoid huge normalized values (e.g. constant columns)
