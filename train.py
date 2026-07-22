@@ -648,6 +648,9 @@ def main() -> None:
             "nn_model": config_key,
             "architecture": architecture,
             "analysis": args.analysis,
+            # Records the ground-truth generator this model was trained against so eval
+            # can auto-select it instead of defaulting to the wrong ('covar') pipeline.
+            "quantity": args.quantity,
             "expand": model_cfg.get("expand", 4),
         }
         if epoch is not None:

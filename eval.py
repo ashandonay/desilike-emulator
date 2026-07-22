@@ -109,9 +109,159 @@ def _set_log_or_symlog(ax, axis: str, vals: np.ndarray, min_decades: float = 2.0
     # linear: leave the matplotlib default
 
 
+def _tol_normalized_error(y_pred, y_true, target_names, rtol, atol):
+    """Per-sample coloring inputs for the eval corner plots.
+
+    Returns
+      severity        (N,) worst-target, scale-agnostic error: relative
+                      |Δ|/|true| for sigma_* targets, absolute |Δ| for the rest
+                      (rho_*, where a relative error is ill-defined near 0). This
+                      is the continuous, threshold-free quantity the primary
+                      ("relerr") plot shades by; it does NOT depend on atol/rtol.
+      is_outlier      (N,) bool: sample fails np.isclose on ANY target — the
+                      legacy pass/fail split, kept for the fallback colorings.
+      regime_is_rtol  (N,) bool: for a failing sample, True if the target driving
+                      the failure is rtol-dominated (|true| > atol/rtol), False if
+                      atol-dominated. Only meaningful where is_outlier is True.
+                      The crossover σ = atol/rtol is where the isclose budget
+                      switches from an absolute floor (small σ, generous in
+                      relative terms) to a pure rtol test (large σ, strict).
+    """
+    tiny = 1e-12
+    diff = np.abs(y_pred - y_true)
+    per_tgt = np.empty_like(diff)
+    for c, name in enumerate(target_names):
+        if name.startswith("sigma_"):
+            per_tgt[:, c] = diff[:, c] / np.maximum(np.abs(y_true[:, c]), tiny)
+        else:
+            per_tgt[:, c] = diff[:, c]
+    severity = per_tgt.max(axis=1)
+
+    is_close = np.isclose(y_pred, y_true, rtol=rtol, atol=atol)
+    is_outlier = ~np.all(is_close, axis=1)
+
+    crossover = atol / rtol if rtol > 0 else np.inf
+    excess = diff - (atol + rtol * np.abs(y_true))  # >0 on a target that fails
+    drive = np.argmax(excess, axis=1)               # target driving the failure
+    regime_is_rtol = np.abs(y_true[np.arange(len(y_true)), drive]) > crossover
+    return severity, is_outlier, regime_is_rtol
 
 
-def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quantity: str = "covar", n_samples: int = 500, seed: int = 42, hist_xlims: dict[str, tuple[float, float]] | None = None, rtol: float = 5e-3, atol: float = 1e-4, log_scale: bool = False, tracer_bin: str | None = None, min_decades: float = 2.0) -> None:
+def _corner_plot(save_file, data, names, *, severity, is_outlier, regime_is_rtol,
+                 mode, log_scale, min_decades, title, panel_size):
+    """Triangle plot over ``data`` columns, colored per ``mode``:
+
+      "relerr"  (default) — off-diagonals shade every point by continuous
+                worst-target relative error (viridis, log color scale), with a
+                full-height colorbar; the diagonal is the conventional marginal.
+                No pass/fail threshold, so no atol/rtol artifact.
+      "regime"  (fallback) — pass (blue) vs fail, with fails split into
+                atol-dominated (orange, σ<atol/rtol) and rtol-dominated
+                (red, σ>atol/rtol) so strictness fails are visually separable.
+      "passfail" (legacy) — single-color pass/fail, the original behavior.
+    """
+    from matplotlib.colors import LogNorm
+    n = len(names)
+    fig, axes = plt.subplots(n, n, figsize=(panel_size * n, panel_size * n), squeeze=False)
+
+    sev_lo, sev_hi = 1e-4, 1.0          # 0.01% .. 100% rel error, then saturate
+    norm = LogNorm(vmin=sev_lo, vmax=sev_hi)
+    sev_c = np.clip(severity, sev_lo, sev_hi)
+    ok = ~is_outlier
+    fail_atol = is_outlier & ~regime_is_rtol
+    fail_rtol = is_outlier & regime_is_rtol
+    # named by the error symptom, not the isclose regime (they invert): a small-sigma
+    # fail (atol term dominates the budget) is one whose *relative* error |Δ|/σ blew up,
+    # while a large-sigma fail (rtol term dominates) is a large *absolute* miss.
+    lab_a = "relative-error fail (small σ, σ<atol/rtol)"
+    lab_r = "absolute-error fail (large σ, σ>atol/rtol)"
+    mappable = None
+
+    for i in range(n):
+        for j in range(n):
+            ax = axes[i, j]
+            if j > i:
+                ax.set_visible(False)
+                continue
+            if i == j:
+                vals = data[:, i]
+                bins = _log_bins(vals, min_decades=min_decades) if log_scale else np.linspace(vals.min(), vals.max(), 31)
+                if mode == "relerr":
+                    # conventional marginal; the error signal lives in the off-diagonal color
+                    ax.hist(vals, bins=bins, color="tab:blue", alpha=0.6)
+                else:
+                    ax.hist(vals[ok], bins=bins, color="tab:blue", alpha=0.6, label="pass")
+                    if mode == "regime":
+                        ax.hist(vals[fail_atol], bins=bins, color="tab:orange", alpha=0.6, label=lab_a)
+                        ax.hist(vals[fail_rtol], bins=bins, color="tab:red", alpha=0.6, label=lab_r)
+                    else:
+                        ax.hist(vals[is_outlier], bins=bins, color="tab:red", alpha=0.6, label="fail")
+                if log_scale:
+                    _set_log_or_symlog(ax, "x", vals, min_decades=min_decades)
+            else:
+                xv, yv = data[:, j], data[:, i]
+                if mode == "relerr":
+                    order = np.argsort(severity)  # draw worst points on top
+                    mappable = ax.scatter(xv[order], yv[order], c=sev_c[order], s=5,
+                                          cmap="viridis", norm=norm, alpha=0.7, linewidths=0)
+                elif mode == "regime":
+                    ax.scatter(xv[ok], yv[ok], s=4, alpha=0.35, color="tab:blue", label="pass")
+                    ax.scatter(xv[fail_atol], yv[fail_atol], s=6, alpha=0.7, color="tab:orange", label=lab_a)
+                    ax.scatter(xv[fail_rtol], yv[fail_rtol], s=6, alpha=0.7, color="tab:red", label=lab_r)
+                else:
+                    ax.scatter(xv[ok], yv[ok], s=4, alpha=0.4, color="tab:blue", label="pass")
+                    ax.scatter(xv[is_outlier], yv[is_outlier], s=4, alpha=0.6, color="tab:red", label="fail")
+                if log_scale:
+                    _set_log_or_symlog(ax, "x", xv, min_decades=min_decades)
+                    _set_log_or_symlog(ax, "y", yv, min_decades=min_decades)
+            _set_plain_formatter(ax)
+            ax.tick_params(axis="both", labelsize=8)
+            if i == n - 1:
+                ax.set_xlabel(names[j])
+                ax.tick_params(axis="x", rotation=45)
+            else:
+                ax.tick_params(labelbottom=False)
+            if j == 0:
+                ax.set_ylabel(names[i])
+            else:
+                ax.tick_params(labelleft=False)
+
+    if mode != "relerr":
+        handles, labels = axes[n - 1, 0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc="upper right", fontsize=11)
+    fig.suptitle(title, fontsize=22, y=1.01)
+    fig.tight_layout()
+    for i in range(n):
+        for j in range(n):
+            ax = axes[i, j]
+            if not ax.get_visible():
+                continue
+            _set_plain_formatter(ax)
+            if i != n - 1:
+                ax.tick_params(labelbottom=False)
+            if j != 0:
+                ax.tick_params(labelleft=False)
+    if mode == "relerr" and mappable is not None:
+        # full-height colorbar to the right of the grid (added after tight_layout so
+        # the panel positions are final); spans row 0 top to row n-1 bottom. Width is a
+        # fixed fraction of a single panel so it stays proportionate as n grows, rather
+        # than a fixed figure fraction (which reads as a thin sliver on a wide grid).
+        top = axes[0, 0].get_position().y1
+        bottom = axes[n - 1, 0].get_position().y0
+        right = max(axes[i, i].get_position().x1 for i in range(n))
+        panel_w = axes[n - 1, n - 1].get_position().width
+        cax = fig.add_axes([right + 0.4 * panel_w, bottom, 0.28 * panel_w, top - bottom])
+        cb = fig.colorbar(mappable, cax=cax)
+        cb.set_label("worst-target rel. error  (σ: |Δ|/|true|)", fontsize=16)
+        cb.ax.tick_params(labelsize=13)
+    fig.savefig(save_file, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved triangle plot to: {save_file}")
+
+
+
+def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quantity: str | None = None, n_samples: int = 500, seed: int = 42, hist_xlims: dict[str, tuple[float, float]] | None = None, rtol: float = 5e-3, atol: float = 1e-4, log_scale: bool = False, tracer_bin: str | None = None, min_decades: float = 2.0, triangle_color: str = "relerr") -> None:
     os.makedirs(save_path, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     np.random.seed(seed)
@@ -147,6 +297,15 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     y_linthresh = ckpt["y_linthresh"].cpu().numpy() if ckpt.get("y_linthresh") is not None else None
     param_names = ckpt["param_names"]
     ckpt_target_names = ckpt["target_names"]
+
+    # Resolve the ground-truth quantity. An explicit --quantity wins; otherwise use the
+    # generator the model was trained against (recorded in the checkpoint), falling back
+    # to the per-analysis default. This prevents silently scoring a config-space emulator
+    # against the Fourier-space ('covar') ground truth (they differ ~10%).
+    if quantity is None:
+        quantity = ckpt.get("quantity") or ("config" if analysis == "bao" else "covar")
+    print(f"Using ground-truth quantity: {quantity}"
+          + (f"  (from checkpoint)" if ckpt.get("quantity") == quantity else "  (default/CLI)"))
 
     default_priors, target_names, ground_truth_fn, setup = get_pipeline(analysis, quantity, tracer_bin=tracer_bin, param_names=param_names)
 
@@ -211,15 +370,23 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     axes = np.atleast_1d(axes).flatten()
     for i, name in enumerate(target_names):
         ax = axes[i]
+        col = deltas[:, i]
         if hist_xlims and name in hist_xlims:
             lo, hi = hist_xlims[name]
-            bins = np.linspace(lo, hi, 41)
+            ax.hist(col, bins=np.linspace(lo, hi, 41), range=(lo, hi),
+                    edgecolor="black", linewidth=0.5)
+        elif log_scale:
+            # symlog x when the signed error genuinely spans min_decades (self-gated
+            # by _pick_scale); a narrow, well-behaved distribution stays linear.
+            ax.hist(col, bins=_log_bins(col, min_decades=min_decades),
+                    edgecolor="black", linewidth=0.5)
+            _set_log_or_symlog(ax, "x", col, min_decades=min_decades)
+            _set_plain_formatter(ax)
         else:
-            bins = 40
-        ax.hist(deltas[:, i], bins=bins, range=(lo, hi) if hist_xlims and name in hist_xlims else None, edgecolor="black", linewidth=0.5)
+            ax.hist(col, bins=40, edgecolor="black", linewidth=0.5)
         ax.axvline(0, color="red", linestyle="--", linewidth=1)
-        mean = np.mean(deltas[:, i])
-        std = np.std(deltas[:, i])
+        mean = np.mean(col)
+        std = np.std(col)
         ax.set_xlabel(f"$\\Delta$ {name}{delta_unit}")
         ax.set_ylabel("Count")
         ax.set_title(f"{name}\nmean={mean:.2e}, std={std:.2e}")
@@ -231,124 +398,32 @@ def run_eval(model_path: str, save_path: str, analysis: str = "shapefit", quanti
     plt.close(fig)
     print(f"Saved evaluation plot to: {os.path.join(save_path, f'eval_{timestamp}.png')}")
 
-    # --- Triangle plot of cosmo inputs, coloured by outlier status ---
-    # A sample is an "outlier" if ANY target fails np.isclose
-    is_close = np.isclose(y_pred, y_true, rtol=rtol, atol=atol)
-    is_outlier = ~np.all(is_close, axis=1)
-    n_params = len(param_names)
-
+    # --- Triangle plots, colored per triangle_color (see _corner_plot) ---
+    # The pass/fail and severity inputs are threshold/coloring choices only; they are
+    # computed once from the single sampled (y_pred, y_true) set and reused for every
+    # requested mode, so no mode triggers a fresh ground-truth pass.
+    severity, is_outlier, regime_is_rtol = _tol_normalized_error(
+        y_pred, y_true, list(ckpt_target_names), rtol, atol)
+    n_outlier = int(is_outlier.sum())
     panel_size = 4 if log_scale else 3
-    fig2, axes2 = plt.subplots(n_params, n_params, figsize=(panel_size * n_params, panel_size * n_params))
-    inlier = ~is_outlier
+    modes = [triangle_color] if isinstance(triangle_color, str) else list(triangle_color)
+    for mode in modes:
+        if mode == "relerr":
+            subtitle = f"median rel err {np.median(severity) * 100:.2f}%  (n={len(severity)})"
+        else:
+            subtitle = f"{n_outlier}/{len(is_outlier)} fail (rtol={rtol}, atol={atol})"
 
-    for i in range(n_params):
-        for j in range(n_params):
-            ax = axes2[i, j]
-            if j > i:
-                ax.set_visible(False)
-                continue
-            if i == j:
-                all_vals = x_raw[:, i]
-                bins = _log_bins(all_vals, min_decades=min_decades) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
-                ax.hist(x_raw[inlier, i], bins=bins, color="tab:blue", alpha=0.6, label="pass")
-                ax.hist(x_raw[is_outlier, i], bins=bins, color="tab:red", alpha=0.6, label="fail")
-            else:
-                ax.scatter(x_raw[inlier, j], x_raw[inlier, i], s=4, alpha=0.4, color="tab:blue", label="pass")
-                ax.scatter(x_raw[is_outlier, j], x_raw[is_outlier, i], s=4, alpha=0.6, color="tab:red", label="fail")
-                if log_scale:
-                    _set_log_or_symlog(ax, "x", x_raw[:, j], min_decades=min_decades)
-                    _set_log_or_symlog(ax, "y", x_raw[:, i], min_decades=min_decades)
-            if log_scale and i == j:
-                _set_log_or_symlog(ax, "x", x_raw[:, i], min_decades=min_decades)
-            _set_plain_formatter(ax)
-            ax.tick_params(axis="both", labelsize=8)
-            if i == n_params - 1:
-                ax.set_xlabel(param_names[j])
-                ax.tick_params(axis="x", rotation=45)
-            else:
-                ax.tick_params(labelbottom=False)
-            if j == 0:
-                ax.set_ylabel(param_names[i])
-            else:
-                ax.tick_params(labelleft=False)
+        _corner_plot(
+            os.path.join(save_path, f"eval_triangle_params_{mode}_{timestamp}.png"),
+            x_raw, list(param_names), severity=severity, is_outlier=is_outlier,
+            regime_is_rtol=regime_is_rtol, mode=mode, log_scale=log_scale,
+            min_decades=min_decades, title=f"Cosmo inputs — {subtitle}", panel_size=panel_size)
 
-    # Single shared legend
-    handles, labels = axes2[0, 0].get_legend_handles_labels()
-    fig2.legend(handles, labels, loc="upper right", fontsize=12)
-    n_outlier = int(is_outlier.sum())
-    fig2.suptitle(f"Cosmo inputs — {n_outlier}/{len(is_outlier)} fail (rtol={rtol}, atol={atol})",
-                  fontsize=14, y=1.01)
-    fig2.tight_layout()
-    # Re-apply formatter and label visibility after tight_layout
-    for i in range(n_params):
-        for j in range(n_params):
-            ax = axes2[i, j]
-            if not ax.get_visible():
-                continue
-            _set_plain_formatter(ax)
-            if i != n_params - 1:
-                ax.tick_params(labelbottom=False)
-            if j != 0:
-                ax.tick_params(labelleft=False)
-    fig2.savefig(os.path.join(save_path, f"eval_triangle_{timestamp}.png"), dpi=150, bbox_inches="tight")
-    plt.close(fig2)
-    print(f"Saved triangle plot to: {os.path.join(save_path, f'eval_triangle_{timestamp}.png')}")
-
-    # --- Triangle plot of target outputs, coloured by outlier status ---
-    target_names = list(ckpt_target_names)
-    n_tgt = len(target_names)
-    fig3, axes3 = plt.subplots(n_tgt, n_tgt, figsize=(panel_size * n_tgt, panel_size * n_tgt), squeeze=False)
-
-    for i in range(n_tgt):
-        for j in range(n_tgt):
-            ax = axes3[i, j]
-            if j > i:
-                ax.set_visible(False)
-                continue
-            if i == j:
-                all_vals = y_true[:, i]
-                bins = _log_bins(all_vals, min_decades=min_decades) if log_scale else np.linspace(all_vals.min(), all_vals.max(), 31)
-                ax.hist(y_true[inlier, i], bins=bins, color="tab:blue", alpha=0.6, label="pass")
-                ax.hist(y_true[is_outlier, i], bins=bins, color="tab:red", alpha=0.6, label="fail")
-            else:
-                ax.scatter(y_true[inlier, j], y_true[inlier, i], s=4, alpha=0.4, color="tab:blue", label="pass")
-                ax.scatter(y_true[is_outlier, j], y_true[is_outlier, i], s=4, alpha=0.6, color="tab:red", label="fail")
-                if log_scale:
-                    _set_log_or_symlog(ax, "x", y_true[:, j], min_decades=min_decades)
-                    _set_log_or_symlog(ax, "y", y_true[:, i], min_decades=min_decades)
-            if log_scale and i == j:
-                _set_log_or_symlog(ax, "x", y_true[:, i], min_decades=min_decades)
-            _set_plain_formatter(ax)
-            ax.tick_params(axis="both", labelsize=8)
-            if i == n_tgt - 1:
-                ax.set_xlabel(target_names[j])
-                ax.tick_params(axis="x", rotation=45)
-            else:
-                ax.tick_params(labelbottom=False)
-            if j == 0:
-                ax.set_ylabel(target_names[i])
-            else:
-                ax.tick_params(labelleft=False)
-
-    handles, labels = axes3[0, 0].get_legend_handles_labels()
-    fig3.legend(handles, labels, loc="upper right", fontsize=12)
-    n_outlier = int(is_outlier.sum())
-    fig3.suptitle(f"Target outputs — {n_outlier}/{len(is_outlier)} fail (rtol={rtol}, atol={atol})",
-                  fontsize=14, y=1.01)
-    fig3.tight_layout()
-    for i in range(n_tgt):
-        for j in range(n_tgt):
-            ax = axes3[i, j]
-            if not ax.get_visible():
-                continue
-            _set_plain_formatter(ax)
-            if i != n_tgt - 1:
-                ax.tick_params(labelbottom=False)
-            if j != 0:
-                ax.tick_params(labelleft=False)
-    fig3.savefig(os.path.join(save_path, f"eval_triangle_targets_{timestamp}.png"), dpi=150, bbox_inches="tight")
-    plt.close(fig3)
-    print(f"Saved target triangle plot to: {os.path.join(save_path, f'eval_triangle_targets_{timestamp}.png')}")
+        _corner_plot(
+            os.path.join(save_path, f"eval_triangle_targets_{mode}_{timestamp}.png"),
+            y_true, list(ckpt_target_names), severity=severity, is_outlier=is_outlier,
+            regime_is_rtol=regime_is_rtol, mode=mode, log_scale=log_scale,
+            min_decades=min_decades, title=f"Target outputs — {subtitle}", panel_size=panel_size)
 
 
 def main() -> None:
@@ -381,7 +456,7 @@ def main() -> None:
     )
     parser.add_argument("--rtol", type=float, default=2e-3, help="Relative tolerance for allclose outlier check (default: 2e-3).")
     parser.add_argument("--atol", type=float, default=2e-3, help="Absolute tolerance for allclose outlier check (default: 2e-3).")
-    parser.add_argument("--log-scale", action="store_true", help="Use log scale on triangle plot axes.")
+    parser.add_argument("--log-scale", action="store_true", help="Use log/symlog scale on the triangle plot axes and the error-histogram x-axis.")
     parser.add_argument("--min-decades", type=float, default=2.0,
                         help="With --log-scale, only use a log/symlog axis when the data spans at "
                              "least this many orders of magnitude (robust 2.5-97.5 pct of |value|); "
@@ -396,8 +471,12 @@ def main() -> None:
     parser.add_argument(
         "--quantity",
         type=str,
-        default="covar",
-        help="Quantity: 'covar' or 'mean'.",
+        default=None,
+        help="Ground-truth quantity. If omitted, resolved from the checkpoint's recorded "
+             "'quantity', else the per-analysis default (bao -> 'config', the emulator's "
+             "training generator; shapefit -> 'covar'). For bao: 'config' (config-space "
+             "XiSigmaGenerator, matches training) or 'covar' (Fourier-space Fisher). For "
+             "shapefit: 'covar' or 'mean'. Pass explicitly only to override.",
     )
     parser.add_argument(
         "--save-path",
@@ -413,7 +492,23 @@ def main() -> None:
         choices=TRACER_TYPE_CHOICES,
         help="DESI tracer bin (e.g. BGS, LRG1). Sets zrange, z_eff, and N_tracers bounds for evaluation.",
     )
+    parser.add_argument(
+        "--triangle-color",
+        dest="triangle_color",
+        type=str,
+        default="relerr,regime",
+        help="Triangle-plot coloring mode(s), comma-separated. Rendering each extra "
+             "mode is near-free once the sample is drawn, so the default renders both "
+             "'relerr' (continuous rel-error shading, threshold-free) and 'regime' "
+             "(pass/fail with relative- vs absolute-error fails split). Also available: "
+             "'passfail' (legacy single-color). Pass e.g. 'relerr' for just one.",
+    )
     args = parser.parse_args()
+    triangle_modes = [m.strip() for m in args.triangle_color.split(",") if m.strip()]
+    _valid = {"relerr", "regime", "passfail"}
+    _bad = set(triangle_modes) - _valid
+    if _bad:
+        parser.error(f"--triangle-color: unknown mode(s) {sorted(_bad)}; choose from {sorted(_valid)}")
 
     if args.run_id is not None:
         import mlflow
@@ -452,6 +547,7 @@ def main() -> None:
         log_scale=args.log_scale,
         tracer_bin=args.tracer_bin,
         min_decades=args.min_decades,
+        triangle_color=triangle_modes,
     )
 
 
