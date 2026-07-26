@@ -15,6 +15,17 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
     ~/miniconda3/envs/emulator/bin/python <script>.py
 ```
 
+`emulator` = desilike @ `4cfd6bec` + cosmoprimo @ `1b100803` + `lsstypes`
+(upgraded in place 2026-07-26). BAO σ outputs are bit-identical to the
+pre-upgrade baseline — 976/976 arrays, config and Fourier (CHANGELOG §35).
+`emulator-41f082f0` is the frozen rollback.
+
+Install these two **from pinned SHAs, not bare `main`** — neither is on PyPI,
+both report `Version: 1.0.0` forever, so `pip show` cannot distinguish
+installs; read `direct_url.json` in the `.dist-info` instead. `mcmc.py`
+additionally needs `blackjax`, and its sampler results are *not* expected to
+match the old env.
+
 The `cwd` must be `bao/` (scripts use relative imports of sibling modules such
 as `prep_covar`, `fisher_sigmas`, `util`).
 

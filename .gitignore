@@ -9,3 +9,10 @@ notebooks/
 autoresearch/results.tsv
 autoresearch/worktrees/
 autoresearch/dev/
+
+# regress_sigmas.py cross-version dumps (~18 MB each, regenerable)
+golden_*.npz
+refactor_*.npz
+new_*.npz
+cosmoprimo_head.npz
+emulator_upgraded.npz
