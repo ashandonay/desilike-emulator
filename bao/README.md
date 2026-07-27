@@ -94,18 +94,13 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
 
 `SCRATCH` must be set for the default training-data save path.
 
-**Env note (2026-07-26).** `emulator` was upgraded in place to desilike
-`4cfd6bec` + cosmoprimo `1b100803` + `lsstypes`. Both upgrades produce
-**bit-identical** BAO σ-triplets against the pre-upgrade baseline — 976/976
-arrays over 6 tracers × 8 cosmologies, config *and* Fourier
-(`regress_sigmas.py`, CHANGELOG §35). `emulator-41f082f0` is the frozen
-rollback; don't delete it.
+**Pinned dependencies.** desilike @ `4cfd6bec`, cosmoprimo @ `1b100803`,
+`lsstypes`.
 
-> **Install from pinned SHAs, never bare `main`.** Neither package is on PyPI
-> and both report `Version: 1.0.0` permanently, so `pip show` cannot tell two
+> **Install from these SHAs, never bare `main`.** Neither package is on PyPI and
+> both report `Version: 1.0.0` permanently, so `pip show` cannot tell two
 > installs apart — check `direct_url.json` in the `.dist-info` instead. A bare
-> `git+https://...` install silently takes whatever `main` is that day, which
-> is outside what was verified:
+> `git+https://...` install silently takes whatever `main` is that day.
 >
 > ```bash
 > pip install --no-deps --force-reinstall \
@@ -114,10 +109,11 @@ rollback; don't delete it.
 > pip install "lsstypes @ git+https://github.com/adematti/lsstypes"
 > ```
 
-Not covered by that guarantee: `mcmc.py` (needs `blackjax`; samplers were
-rewritten upstream, so chains are *not* expected to match) and the `shapefit/`
-scripts. NERSC's `~/.conda/envs/emulator` is still on the old versions — which
-is now provably harmless for σ values, but bring it to the same pins before
+`regress_sigmas.py` checks that a dependency change leaves the σ-triplets
+untouched — run `dump` before and after, then `compare` (see CHANGELOG §35).
+`mcmc.py` additionally needs `blackjax`, and its chains are *not* expected to
+reproduce across a desilike upgrade (samplers were rewritten upstream). NERSC's
+`~/.conda/envs/emulator` is still on the old versions; match the pins before
 generating training data there.
 
 ---

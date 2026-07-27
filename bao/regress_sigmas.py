@@ -1,27 +1,27 @@
-"""Cross-desilike-version regression harness for the BAO error generator.
+"""Regression harness for the BAO error generator.
 
-Purpose
--------
-The `emulator` env runs desilike @ 41f082f0 (2026-01-15); upstream HEAD is
-4cfd6bec (2026-06-25), 40 commits ahead. The upgrade is a *type/API* migration
-(`ObservableCovariance` -> `lsstypes.CovarianceMatrix`, 1-D -> 2-D bin edges),
-not a physics change: every arithmetic edit in the diff is an exact identity
-(`np.bmat(...).A` -> `np.block(...)`, `(e[:-1]+e[1:])/2` -> `np.mean(e, -1)`,
-`integrate.simps` -> `integrate.simpson`).
+Dumps the sigma-triplets -- plus the raw covariance blocks, observable k-grid
+and marginalized Fisher underneath them -- over a fixed grid, and exact-compares
+two dumps. Run it before and after any change that could perturb the numbers
+without changing this repo: a desilike, cosmoprimo, scipy or numpy upgrade.
 
-This harness exists to *prove* that, because these outputs become emulator
-training labels: a silent numerical shift would mislabel every dataset
-generated after the upgrade.
+Worth the ceremony because these outputs become emulator training *labels*. A
+silent numerical shift does not announce itself; it mislabels every dataset
+generated afterwards, and the cost surfaces much later as a mis-trained model.
 
 Usage
 -----
-    python regress_sigmas.py dump    --out golden.npz
-    python regress_sigmas.py compare golden.npz new.npz
+    python regress_sigmas.py dump    --out before.npz     # then change the dep
+    python regress_sigmas.py dump    --out after.npz
+    python regress_sigmas.py compare before.npz after.npz
 
-`compare` exits non-zero on any inequality.
+`compare` tests exact equality and exits non-zero on any inequality; it reports
+max absolute and relative deltas so a real regression is separable from
+last-bit noise, but deliberately auto-accepts neither.
 
-Both subcommands must be run from the ``bao/`` directory (see the repo's env
-note: the DESI bundle paths are resolved relative to it).
+A dump takes ~6 min for all 6 tracers; `--config-only` skips the slower Fourier
+path. Run from the ``bao/`` directory -- DESI bundle paths resolve relative to
+it.
 """
 
 from __future__ import annotations

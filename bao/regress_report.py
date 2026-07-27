@@ -7,8 +7,8 @@ checked by eye. This prints the sigma-triplets themselves for every
 the max |delta| over *all* recorded arrays (covariances, k-grids, Fisher
 matrices) -- not just the sigmas shown.
 
-    python regress_report.py golden_41f082f0.npz new_4cfd6bec.npz
-    python regress_report.py golden_41f082f0.npz new_4cfd6bec.npz --md report.md
+    python regress_report.py before.npz after.npz
+    python regress_report.py before.npz after.npz --md report.md --plot report.png
 """
 
 from __future__ import annotations
