@@ -94,6 +94,28 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
 
 `SCRATCH` must be set for the default training-data save path.
 
+**Pinned dependencies.** desilike @ `4cfd6bec`, cosmoprimo @ `1b100803`,
+`lsstypes`.
+
+> **Install from these SHAs, never bare `main`.** Neither package is on PyPI and
+> both report `Version: 1.0.0` permanently, so `pip show` cannot tell two
+> installs apart — check `direct_url.json` in the `.dist-info` instead. A bare
+> `git+https://...` install silently takes whatever `main` is that day.
+>
+> ```bash
+> pip install --no-deps --force-reinstall \
+>   "desilike @ git+https://github.com/cosmodesi/desilike@4cfd6bec" \
+>   "cosmoprimo @ git+https://github.com/cosmodesi/cosmoprimo@1b1008033a6e92b95ac24146772417cd86c9c68f"
+> pip install "lsstypes @ git+https://github.com/adematti/lsstypes"
+> ```
+
+`regress_sigmas.py` checks that a dependency change leaves the σ-triplets
+untouched — run `dump` before and after, then `compare` (see CHANGELOG §35).
+`mcmc.py` additionally needs `blackjax`, and its chains are *not* expected to
+reproduce across a desilike upgrade (samplers were rewritten upstream). NERSC's
+`~/.conda/envs/emulator` is still on the old versions; match the pins before
+generating training data there.
+
 ---
 
 ## 1. Emulator training data (Fisher)

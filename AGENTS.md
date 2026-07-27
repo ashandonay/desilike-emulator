@@ -15,6 +15,12 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
     ~/miniconda3/envs/emulator/bin/python <script>.py
 ```
 
+Pinned deps: desilike @ `4cfd6bec`, cosmoprimo @ `1b100803`, `lsstypes`.
+Install these **from the pinned SHAs, not bare `main`** — neither is on PyPI and
+both report `Version: 1.0.0` forever, so `pip show` cannot distinguish installs;
+read `direct_url.json` in the `.dist-info` instead. Exact commands in CHANGELOG
+§35. `mcmc.py` additionally needs `blackjax`.
+
 The `cwd` must be `bao/` (scripts use relative imports of sibling modules such
 as `prep_covar`, `fisher_sigmas`, `util`).
 

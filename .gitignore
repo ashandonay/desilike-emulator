@@ -9,3 +9,7 @@ notebooks/
 autoresearch/results.tsv
 autoresearch/worktrees/
 autoresearch/dev/
+
+# regress_sigmas.py / regress_report.py outputs (regenerable; dumps are ~18 MB)
+bao/*.npz
+bao/regress_report*.md

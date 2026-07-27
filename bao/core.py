@@ -1157,6 +1157,27 @@ def _get_standard_tracer_bao_params(
     }
 
 
+def _cov_to_array(obj) -> np.ndarray:
+    """Covariance wrapper -> plain float64 ndarray, across desilike versions.
+
+    ``ObservablesCovarianceMatrix`` returned a ``desilike.observables.
+    ObservableCovariance`` up to commit 41f082f0 and returns an
+    ``lsstypes.CovarianceMatrix`` from 9cf05866 onward. Both wrap the same
+    numbers; only the accessor differs. Normalizing here keeps the rest of the
+    pipeline version-agnostic and, more importantly, lets us hand a plain array
+    to ``ObservablesGaussianLikelihood`` -- whose array branch is byte-for-byte
+    untouched by the upgrade, unlike either wrapper branch.
+    """
+    for accessor in (None, "value", "view"):
+        try:
+            value = obj if accessor is None else getattr(obj, accessor)()
+            return np.array(np.asarray(value), dtype=np.float64, copy=True)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    raise TypeError(
+        f"cannot extract a covariance array from {type(obj).__name__}")
+
+
 def build_bao_likelihood(
     N_tracers: float,
     theta_cosmo: Dict[str, float],
@@ -1713,8 +1734,7 @@ def build_bao_likelihood(
         footprints=footprint,
         resolution=resolution,
     )
-    gauss_cov_obj = covariance(**params)
-    C_gauss_arr = np.array(np.asarray(gauss_cov_obj), dtype=np.float64, copy=True)
+    C_gauss_arr = _cov_to_array(covariance(**params))
 
     C_full = C_gauss_arr.copy()
     cov_components: Dict[str, np.ndarray] = {"C_gauss": C_gauss_arr}
@@ -1795,12 +1815,15 @@ def build_bao_likelihood(
             )
 
             raise
-    augmented_cov = gauss_cov_obj.clone(value=C_full)
-
-    # Gaussian likelihood used for Fisher differentiation.
+    # Gaussian likelihood used for Fisher differentiation. C_full is passed as a
+    # plain ndarray rather than re-wrapped in the covariance object: the data
+    # vector is already in the observable's own ordering (the covariance was
+    # built from this very observable), so the wrapper's xmatch/view reordering
+    # is the identity here, and the array branch of ObservablesGaussianLikelihood
+    # is the one path the 41f082f0 -> 4cfd6bec desilike upgrade leaves untouched.
     likelihood = ObservablesGaussianLikelihood(
         observables=observable,
-        covariance=augmented_cov,
+        covariance=C_full,
     )
 
     # Float Sigma_s (Lorentzian FoG/streaming) with a Gaussian prior centered

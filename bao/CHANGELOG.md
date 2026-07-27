@@ -3573,6 +3573,98 @@ a pipeline bug.
   reference + production/bundle Fisher overlays.
 - `fisher_vs_desi_v2_dr1_Om_0.31520_hrdrag_99.08000.png` — NEW.
 
+## 35. desilike + cosmoprimo upgrade, BAO outputs unchanged (2026-07-26)
+
+**Dependencies.** Both packages install only from git `main` — neither is on
+PyPI, and both report `Version: 1.0.0` permanently, so `pip show` cannot tell
+two installs apart. Read `direct_url.json` in the `.dist-info` for the real
+commit.
+
+| package | from | to |
+|---|---|---|
+| desilike | `41f082f0` (2026-01-15) | `4cfd6bec` (2026-06-25) |
+| cosmoprimo | `d1de01c1` (2025-11-10) | `1b100803` (2026-07-12) |
+| lsstypes | *not installed* | `738b4f69` (new hard dep of desilike) |
+
+```bash
+pip install --no-deps --force-reinstall \
+  "desilike @ git+https://github.com/cosmodesi/desilike@4cfd6bec" \
+  "cosmoprimo @ git+https://github.com/cosmodesi/cosmoprimo@1b1008033a6e92b95ac24146772417cd86c9c68f"
+pip install "lsstypes @ git+https://github.com/adematti/lsstypes"
+```
+
+Install from these SHAs, **not bare `main`** — `main` moves and nothing in
+`pip show` would reveal the drift. `--no-deps` stops pip pulling an untested
+cosmoprimo in behind the pin.
+
+**Code change (`core.py`).** `build_bao_likelihood` is now version-agnostic:
+
+- `_cov_to_array()` normalizes either covariance wrapper (`.value()` for
+  `lsstypes.CovarianceMatrix`, `.view()` for the older `ObservableCovariance`,
+  or direct `np.asarray`) to a plain float64 array.
+- The `gauss_cov_obj.clone(value=C_full)` round-trip is **removed**; `C_full`
+  goes to `ObservablesGaussianLikelihood` as a plain ndarray. The covariance is
+  built from that very observable, so the wrapper's `xmatch`/`view` reordering
+  is the identity here. This also keeps us out of upstream's new lsstypes
+  branch, which at `4cfd6bec` still ships leftover `print(observable)` /
+  `print(tree.get(...))` debug statements.
+
+**Result: the σ-triplets are unchanged.** 976 recorded arrays — config-space
+`XiSigmaGenerator.sigma_triplet` and the Fourier `build_bao_likelihood` path,
+over 6 DR1 tracers × 8 cosmologies — are bit-identical across both upgrades
+(`np.array_equal`, not a tolerance). This mattered because those σ-triplets are
+emulator training *labels*: a silent numeric shift would mislabel every dataset
+generated afterwards. Re-verify at any time with `regress_sigmas.py`.
+
+**Expected of desilike, not of cosmoprimo.** desilike's diff is a pure type/API
+migration — `ObservableCovariance` → `lsstypes.CovarianceMatrix`, bin edges 1-D
+→ 2-D — in which every arithmetic edit is an exact identity (`np.bmat(...).A` →
+`np.block(...)`, `(e[:-1]+e[1:])/2` → `np.mean(e, -1)`, `integrate.simps` →
+`integrate.simpson`). cosmoprimo's is not; it carries real fixes, so it was
+tested rather than assumed:
+
+| file | change |
+|---|---|
+| `classy.py` | `theta_star`: `comoving_angular_distance` → `comoving_transverse_distance` (differs for Ok ≠ 0, and Ok is sampled) |
+| `interpolator.py` | extrapolation clamps k to `extrap_kmin/kmax`; multi-dim broadcast fix |
+| `fftlog.py` | `CorrelationToPower` phase `(-1j)**ell` → `(1j)**ell` |
+| `cosmology.py` | ncdm phase-space integrand → factory with `exp_sign=±1` (exact identity) |
+| `bao_filter.py` | **unchanged** — the de-wiggling engine is untouched |
+
+None of the first three turn out to be reachable from the BAO path (or are the
+identity there). `pyclass` was not upgraded, so CLASS itself is unmoved.
+
+**Latent bug this fixes.** `scipy 1.15.2` **removed** `integrate.simps`, which
+old desilike's `ResummedPowerSpectrumWiggles` still called. We only survived
+because `model='fog-damping'` never reaches that class — switching BAO model
+would have crashed.
+
+**Tooling (NEW).**
+
+- `regress_sigmas.py` — dumps the σ-triplets plus the raw covariance blocks,
+  observable k-grid and marginalized Fisher over a fixed 6-tracer × 8-cosmology
+  grid (physical region only), and exact-compares two dumps. Run it before and
+  after any desilike / cosmoprimo / scipy / numpy change. ~6 min per dump; the
+  `.npz` files are gitignored.
+- `regress_report.py` — renders two dumps as a σ table (10 dp) plus an overlay
+  PNG. The table is the evidence; a plot cannot resolve bit-level equality.
+
+**Not covered.**
+
+- `mcmc.py` imports again, but its results are unverified. HEAD's
+  `desilike/samplers/__init__.py` imports `.blackjax` at module scope, so the
+  upgrade made the module unimportable until `blackjax 1.3` was installed
+  (pulled no numerics with it — numpy `1.26.4`, scipy `1.15.2`, jax `0.6.2` all
+  unchanged). The samplers were fully rewritten upstream, so chains are **not**
+  expected bit-identical and need their own seed sweep.
+- `shapefit/prep_covar.py`, `shapefit/run_single_fisher.py` and
+  `test_cov_scaling.py` pass the covariance wrapper straight into
+  `ObservablesGaussianLikelihood`, routing into the debug-print branch. One
+  `core._cov_to_array(...)` call each.
+- The verification grid is 8 cosmologies and `model='fog-damping'` only.
+- NERSC `~/.conda/envs/emulator` is still on the old versions — harmless for σ,
+  but match the pins before generating training data there.
+
 ## Constraints respected throughout
 
 - No `covariance_scale`, `α_stoch`, `η`, or data-derived window
