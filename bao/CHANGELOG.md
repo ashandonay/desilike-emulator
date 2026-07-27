@@ -3651,10 +3651,12 @@ would have crashed.
 
 **Not covered.**
 
-- `mcmc.py` fails to import — `desilike/samplers/__init__.py` imports
-  `.blackjax` at module scope and `blackjax` is not installed. Samplers were
-  fully rewritten upstream, so chains are **not** expected bit-identical and
-  need their own seed sweep.
+- `mcmc.py` imports again, but its results are unverified. HEAD's
+  `desilike/samplers/__init__.py` imports `.blackjax` at module scope, so the
+  upgrade made the module unimportable until `blackjax 1.3` was installed
+  (pulled no numerics with it — numpy `1.26.4`, scipy `1.15.2`, jax `0.6.2` all
+  unchanged). The samplers were fully rewritten upstream, so chains are **not**
+  expected bit-identical and need their own seed sweep.
 - `shapefit/prep_covar.py`, `shapefit/run_single_fisher.py` and
   `test_cov_scaling.py` pass the covariance wrapper straight into
   `ObservablesGaussianLikelihood`, routing into the debug-print branch. One
