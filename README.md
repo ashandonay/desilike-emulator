@@ -24,24 +24,24 @@ cd src/bedcosmo/num_tracers/emulator
 
 | Directory   | Role |
 |------------|------|
-| **`bao/`** | BAO Fisher covariance emulator: inputs include survey / cosmology parameters (e.g. `N_tracers`, `Om`, `hrdrag`, …); targets are upper-triangular BAO covariance elements `cov_DH_over_rd_*`, `cov_DM_over_rd_*`. Only **`covar`** training is supported (`--quantity covar`). |
-| **`shapefit/`** | ShapeFit emulators: **`prep_covar.py`** → Fisher covariance for `(qiso, qap, f_sigmar, m)`; **`prep_mean.py`** → mean ShapeFit parameters from `ShapeFitPowerSpectrumExtractor` (no `N_tracers` in prior). |
+| **`bao/`** | BAO forecast pipeline (Fourier + config-space frames): per-tracer `(N_tracers, cosmology)` → distance-error targets (`sigma_DH_over_rd`, `sigma_DM_over_rd`, `rho_DH_DM`; iso tracers `sigma_DV_over_rd`). See **`bao/README.md`** — that file, not this one, documents the current CLIs. |
+| **`shapefit/`** | Full-shape (ShapeFit) forecast pipeline: per-tracer errors (`--quantity covar`: 4 `sigma_*` + 6 `rho_*` of `qiso, qap, f_sigmar, m`) and means (`--quantity mean`: `qiso, qap, f_sigmar, m`). See **`shapefit/README.md`**. |
 
 Shared per-analysis files:
 
 | File | Purpose |
 |------|---------|
-| **`model_config.yaml`** | Named blocks of NN and optimizer hyperparameters. The key you pass as `--nn-model` (or the default derived from `--cosmo-model`) selects one block. |
+| **`model_config.yaml`** | Named blocks of NN and optimizer hyperparameters. The key you pass as `--nn-model` (or the default derived from `--cosmo-model`, falling back to `default`) selects one block. |
 | **`model.py`** | PyTorch module registered in `util.ARCHITECTURE_REGISTRY` (currently **`resnet`**: SiLU residual MLP — `ResNetRegressor` for BAO, `base_regressor` for ShapeFit). |
-| **`prep_covar.py`** | CLI to sample priors, run Fisher forecasts in parallel (optional `--workers`), and write `train.npz` / `test.npz` under `v{N}/`. Exposes `run_fisher`, `TARGET_NAMES`, `DEFAULT_PRIORS` for `util.get_pipeline` (used by **`eval.py`**). |
-| **`run_prep_covar.sh`** | Optional shell wrapper for batch jobs. |
-| **`run_single_fisher.py`** | Debugging / one-off Fisher runs. |
+| **`generate_emulator_data.py`** | Per-tracer training-data CLI (parallel Fisher workers, versioned `v{N}` `.npz` output). |
+| **`generate_training_data.sh`** | All-tracer driver; resolves one shared `v{N}` up front. |
+| **`regress_sigmas.py`** | Bit-exact dump/compare regression harness (run before/after any dependency change). |
 
 ShapeFit-only:
 
 | File | Purpose |
 |------|---------|
-| **`prep_mean.py`** | Samples cosmological priors, runs the ShapeFit extractor, saves mean targets `qiso`, `qap`, `f_sigmar`, `m`. Used for `--quantity mean` training and evaluation. |
+| **`generate_mean_data.py`** | Samples cosmological priors, runs the ShapeFit extractor per tracer at its derived z_eff, saves mean targets `qiso`, `qap`, `f_sigmar`, `m`. Used for `--quantity mean` training and evaluation. |
 
 ---
 
@@ -53,7 +53,7 @@ Top-level keys are arbitrary labels (e.g. `base`, `base_scaled`, `base_omegak_w_
 2. **`--cosmo-model`** as the key, else  
 3. If that key is missing, **`--nn-model` was not set**, and the file contains a **`default`** key, that block is used.
 
-For **ShapeFit**, `shapefit/model_config.yaml` currently defines only **`base`**. If you train with `--cosmo-model base_w_wa`, either add a `base_w_wa` block to the YAML or pass **`--nn-model base`** to reuse the shared hyperparameters.
+For **ShapeFit**, `shapefit/model_config.yaml` defines a single **`default`** block, so any `--cosmo-model` resolves to it unless you add per-model keys.
 
 Typical fields (all consumed by `train.py` where applicable):
 
@@ -67,47 +67,24 @@ BAO’s YAML may use keys that do not match `cosmo-model` names (e.g. `base_scal
 
 ---
 
-## `prep_covar.py` (BAO and ShapeFit)
+## Training-data generation
 
-Both scripts share most flags. They write **`{prefix}train.npz`** / **`{prefix}test.npz`** with arrays **`x`**, **`y`**, **`param_names`**, **`target_names`**. Prefix is empty unless **`--name`** is set (e.g. `LRG2` → `LRG2_train.npz`).
+The per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
+`shapefit/README.md`). Both write per-tracer **`{tracer}_train.npz`** /
+**`{tracer}_test.npz`** (arrays **`x`**, **`y`**, **`param_names`**,
+**`target_names`**) under
+`training_data/{analysis}/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
+anchor the `N_tracers` box via `util.ntracers_range` (tracers.yaml low/high
+factors × the dataset's `passed` counts — never hardcode N).
 
-| Argument | Description |
-|----------|-------------|
-| `--n-samples` | Number of accepted prior samples (default `5000`). |
-| `--batch-size` | LHS batch size for generation loops. |
-| `--seed` | RNG seed. |
-| `--test-size` | Fraction held out for `test.npz` (default `0.2`). |
-| `--save-path` | Root directory; default from `get_default_save_path(analysis=..., quantity="covar", cosmo_model=...)`. |
-| `--sigma-clip` | Truncation for normal priors in LHS (default `4.0`). |
-| `--verbose-every` | Progress print interval. |
-| `--workers` | Parallel worker processes (`1` = serial). |
-| `--zrange Z_MIN Z_MAX` | Footprint redshift bin (default `1.2 1.4`). |
-| `--z-eff` | Optional effective redshift (else midpoint of `zrange`). |
-| `--name` | Tracer prefix for output filenames. |
-| `--version` | Force `v{N}`; else auto-increment. |
-| `--ntracers-range LOW HIGH` | Override `N_tracers` uniform bounds. |
-| `--priors-json` | Full prior dict as JSON (must be self-consistent with varied parameters). |
-| `--cosmo-model` | **BAO**: `base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa` (default `base_omegak_w_wa`). **ShapeFit**: `base`, `base_w_wa` (default `base`). |
+```bash
+# BAO (from bao/):     one shared v{N} for all 6 tracers
+bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
 
-**BAO only:** `--tracer-bin` selects a key in `tracers.yaml` for reconstruction / nuisance defaults (default `LRG2`).
-
-BAO additionally applies **constraint** filters from `CONSTRAINTS` when the relevant parameters are both varied.
-
-ShapeFit `prep_covar` can pass a **`checkpoint_fn`** to save intermediate datasets during long runs.
-
----
-
-## `prep_mean.py` (ShapeFit only)
-
-| Argument | Description |
-|----------|-------------|
-| `--n-samples` | Default `10000`. |
-| `--batch-size` | Default `256`. |
-| `--seed`, `--test-size`, `--save-path`, `--sigma-clip`, `--verbose-every` | Same idea as `prep_covar`. |
-| `--priors-json` | Optional full prior override. |
-| `--cosmo-model` | `base` or `base_w_wa` (default `base`). |
-
-Outputs go to `training_data/shapefit/{cosmo_model}/mean/v{N}/`.
+# ShapeFit (from shapefit/): errors and means
+shapefit/generate_training_data.sh --quantity covar --cosmo-model base --n-samples 5000
+shapefit/generate_training_data.sh --quantity mean  --cosmo-model base --n-samples 10000
+```
 
 ---
 
@@ -115,7 +92,7 @@ Outputs go to `training_data/shapefit/{cosmo_model}/mean/v{N}/`.
 
 | File | Role |
 |------|------|
-| **`util.py`** | `build_model`, `get_default_save_path`, `get_pipeline` (loads `prep_covar` / `prep_mean` for ground truth), `save_dataset`, LHS sampling, tracer bins for **`--tracer-bin`**. |
+| **`util.py`** | `build_model`, `get_default_save_path`, `get_pipeline` (loads the per-analysis ground-truth generators for `eval.py`), `save_dataset`, LHS sampling, tracer bins for **`--tracer-bin`**. |
 | **`train.py`** | Loads YAML + `.npz` data, standardizes inputs/targets, trains with MLflow logging, saves checkpoints under the run’s artifacts. |
 | **`eval.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
 | **`scale_data.py`** | Post-processes a directory of `.npz` files: multiplies `y` by user-defined factors of input variables; writes a sibling directory and **`scale_info.json`** (used at train/eval time to track scaling). |
@@ -184,29 +161,28 @@ Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must ident
 
 ## Typical workflows
 
-**1. BAO covariance emulator**
+**1. BAO error emulator**
 
 ```bash
-python bao/prep_covar.py --cosmo-model base --n-samples 10000 --workers 8
-# optional: python scale_data.py $SCRATCH/.../bao/base/covar/v1 'log(N_tracers)' '1/exp(Om)'
-python train.py --analysis bao --quantity covar --cosmo-model base --nn-model base_scaled --data-dir latest
-python eval.py --run-id <mlflow_run_id> --analysis bao --quantity covar
+bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
+python train.py --analysis bao --quantity config --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
+python eval.py --run-id <mlflow_run_id> --analysis bao --tracer-bin LRG2
 ```
 
-**2. ShapeFit covariance emulator**
+**2. ShapeFit error emulator**
 
 ```bash
-python shapefit/prep_covar.py --cosmo-model base_w_wa --name LRG2 --zrange 0.6 0.8 --z-eff 0.706
-python train.py --analysis shapefit --quantity covar --cosmo-model base_w_wa --data-dir latest --tracer-bin LRG2
+shapefit/generate_training_data.sh --quantity covar --cosmo-model base --n-samples 5000
+python train.py --analysis shapefit --quantity covar --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
 python eval.py --run-dir <path_to_run_artifacts> --analysis shapefit --quantity covar --tracer-bin LRG2
 ```
 
 **3. ShapeFit mean parameters**
 
 ```bash
-python shapefit/prep_mean.py --cosmo-model base
-python train.py --analysis shapefit --quantity mean --data-dir latest
-python eval.py --model-path /path/to/model.pt --analysis shapefit --quantity mean
+shapefit/generate_training_data.sh --quantity mean --cosmo-model base --n-samples 10000
+python train.py --analysis shapefit --quantity mean --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
+python eval.py --model-path /path/to/model.pt --analysis shapefit --quantity mean --tracer-bin LRG2
 ```
 
 ---

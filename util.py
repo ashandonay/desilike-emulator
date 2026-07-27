@@ -267,9 +267,12 @@ def to_extractor_params(sample: Dict[str, float]) -> Dict[str, float]:
         "n_s": float(sample.get("n_s", 0.9649)),
     }
     if "w0" in sample:
-        result["w0_fde"] = float(sample["w0"])
+        # NB: historically emitted "w0_fde"/"wa_fde", which cosmoprimo does not
+        # accept (the fluid params are w0_fld/wa_fld) — the old base_w_wa
+        # shapefit path was silently broken.
+        result["w0_fld"] = float(sample["w0"])
     if "wa" in sample:
-        result["wa_fde"] = float(sample["wa"])
+        result["wa_fld"] = float(sample["wa"])
     return result
 
 
@@ -367,30 +370,52 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
     tracer_bin_cfg = get_tracer_config(tracer_bin) if tracer_bin else None
 
     if analysis == "shapefit":
+        if quantity not in ("covar", "mean"):
+            raise ValueError(
+                f"Unknown quantity for shapefit: {quantity!r} (expected 'covar' or 'mean')"
+            )
+        if not tracer_bin:
+            raise ValueError(
+                "shapefit eval requires a tracer_bin (per-tracer z_eff / N box)."
+            )
+        # Load via explicit file paths with distinct module names: both bao/
+        # and shapefit/ carry core.py + fourier_space.py, so a bare
+        # `import core` here would collide with the bao branch in-process.
+        sf_fs = _load_module(
+            "shapefit_fourier", os.path.join(_here, "shapefit", "fourier_space.py"))
+        sf_core = sf_fs.sf_core
+
         if quantity == "covar":
-            mod = _load_module("shapefit_prep_covar", os.path.join(_here, "shapefit", "prep_covar.py"))
-            kw = {}
-            if tracer_bin_cfg:
-                kw = {"zrange": tracer_bin_cfg["zrange"], "z_eff": tracer_bin_cfg["z_eff"]}
-            def ground_truth_fn(_setup, sample, _kw=kw):
-                return mod.run_fisher(sample, **_kw)
-            priors = dict(mod.DEFAULT_PRIORS)
-            if tracer_bin_cfg:
-                _nt_lo, _nt_hi = ntracers_range(tracer_bin)
-                priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
-            return priors, mod.TARGET_NAMES, ground_truth_fn, None
-        elif quantity == "mean":
-            mod = _load_module("shapefit_prep_mean", os.path.join(_here, "shapefit", "prep_mean.py"))
-            from desilike.theories.galaxy_clustering import ShapeFitPowerSpectrumExtractor
-            extractor = ShapeFitPowerSpectrumExtractor()
-            extractor()
-            extractor.get()
-            def ground_truth_fn(setup, sample):
-                return mod.run_extractor(setup, sample)
-            priors = dict(mod.DEFAULT_PRIORS)
-            return priors, mod.TARGET_NAMES, ground_truth_fn, extractor
-        else:
-            raise ValueError(f"Unknown quantity for shapefit: {quantity}")
+            target_names = list(sf_core.TARGET_NAMES)
+            varied = [str(p) for p in param_names] if param_names is not None \
+                else (["N_tracers"] + sf_core.COSMO_MODELS["base"])
+            priors = {p: dict(sf_core.DEFAULT_PRIORS[p]) for p in varied}
+            _nt_lo, _nt_hi = ntracers_range(tracer_bin)
+            priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
+
+            # z_eff stays None -> derived per sample inside the likelihood
+            # build (matches generate_emulator_data.py's default).
+            def ground_truth_fn(_setup, sample, _tracer=tracer_bin):
+                return sf_fs.run_fisher(sample, tracer_bin=_tracer)
+            return priors, target_names, ground_truth_fn, None
+
+        # quantity == "mean": per-tracer extractor at the fiducial-derived z_eff
+        # (matches generate_mean_data.py's convention).
+        gen_mean = _load_module(
+            "shapefit_gen_mean", os.path.join(_here, "shapefit", "generate_mean_data.py"))
+        target_names = list(sf_core.MEAN_TARGET_NAMES)
+        varied = [str(p) for p in param_names] if param_names is not None \
+            else list(sf_core.COSMO_MODELS["base"])
+        priors = {p: dict(sf_core.DEFAULT_PRIORS[p])
+                  for p in varied if p != "N_tracers"}
+        z_eff = gen_mean._fiducial_z_eff(tracer_bin, 14000.0)
+
+        def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _z=z_eff):
+            _s, vals, tb = sf_fs._worker_run_mean_targets((sample, _tracer, _z, None))
+            if vals is None:
+                raise RuntimeError(f"mean extractor failed:\n{tb}")
+            return dict(zip(target_names, vals))
+        return priors, target_names, ground_truth_fn, None
 
     elif analysis == "bao":
         if quantity not in ("config", "covar"):
