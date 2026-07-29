@@ -7,7 +7,7 @@ via desilike's ShapeFitPowerSpectrumExtractor at the tracer's effective
 redshift, compared against the DESI fiducial template. This is the "mean"
 side of the per-tracer ShapeFit Gaussian likelihood in bedcosmo (which has
 no differentiable f_sigmar/m of its own); the "covar" side is
-generate_emulator_data.py.
+generate_covar_data.py.
 
 Per-tracer because z_eff differs per tracer. z_eff is computed ONCE at the
 DESI fiducial cosmology with the FS Fisher weight (the extractor's z is an
@@ -90,6 +90,10 @@ def main() -> None:
     p.add_argument("--sigma-clip", type=float, default=4.0)
     p.add_argument("--workers", type=int, default=1,
                    help="Number of parallel worker processes (default: 1 = serial).")
+    p.add_argument("--maxtasksperchild", type=int, default=0,
+                   help="Recycle each worker after this many tasks (0 = never). "
+                        "The mean path holds flat RSS (~0.5 GB/worker measured "
+                        "over 10 h), so recycling is off by default here.")
     p.add_argument("--tracer-bin", dest="tracer_bin", type=str, default="LRG2",
                    choices=TRACER_TYPE_CHOICES,
                    help="DESI tracer bin key (must match tracers.yaml).")
@@ -166,6 +170,7 @@ def main() -> None:
             constraints=constraints,
             worker_fn=worker_fn,
             make_task=make_task,
+            maxtasksperchild=args.maxtasksperchild or None,
         )
         print(f"Generated dataset with shape X={X.shape}, y={y.shape}")
         save_dataset(

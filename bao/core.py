@@ -1994,13 +1994,14 @@ def generate_dataset(
     nz_slices_path: str | Path | None = None,
     worker_fn=None,
     make_task=None,
+    maxtasksperchild: int | None = None,
 ) -> Tuple[List[str], np.ndarray, np.ndarray]:
     if constraints is None:
         constraints = CONSTRAINTS
 
     # Pluggable backend (space-agnostic engine). The caller supplies the
     # per-sample compute: fourier_space._worker_run_fisher[_sigma] or
-    # config_space._worker_xi_sigma (wired by generate_emulator_data.py /
+    # config_space._worker_xi_sigma (wired by generate_covar_data.py /
     # fourier_space.main). Both the serial and parallel paths route every sample
     # through worker_fn(make_task(s)), which returns (sample, target_vals, tb_str)
     # — tb_str None on success. make_task defaults to the standard context tuple
@@ -2037,8 +2038,20 @@ def generate_dataset(
         for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
                    "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             os.environ[_v] = "1"
-        print(f"Using {workers} worker processes (spawn), 1 BLAS thread each")
-        pool = ctx.Pool(workers, initializer=_worker_init)
+        # maxtasksperchild recycles a worker after N tasks. The full-shape
+        # (shapefit) covar path leaks inside desilike/cosmoprimo at ~2 MB/s per
+        # worker (~50 MB per accepted sample), so an un-recycled worker grows
+        # past 4.5 GB in 10 h and a 48-wide pool OOM-killed a 251 GB box
+        # overnight (2026-07-29). At maxtasksperchild=50 a worker peaks near
+        # 1.7 GB and both pools hold a ~86 GB plateau, for ~12% throughput cost.
+        # Default None keeps the BAO behaviour exactly as it was (workers live
+        # for the whole run) — None is also Pool's own default, so the call is
+        # unchanged for every existing caller.
+        print(f"Using {workers} worker processes (spawn), 1 BLAS thread each"
+              + (f", recycled every {maxtasksperchild} tasks"
+                 if maxtasksperchild else ""))
+        pool = ctx.Pool(workers, initializer=_worker_init,
+                        maxtasksperchild=maxtasksperchild)
         t_start = _time.perf_counter()
 
         while len(param_rows) < n_samples:

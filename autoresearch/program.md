@@ -15,7 +15,7 @@ Conda `emulator` env (torch + CUDA); no `uv`. Use only packages in that env.
 ```bash
 cd ~/desilike-emulator/autoresearch
 PY="$HOME/miniconda3/envs/emulator/bin/python"
-export EMULATOR_DATA_DIR=$HOME/scratch/bedcosmo/num_tracers/emulator/training_data/bao/dr1/base/config/v2
+export EMULATOR_DATA_DIR=$HOME/scratch/bedcosmo/num_tracers/emulator/bao/training_data/dr1/base/config/v2
 export EMULATOR_TRACER=LRG2
 $PY prepare.py    # verify the data loads + print stats
 ```

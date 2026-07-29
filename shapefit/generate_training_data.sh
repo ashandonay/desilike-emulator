@@ -2,14 +2,14 @@
 # Generate ShapeFit emulator training data for all tracer bins, one per
 # invocation of the per-quantity generator, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   training_data/shapefit/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
+#   shapefit/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   shapefit/generate_training_data.sh [options]
 #
 # Options (all have defaults):
 #   --quantity     covar | mean            (default: covar)
-#                    covar -> generate_emulator_data.py (errors: sigma/rho)
+#                    covar -> generate_covar_data.py (errors: sigma/rho)
 #                    mean  -> generate_mean_data.py     (qiso,qap,f_sigmar,m)
 #   --dataset      dr1                      (default: dr1) anchors N_tracers box
 #   --cosmo-model  base | base_w | base_w_wa (default: base)
@@ -62,7 +62,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$QUANTITY" in
-  covar) GENERATOR="generate_emulator_data.py" ;;
+  covar) GENERATOR="generate_covar_data.py" ;;
   mean)  GENERATOR="generate_mean_data.py" ;;
   *) echo "ERROR: --quantity must be covar or mean (got '$QUANTITY')" >&2; exit 2 ;;
 esac
@@ -110,4 +110,4 @@ for T in $TRACERS; do
   echo
 done
 
-echo "=== done: all tracers written to .../shapefit/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="
+echo "=== done: all tracers written to .../shapefit/training_data/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="

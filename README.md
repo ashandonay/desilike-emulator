@@ -9,8 +9,8 @@ This package builds PyTorch regressors that emulate **desilike** outputs: Fisher
 
 Default layout (when `SCRATCH` is set):
 
-- Training data: `$SCRATCH/bedcosmo/num_tracers/emulator/training_data/{analysis}/{cosmo_model}/{quantity}/v{N}/`
-- MLflow runs: `file:$SCRATCH/bedcosmo/num_tracers/emulator/mlruns`
+- Training data: `$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/training_data/{cosmo_model}/{quantity}/v{N}/`
+- MLflow runs: `file:$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/mlruns`
 
 Run scripts from this directory (`emulator/`) so imports such as `util` → `bao` / `shapefit` resolve correctly:
 
@@ -33,7 +33,7 @@ Shared per-analysis files:
 |------|---------|
 | **`model_config.yaml`** | Named blocks of NN and optimizer hyperparameters. The key you pass as `--nn-model` (or the default derived from `--cosmo-model`, falling back to `default`) selects one block. |
 | **`model.py`** | PyTorch module registered in `util.ARCHITECTURE_REGISTRY` (currently **`resnet`**: SiLU residual MLP — `ResNetRegressor` for BAO, `base_regressor` for ShapeFit). |
-| **`generate_emulator_data.py`** | Per-tracer training-data CLI (parallel Fisher workers, versioned `v{N}` `.npz` output). |
+| **`generate_covar_data.py`** | Per-tracer covariance/error training-data CLI (parallel Fisher workers, versioned `v{N}` `.npz` output). |
 | **`generate_training_data.sh`** | All-tracer driver; resolves one shared `v{N}` up front. |
 | **`regress_sigmas.py`** | Bit-exact dump/compare regression harness (run before/after any dependency change). |
 
@@ -73,7 +73,7 @@ The per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
 `shapefit/README.md`). Both write per-tracer **`{tracer}_train.npz`** /
 **`{tracer}_test.npz`** (arrays **`x`**, **`y`**, **`param_names`**,
 **`target_names`**) under
-`training_data/{analysis}/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
+`{analysis}/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
 anchor the `N_tracers` box via `util.ntracers_range` (tracers.yaml low/high
 factors × the dataset's `passed` counts — never hardcode N).
 
@@ -97,7 +97,6 @@ shapefit/generate_training_data.sh --quantity mean  --cosmo-model base --n-sampl
 | **`eval.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
 | **`scale_data.py`** | Post-processes a directory of `.npz` files: multiplies `y` by user-defined factors of input variables; writes a sibling directory and **`scale_info.json`** (used at train/eval time to track scaling). |
 | **`test_cov_scaling.py`** | Tests for the scale expression language. |
-| **`run_pipeline.py`** | **Legacy**: docstring and paths point to old `prep_shapefit_data.py` / different CLI; prefer explicit prep → train → eval. |
 | **`notebooks/`** | Exploration (training, errors, shapefit extractor). |
 
 ---
@@ -122,7 +121,7 @@ Output directory: `<data_dir>_<suffix>_scaled` where `suffix` encodes the expres
 |----------|---------|-------------|
 | `--analysis` | `shapefit` | `shapefit` or `bao`. |
 | `--quantity` | `mean` | `mean` or `covar` (must match data and available pipelines; BAO only supports `covar`). |
-| `--cosmo-model` | `base` | `base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa` — selects subdirectory under `training_data/...` and default YAML key. |
+| `--cosmo-model` | `base` | `base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa` — selects subdirectory under `{analysis}/training_data/...` and default YAML key. |
 | `--nn-model` | *(see above)* | YAML key in `{analysis}/model_config.yaml`. |
 | `--data-dir` | `latest` | Absolute path to a data folder, or a folder name under the cosmo/quantity root (e.g. `v3`, or a scaled dir), or `latest` → highest `v{N}`. |
 | `--epochs` | `10000` | |
@@ -144,7 +143,7 @@ Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must ident
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--run-id` | `None` | MLflow run ID; resolves artifacts under `file:$SCRATCH/bedcosmo/num_tracers/emulator/mlruns`. |
+| `--run-id` | `None` | MLflow run ID; resolves artifacts under `file:$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/mlruns`. |
 | `--run-dir` | `None` | Directory containing `checkpoints/model_best.pt` or `model.pt`. |
 | `--model-path` | `None` | Direct path to `.pt`. |
 | `--n-samples` | `200` | LHS comparison samples. |

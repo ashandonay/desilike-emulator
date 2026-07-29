@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Generate emulator training data (σ-triplet) for all tracer bins, one per
-# invocation of generate_emulator_data.py, all written into the SAME version
+# invocation of generate_covar_data.py, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
+#   bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   bao/generate_training_data.sh [options]
@@ -20,7 +20,7 @@
 #                                            specific/existing version)
 #   --tracers      space-separated subset   (default: all 6 DR1 bins)
 #   --save-path    override save root        (default: $SCRATCH default path)
-#   --             everything after is passed through to generate_emulator_data.py
+#   --             everything after is passed through to generate_covar_data.py
 #
 # Examples:
 #   bao/generate_training_data.sh --cosmo-model base --n-samples 64 --workers 8 --version 99
@@ -89,7 +89,7 @@ if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-echo "=== generate_emulator_data: space=$SPACE dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
+echo "=== generate_covar_data: space=$SPACE dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
 echo "Tracers: $TRACERS"
 echo
 
@@ -97,11 +97,11 @@ for T in $TRACERS; do
   echo "----------------------------------------------------------------------"
   echo "  $T   ($(date '+%H:%M:%S'))"
   echo "----------------------------------------------------------------------"
-  "$PYBIN" generate_emulator_data.py \
+  "$PYBIN" generate_covar_data.py \
     --space "$SPACE" --dataset "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
     --n-samples "$N_SAMPLES" --workers "$WORKERS" --version "$VERSION" \
     "${save_args[@]}" "${EXTRA[@]}"
   echo
 done
 
-echo "=== done: all tracers written to .../bao/$DATASET/$COSMO_MODEL/$SPACE/v$VERSION/ ==="
+echo "=== done: all tracers written to .../bao/training_data/$DATASET/$COSMO_MODEL/$SPACE/v$VERSION/ ==="

@@ -19,6 +19,7 @@ try:
         TRACER_TYPE_CHOICES,
         build_model,
         decode_emulator_outputs,
+        mlflow_tracking_uri as util_mlflow_tracking_uri,
     )
 except ImportError:
     # Script context (run directly from this dir; sys.path.insert above puts it first).
@@ -29,6 +30,7 @@ except ImportError:
         TRACER_TYPE_CHOICES,
         build_model,
         decode_emulator_outputs,
+        mlflow_tracking_uri as util_mlflow_tracking_uri,
     )
 
 def _pick_scale(vals: np.ndarray, min_decades: float = 2.0) -> str:
@@ -512,8 +514,7 @@ def main() -> None:
 
     if args.run_id is not None:
         import mlflow
-        scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
-        mlflow.set_tracking_uri(f"file:{scratch}/bedcosmo/num_tracers/emulator/mlruns")
+        mlflow.set_tracking_uri(util_mlflow_tracking_uri(args.analysis))
         run = mlflow.get_run(args.run_id)
         artifact_uri = run.info.artifact_uri
         if artifact_uri.startswith("file://"):

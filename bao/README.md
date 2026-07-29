@@ -21,7 +21,7 @@ core.py                  shared base: BAO likelihood + cosmology + sampling engi
 ├─ config_space.py       config-space backend          (ξ(s) Grieb Gaussian cov) + MCMC engine
 fkp_analytic_cov.py      FKP / Grieb cov building blocks (used by config_space)
 
-generate_emulator_data.py   unified Fisher training-data runner   (--space fourier|config)
+generate_covar_data.py   unified Fisher training-data runner   (--space fourier|config)
 generate_training_data.sh   all-tracer driver -> shared auto-versioned folder
 mcmc.py                 unified BAO MCMC                      (--space fourier|config)
 
@@ -53,7 +53,7 @@ The N_tracers box itself is anchored by `ntracers_range` in the repo-root
         ▼         └────────┐       ▼            ▼
         └──────► mcmc.py ◄─────┘   (XiSigmaGenerator)
        (--space fourier|config)
-                  generate_emulator_data.py  (imports all three)
+                  generate_covar_data.py  (imports all three)
 ```
 
 `core` imports neither backend; the two backends are independent siblings; the
@@ -120,7 +120,7 @@ generating training data there.
 
 ## 1. Emulator training data (Fisher)
 
-`generate_emulator_data.py` is the per-tracer entry point. It draws constrained
+`generate_covar_data.py` is the per-tracer entry point. It draws constrained
 Latin-hypercube samples of `(N_tracers, cosmology)`, runs the chosen frame's
 Fisher per sample in a spawn `Pool`, and writes versioned `train`/`test` `.npz`.
 **`generate_training_data.sh` is the all-tracer driver** — it runs every tracer
@@ -134,11 +134,11 @@ bao/generate_training_data.sh --space config --cosmo-model base --n-samples 1000
 bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
 
 # single tracer, by hand (auto-versions per save() call — prefer the driver)
-python generate_emulator_data.py --space config --dataset dr1 --tracer-bin LRG2 \
+python generate_covar_data.py --space config --dataset dr1 --tracer-bin LRG2 \
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
+- Output: `$SCRATCH/.../emulator/bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
   with `target_names = [sigma_DH_over_rd, sigma_DM_over_rd, sigma_DV_over_rd]`
   and the cosmo + `N_tracers` inputs in `x`.
 - `--dataset` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors

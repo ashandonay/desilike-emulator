@@ -16,7 +16,7 @@ Entry points
 * run_fisher(sample, ...)                  → cov triplet + fiducial D/rd
 * _worker_run_fisher / _worker_run_fisher_sigma : picklable Pool workers
 * main()                                   → legacy cov-triplet training-data CLI
-  (the σ-triplet unified CLI is generate_emulator_data.py)
+  (the σ-triplet unified CLI is generate_covar_data.py)
 """
 from __future__ import annotations
 
@@ -486,7 +486,7 @@ def _worker_run_fisher_sigma(args_tuple):
 
 # ===========================================================================
 # Legacy CLI: Fourier cov-triplet training data
-# (the unified σ-triplet CLI is generate_emulator_data.py --space fourier)
+# (the unified σ-triplet CLI is generate_covar_data.py --space fourier)
 # ===========================================================================
 def main() -> None:
     parser = argparse.ArgumentParser(

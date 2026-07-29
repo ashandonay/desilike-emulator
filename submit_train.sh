@@ -35,7 +35,17 @@ if [[ -z "${SCRATCH:-}" ]]; then
     export SCRATCH="$HOME/scratch"
     echo "SCRATCH was unset; set to: $SCRATCH"
 fi
-LOG_DIR="${SCRATCH}/bedcosmo/num_tracers/emulator/logs"
+# Logs live under the analysis subtree ({analysis}/logs), matching
+# {analysis}/training_data and {analysis}/models. Pre-scan the args for
+# --analysis because LOG_DIR is needed before the main parse loop runs;
+# the fallback matches train.py's own --analysis default.
+_LOG_ANALYSIS="shapefit"
+for ((_i = 1; _i <= $#; _i++)); do
+    if [[ "${!_i}" == "--analysis" ]]; then
+        _j=$((_i + 1)); _LOG_ANALYSIS="${!_j:-$_LOG_ANALYSIS}"; break
+    fi
+done
+LOG_DIR="${SCRATCH}/bedcosmo/num_tracers/emulator/${_LOG_ANALYSIS}/logs"
 
 # ── Defaults ──
 TIME="01:00:00"

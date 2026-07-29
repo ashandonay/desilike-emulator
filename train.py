@@ -21,6 +21,8 @@ try:
         decode_emulator_outputs,
         transform_emulator_targets_forward,
         deploy_checkpoint_path,
+        mlflow_tracking_uri as util_mlflow_tracking_uri,
+        mlflow_tracking_dir as util_mlflow_tracking_dir,
     )
     from .eval import run_eval
 except ImportError:
@@ -33,6 +35,8 @@ except ImportError:
         decode_emulator_outputs,
         transform_emulator_targets_forward,
         deploy_checkpoint_path,
+        mlflow_tracking_uri as util_mlflow_tracking_uri,
+        mlflow_tracking_dir as util_mlflow_tracking_dir,
     )
     from eval import run_eval
 
@@ -440,14 +444,14 @@ def main() -> None:
 
     # Set up MLflow tracking
     scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
-    mlflow_tracking_uri = f"file:{scratch}/bedcosmo/num_tracers/emulator/mlruns"
+    mlflow_tracking_uri = util_mlflow_tracking_uri(args.analysis)
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     mlflow.set_experiment(args.mlflow_exp)
     mlflow.start_run(run_name=args.run_name)
     active_run = mlflow.active_run()
     mlflow_run_id = active_run.info.run_id
     artifacts_dir = os.path.join(
-        scratch, "bedcosmo", "num_tracers", "emulator", "mlruns",
+        util_mlflow_tracking_dir(args.analysis),
         active_run.info.experiment_id, active_run.info.run_id, "artifacts"
     )
     os.makedirs(artifacts_dir, exist_ok=True)

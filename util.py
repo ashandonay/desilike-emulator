@@ -394,7 +394,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
 
             # z_eff stays None -> derived per sample inside the likelihood
-            # build (matches generate_emulator_data.py's default).
+            # build (matches generate_covar_data.py's default).
             def ground_truth_fn(_setup, sample, _tracer=tracer_bin):
                 return sf_fs.run_fisher(sample, tracer_bin=_tracer)
             return priors, target_names, ground_truth_fn, None
@@ -475,14 +475,36 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
         raise ValueError(f"Unknown analysis: {analysis}")
 
 
+def mlflow_tracking_dir(analysis: str) -> str:
+    """Filesystem path of the per-analysis MLflow store.
+
+    Each analysis owns its own store ({analysis}/mlruns) alongside its
+    training_data/, models/ and logs/. Note the consequence: run IDs are only
+    resolvable within one analysis, so cross-analysis run comparison needs two
+    stores opened separately (two `mlflow ui` invocations).
+    """
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    return os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "mlruns")
+
+
+def mlflow_tracking_uri(analysis: str) -> str:
+    """``file:`` URI of the per-analysis MLflow store."""
+    return f"file:{mlflow_tracking_dir(analysis)}"
+
+
 def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
                           cosmo_model: str | None = None,
                           dataset: str | None = None) -> str:
     scratch = os.environ.get("SCRATCH")
     if not scratch:
         raise EnvironmentError("SCRATCH is not set; please pass --save-path explicitly.")
-    # training_data/{analysis}/[{dataset}/][{cosmo_model}/]{quantity}
-    parts = [scratch, "bedcosmo", "num_tracers", "emulator", "training_data", analysis]
+    # {analysis}/training_data/[{dataset}/][{cosmo_model}/]{quantity}
+    # The analysis segment is the TOP level under emulator/ so that each
+    # pipeline owns its own training_data/, models/ and logs/ subtree. It must
+    # stay above the quantity: 'covar' is a valid quantity for both bao (the
+    # Fourier Fisher backend) and shapefit, so an analysis-last layout collides.
+    parts = [scratch, "bedcosmo", "num_tracers", "emulator", analysis, "training_data"]
     if dataset is not None:
         parts.append(dataset)
     if cosmo_model is not None:
@@ -498,14 +520,16 @@ def deploy_checkpoint_path(
 ) -> str | None:
     """Deploy path for a per-tracer .pt mirroring training_data under models/.
 
-    ``training_data/bao/dr1/base/config/v2`` + ``LRG1`` →
-    ``models/dr1/base/config/v2/LRG1.pt`` (under SCRATCH/bedcosmo/num_tracers/emulator).
-    Returns None if ``tracer_bin`` is unset or ``data_path`` is not under
-    ``training_data/{analysis}/``.
+    ``bao/training_data/dr1/base/config/v2`` + ``LRG1`` →
+    ``bao/models/dr1/base/config/v2/LRG1.pt`` (under
+    SCRATCH/bedcosmo/num_tracers/emulator). The analysis segment is kept in the
+    deploy path — dropping it made bao and shapefit collide whenever they shared
+    a quantity name ('covar' is valid for both). Returns None if ``tracer_bin``
+    is unset or ``data_path`` is not under ``{analysis}/training_data/``.
     """
     if not tracer_bin:
         return None
-    marker = os.path.join("training_data", analysis) + os.sep
+    marker = os.path.join(analysis, "training_data") + os.sep
     norm = os.path.normpath(data_path)
     idx = norm.find(marker)
     if idx < 0:
@@ -513,7 +537,7 @@ def deploy_checkpoint_path(
     rel = norm[idx + len(marker):]
     scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
     deploy_dir = os.path.join(
-        scratch, "bedcosmo", "num_tracers", "emulator", "models", rel,
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "models", rel,
     )
     return os.path.join(deploy_dir, f"{tracer_bin}.pt")
 
@@ -524,6 +548,7 @@ def compare_losses(
         log_scale: bool = True,
         y_lim: tuple | None = None,
         per_step: bool = False,
+        analysis: str = "bao",
         ) -> None:
     """Compare train/test loss curves across multiple MLflow runs.
 
@@ -533,12 +558,13 @@ def compare_losses(
         log_scale: Use log scale for y-axis.
         y_lim: Tuple of (min, max) y-axis limits.
         per_step: If True, plot per-batch losses instead of epoch-averaged.
+        analysis: Which per-analysis MLflow store the run IDs live in. Stores
+            are separate, so all run_ids must come from the same analysis.
     """
     import mlflow
     from mlflow.tracking import MlflowClient
 
-    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
-    mlflow.set_tracking_uri(f"file:{scratch}/bedcosmo/num_tracers/emulator/mlruns")
+    mlflow.set_tracking_uri(mlflow_tracking_uri(analysis))
     client = MlflowClient()
 
     if labels is None:
