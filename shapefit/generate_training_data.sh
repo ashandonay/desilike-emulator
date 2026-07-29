@@ -2,7 +2,7 @@
 # Generate ShapeFit emulator training data for all tracer bins, one per
 # invocation of the per-quantity generator, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   training_data/shapefit/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
+#   shapefit/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   shapefit/generate_training_data.sh [options]
@@ -110,4 +110,4 @@ for T in $TRACERS; do
   echo
 done
 
-echo "=== done: all tracers written to .../shapefit/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="
+echo "=== done: all tracers written to .../shapefit/training_data/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="

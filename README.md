@@ -9,7 +9,7 @@ This package builds PyTorch regressors that emulate **desilike** outputs: Fisher
 
 Default layout (when `SCRATCH` is set):
 
-- Training data: `$SCRATCH/bedcosmo/num_tracers/emulator/training_data/{analysis}/{cosmo_model}/{quantity}/v{N}/`
+- Training data: `$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/training_data/{cosmo_model}/{quantity}/v{N}/`
 - MLflow runs: `file:$SCRATCH/bedcosmo/num_tracers/emulator/mlruns`
 
 Run scripts from this directory (`emulator/`) so imports such as `util` → `bao` / `shapefit` resolve correctly:
@@ -73,7 +73,7 @@ The per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
 `shapefit/README.md`). Both write per-tracer **`{tracer}_train.npz`** /
 **`{tracer}_test.npz`** (arrays **`x`**, **`y`**, **`param_names`**,
 **`target_names`**) under
-`training_data/{analysis}/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
+`{analysis}/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
 anchor the `N_tracers` box via `util.ntracers_range` (tracers.yaml low/high
 factors × the dataset's `passed` counts — never hardcode N).
 
@@ -122,7 +122,7 @@ Output directory: `<data_dir>_<suffix>_scaled` where `suffix` encodes the expres
 |----------|---------|-------------|
 | `--analysis` | `shapefit` | `shapefit` or `bao`. |
 | `--quantity` | `mean` | `mean` or `covar` (must match data and available pipelines; BAO only supports `covar`). |
-| `--cosmo-model` | `base` | `base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa` — selects subdirectory under `training_data/...` and default YAML key. |
+| `--cosmo-model` | `base` | `base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa` — selects subdirectory under `{analysis}/training_data/...` and default YAML key. |
 | `--nn-model` | *(see above)* | YAML key in `{analysis}/model_config.yaml`. |
 | `--data-dir` | `latest` | Absolute path to a data folder, or a folder name under the cosmo/quantity root (e.g. `v3`, or a scaled dir), or `latest` → highest `v{N}`. |
 | `--epochs` | `10000` | |

@@ -481,8 +481,12 @@ def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
     scratch = os.environ.get("SCRATCH")
     if not scratch:
         raise EnvironmentError("SCRATCH is not set; please pass --save-path explicitly.")
-    # training_data/{analysis}/[{dataset}/][{cosmo_model}/]{quantity}
-    parts = [scratch, "bedcosmo", "num_tracers", "emulator", "training_data", analysis]
+    # {analysis}/training_data/[{dataset}/][{cosmo_model}/]{quantity}
+    # The analysis segment is the TOP level under emulator/ so that each
+    # pipeline owns its own training_data/, models/ and logs/ subtree. It must
+    # stay above the quantity: 'covar' is a valid quantity for both bao (the
+    # Fourier Fisher backend) and shapefit, so an analysis-last layout collides.
+    parts = [scratch, "bedcosmo", "num_tracers", "emulator", analysis, "training_data"]
     if dataset is not None:
         parts.append(dataset)
     if cosmo_model is not None:
@@ -498,14 +502,16 @@ def deploy_checkpoint_path(
 ) -> str | None:
     """Deploy path for a per-tracer .pt mirroring training_data under models/.
 
-    ``training_data/bao/dr1/base/config/v2`` + ``LRG1`` →
-    ``models/dr1/base/config/v2/LRG1.pt`` (under SCRATCH/bedcosmo/num_tracers/emulator).
-    Returns None if ``tracer_bin`` is unset or ``data_path`` is not under
-    ``training_data/{analysis}/``.
+    ``bao/training_data/dr1/base/config/v2`` + ``LRG1`` →
+    ``bao/models/dr1/base/config/v2/LRG1.pt`` (under
+    SCRATCH/bedcosmo/num_tracers/emulator). The analysis segment is kept in the
+    deploy path — dropping it made bao and shapefit collide whenever they shared
+    a quantity name ('covar' is valid for both). Returns None if ``tracer_bin``
+    is unset or ``data_path`` is not under ``{analysis}/training_data/``.
     """
     if not tracer_bin:
         return None
-    marker = os.path.join("training_data", analysis) + os.sep
+    marker = os.path.join(analysis, "training_data") + os.sep
     norm = os.path.normpath(data_path)
     idx = norm.find(marker)
     if idx < 0:
@@ -513,7 +519,7 @@ def deploy_checkpoint_path(
     rel = norm[idx + len(marker):]
     scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
     deploy_dir = os.path.join(
-        scratch, "bedcosmo", "num_tracers", "emulator", "models", rel,
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "models", rel,
     )
     return os.path.join(deploy_dir, f"{tracer_bin}.pt")
 

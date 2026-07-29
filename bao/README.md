@@ -138,7 +138,7 @@ python generate_emulator_data.py --space config --dataset dr1 --tracer-bin LRG2 
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
+- Output: `$SCRATCH/.../emulator/bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
   with `target_names = [sigma_DH_over_rd, sigma_DM_over_rd, sigma_DV_over_rd]`
   and the cosmo + `N_tracers` inputs in `x`.
 - `--dataset` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors

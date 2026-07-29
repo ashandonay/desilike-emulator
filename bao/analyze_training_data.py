@@ -33,7 +33,7 @@ import config_space as cc          # noqa: E402
 import desi_reference as desi_ref      # noqa: E402
 from util import TRACER_CONFIGS    # noqa: E402
 
-_DEFAULT_DIR = "/home/ashandonay/scratch/bedcosmo/num_tracers/emulator/training_data/bao/dr1/base/config/v1"
+_DEFAULT_DIR = "/home/ashandonay/scratch/bedcosmo/num_tracers/emulator/bao/training_data/dr1/base/config/v1"
 TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
 FID_OM, FID_HRD = cc._FID["Om"], cc._FID["hrdrag"]

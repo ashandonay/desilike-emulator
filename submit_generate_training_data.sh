@@ -6,7 +6,7 @@
 # it runs bao/generate_emulator_data.py for each tracer bin, each with --workers
 # parallel processes, all written into the SAME version folder so they form one
 # coherent dataset. Output tree:
-#   training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
+#   bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
 #
 # The shared v{N} is resolved ONCE up front (on the login node) and passed
 # explicitly to every job, so the parallel jobs don't each auto-increment into
@@ -38,7 +38,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_SCRIPT="$SCRIPT_DIR/bao/generate_emulator_data.py"
-LOG_DIR="/pscratch/sd/a/ashandon/bedcosmo/num_tracers/emulator/logs"
+# Logs live under the analysis subtree; this script only drives bao.
+LOG_DIR="/pscratch/sd/a/ashandon/bedcosmo/num_tracers/emulator/bao/logs"
 
 # ── Defaults ──
 # 128 = physical cores on a Perlmutter CPU node, 1 worker/core. The real

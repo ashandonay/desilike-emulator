@@ -51,7 +51,7 @@ base_omegak_w_wa:
 
 # Promoted from autoresearch (branch autoresearch/dr1-base-config): the
 # validated base-cosmo architecture for the config-space dr1 dataset
-# (training_data/bao/dr1/base/config). 24/6/4 ResNet sits at the
+# (bao/training_data/dr1/base/config). 24/6/4 ResNet sits at the
 # capacity/accuracy knee (32-dim ties it; 48-dim only ~1.5x lower MSE at 4x
 # params); faithful 3-seed sweeps on v2 -> mean test_mse ~2e-7 (<0.1% sigma RMS).
 # Key convention: <release>_<cosmo_model>_<space>. Select with
@@ -74,7 +74,7 @@ dr1_base_config:
 
 # Promoted from autoresearch (branch autoresearch/dr1-base_omegak_w_wa-config): the
 # validated EXTENDED-cosmo architecture for config-space dr1
-# (training_data/bao/dr1/base_omegak_w_wa/config). Inputs are 6 (N_tracers + Om, Ok,
+# (bao/training_data/dr1/base_omegak_w_wa/config). Inputs are 6 (N_tracers + Om, Ok,
 # w0, wa, hrdrag) vs 3 for base. The raw sigma targets span ~10 orders of magnitude
 # (degenerate w0/wa/Ok cosmologies), so `log_normalize: true` is MANDATORY — without
 # the symlog transform the standardized MSE is 99.95% outlier-dominated and no

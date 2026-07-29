@@ -108,7 +108,7 @@ python generate_emulator_data.py --tracer-bin LRG2 --cosmo-model base \
     --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../training_data/shapefit/dr1/{cosmo_model}/{covar|mean}/v{N}/{tracer}_{train,test}.npz`.
+- Output: `$SCRATCH/.../emulator/shapefit/training_data/dr1/{cosmo_model}/{covar|mean}/v{N}/{tracer}_{train,test}.npz`.
 - The `N_tracers` box is anchored via `util.ntracers_range` (tracers.yaml
   low/high factors × DR1 `passed` counts). **Never hardcode N** — production,
   validation and plotting must all draw from the util helpers (bao §33n).

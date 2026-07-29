@@ -43,7 +43,7 @@ from util import build_model, decode_emulator_outputs
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
 _HERE = Path(__file__).resolve().parent
-_DEFAULT_MODELS = Path.home() / "scratch/bedcosmo/num_tracers/emulator/models/dr1/base/config/v4"
+_DEFAULT_MODELS = Path.home() / "scratch/bedcosmo/num_tracers/emulator/bao/models/dr1/base/config/v4"
 
 _QUANTITIES = [
     ("DH_over_rs", r"$\sigma(D_H/r_d)$"),

@@ -2,7 +2,7 @@
 # Generate emulator training data (σ-triplet) for all tracer bins, one per
 # invocation of generate_emulator_data.py, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   training_data/bao/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
+#   bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   bao/generate_training_data.sh [options]

@@ -30,7 +30,7 @@ TRACER = os.environ.get("EMULATOR_TRACER", "LRG2")            # set to "" for no
 # outlier-dominated and not the objective production trains on.
 LOG_NORMALIZE = os.environ.get("EMULATOR_LOG_NORMALIZE", "0") == "1"
 
-_DEFAULT_DATA_DIR = os.path.expanduser("~/scratch/bedcosmo/num_tracers/emulator/training_data/bao/base_omegak_w_wa/covar/v3")
+_DEFAULT_DATA_DIR = os.path.expanduser("~/scratch/bedcosmo/num_tracers/emulator/bao/training_data/base_omegak_w_wa/covar/v3")
 DATA_DIR = os.environ.get("EMULATOR_DATA_DIR", _DEFAULT_DATA_DIR)
 
 # ---------------------------------------------------------------------------
