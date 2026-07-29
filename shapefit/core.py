@@ -158,7 +158,19 @@ _KLIM = (0.02, 0.2, 0.005)
 # b1 2.418 -> 2.171 and P0/DESI_measured 1.250 -> 1.032, i.e. the theory
 # amplitude discrepancy against DESI's own spectra essentially closes.
 DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
-_DEFAULT_AREA = DATASET_AREAS["dr1"]
+
+
+def dataset_area(dataset: str = "dr1") -> float:
+    """Effective footprint for a data release. Callers should route through
+    this (or pass ``dataset=``) rather than hardcoding a number: freezing one
+    release's area as a module default is exactly how the DR2 footprint ended
+    up in a DR1-only pipeline."""
+    try:
+        return DATASET_AREAS[dataset]
+    except KeyError:
+        raise ValueError(
+            f"No footprint area for dataset {dataset!r}; "
+            f"known: {sorted(DATASET_AREAS)}") from None
 
 # ShapeFit template pivot/slope conventions (desilike defaults; DESI/Brieden+21).
 _SHAPEFIT_KP = 0.03
@@ -322,7 +334,8 @@ def build_shapefit_likelihood(
     tracer_bin: str = "LRG2",
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
-    area: float = _DEFAULT_AREA,
+    area: float | None = None,
+    dataset: str = "dr1",
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
     klim_spec: Tuple[float, float, float] = _KLIM,
@@ -359,6 +372,10 @@ def build_shapefit_likelihood(
         raise ValueError(
             f"tracer_type missing from tracers.yaml entry for {tracer_bin!r}."
         )
+
+    # Footprint: explicit override wins, else the dataset's area. Never a
+    # frozen default -- see dataset_area().
+    area = float(area) if area is not None else dataset_area(dataset)
 
     cosmo = get_cosmo(("DESI", dict(theta_cosmo)))
     fo = cosmo.get_fourier()

@@ -65,7 +65,9 @@ COSMO_GRID: Tuple[Tuple[str, float, float, float, float, float, float, float, fl
     ("w0wa",    0.1200, 0.02237, 0.6736, 3.044, 0.9649, -0.80, -0.60, 1.45),
 )
 
-_AREA = 14000.0
+# The grid is DR1, so the area must be DR1's. Pinning 14000 here kept the
+# harness validating the DR2 footprint even after core.py was corrected.
+_AREA = fourier_space.sf_core.dataset_area("dr1")
 
 
 def _sample_for(row) -> Dict[str, float]:

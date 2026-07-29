@@ -430,7 +430,7 @@ and it is honoured everywhere the production BAO code touches DR1:
 pipeline was forecasting DR1 galaxy counts spread over the **DR2** footprint —
 nearly twice the sky.
 
-Fixed: `core.DATASET_AREAS` + `_DEFAULT_AREA = DATASET_AREAS["dr1"]` drive the
+Fixed (completed in §9): `core.DATASET_AREAS` drives the
 `build_shapefit_likelihood` and `run_fisher` defaults, and
 `generate_covar_data.py --area` now defaults to `None` and resolves from
 `--dataset` (printing which footprint it used) rather than hardcoding.
@@ -491,3 +491,48 @@ The Fourier path in `bao/core.py` carries the same `area = 14000.0` default and
 was **not** touched here — it is regression-frozen, and config-space is the
 production BAO driver. Worth checking separately whether anything still consumes
 the BAO Fourier path for DR1.
+
+## 9. 2026-07-29 — Area is now DERIVED from the dataset, not a frozen default
+
+§8's fix was incomplete. It replaced one hardcoded number with another
+(`_DEFAULT_AREA = DATASET_AREAS["dr1"]`) and only `generate_covar_data.py`
+actually resolved the footprint from `--dataset`. Three places still pinned
+14000, and one of them mattered a lot:
+
+- `generate_mean_data.py:103` — `--area` still defaulted to 14000, so the whole
+  **mean** pipeline was still computing z_eff volume weights on the DR2
+  footprint.
+- `regress_sigmas.py:68` — `_AREA = 14000.0`, pinned independently of `core.py`.
+  The regression harness would have gone on validating the DR2 footprint
+  *after* the pipeline was corrected — i.e. the one tool whose job is to catch
+  configuration drift was itself the source of it.
+- `build_shapefit_likelihood` / `run_fisher` took no `dataset` at all, so the
+  dataset→area relationship was not encoded anywhere in the library; it was a
+  constant that happened to be right for DR1.
+
+Now:
+
+    core.dataset_area(dataset) -> DATASET_AREAS[dataset], raising on unknown
+
+`build_shapefit_likelihood(area=None, dataset="dr1")` and `run_fisher(...)`
+resolve `area = float(area) if area is not None else dataset_area(dataset)`, so
+an explicit override still wins but there is no frozen default to inherit. Both
+generators default `--area` to `None` and resolve from `--dataset`.
+`regress_sigmas._AREA` and `compare_to_desi`'s analytic-covariance helpers now
+call `dataset_area("dr1")` rather than carrying their own copy.
+
+Verified end to end:
+
+    dataset_area dr1 = 7500.0 | dr2 = 14000.0
+    regress_sigmas._AREA = 7500.0
+    dataset_area('dr3') -> ValueError: No footprint area for dataset 'dr3'
+    run_fisher default (dr1) : sigma_qiso=0.00787  sigma_m=0.02836
+    run_fisher dataset='dr2' : sigma_qiso=0.00658  sigma_m=0.02231
+
+The dr2 line reproduces the old (wrong-for-DR1) numbers exactly, which confirms
+the only thing §8 changed was the footprint, and that DR2 forecasts will now get
+the right area for free when shapefit is extended past DR1.
+
+Lesson worth keeping: the original bug was a default constant carried into a
+context where it did not apply, and the first fix repeated the same pattern one
+level down. The dataset is the input; the area is a function of it.

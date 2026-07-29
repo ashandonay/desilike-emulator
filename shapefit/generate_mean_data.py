@@ -100,8 +100,9 @@ def main() -> None:
     p.add_argument("--z-eff", type=float, default=None,
                    help="Pin the effective redshift. Default: derived at the "
                         "DESI fiducial cosmology with the FS Fisher weight.")
-    p.add_argument("--area", type=float, default=14000.0,
-                   help="Effective survey area in deg^2 (z_eff volume weights).")
+    p.add_argument("--area", type=float, default=None,
+                   help="Effective survey area in deg^2 (z_eff volume weights). "
+                        "Default: the dataset footprint (dr1 7500, dr2 14000).")
     p.add_argument("--name", type=str, default=None,
                    help="Tracer name prefix for saved files. Defaults to "
                         "--tracer-bin.")
@@ -135,7 +136,9 @@ def main() -> None:
     }
 
     z_eff = args.z_eff if args.z_eff is not None else _fiducial_z_eff(
-        args.tracer_bin, args.area)
+        args.tracer_bin,
+        float(args.area) if args.area is not None
+        else sf_core.dataset_area(args.dataset))
 
     save_path = os.path.abspath(
         args.save_path if args.save_path else
