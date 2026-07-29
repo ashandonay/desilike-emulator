@@ -33,7 +33,7 @@ Shared per-analysis files:
 |------|---------|
 | **`model_config.yaml`** | Named blocks of NN and optimizer hyperparameters. The key you pass as `--nn-model` (or the default derived from `--cosmo-model`, falling back to `default`) selects one block. |
 | **`model.py`** | PyTorch module registered in `util.ARCHITECTURE_REGISTRY` (currently **`resnet`**: SiLU residual MLP — `ResNetRegressor` for BAO, `base_regressor` for ShapeFit). |
-| **`generate_emulator_data.py`** | Per-tracer training-data CLI (parallel Fisher workers, versioned `v{N}` `.npz` output). |
+| **`generate_covar_data.py`** | Per-tracer covariance/error training-data CLI (parallel Fisher workers, versioned `v{N}` `.npz` output). |
 | **`generate_training_data.sh`** | All-tracer driver; resolves one shared `v{N}` up front. |
 | **`regress_sigmas.py`** | Bit-exact dump/compare regression harness (run before/after any dependency change). |
 

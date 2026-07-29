@@ -26,7 +26,7 @@ core.py                  constants + cosmology mapping + FS band kernel +
                          build_shapefit_likelihood (imports bao/core.py machinery)
 fourier_space.py         Fisher → 4×4 (qiso,qap,df,dm) → physical basis →
                          σ/ρ targets; run_fisher; spawn workers (covar + mean)
-generate_emulator_data.py   covar training-data CLI (per tracer)
+generate_covar_data.py   covar training-data CLI (per tracer)
 generate_mean_data.py       mean training-data CLI (per tracer)
 generate_training_data.sh   all-tracer driver, --quantity covar|mean,
                             one shared auto-versioned v{N} folder
@@ -104,7 +104,7 @@ shapefit/generate_training_data.sh --quantity covar --cosmo-model base --n-sampl
 shapefit/generate_training_data.sh --quantity mean --cosmo-model base --n-samples 10000
 
 # single tracer by hand (prefer the driver — it pins one shared version)
-python generate_emulator_data.py --tracer-bin LRG2 --cosmo-model base \
+python generate_covar_data.py --tracer-bin LRG2 --cosmo-model base \
     --n-samples 5000 --workers 16
 ```
 

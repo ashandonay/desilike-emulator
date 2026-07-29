@@ -2001,7 +2001,7 @@ def generate_dataset(
 
     # Pluggable backend (space-agnostic engine). The caller supplies the
     # per-sample compute: fourier_space._worker_run_fisher[_sigma] or
-    # config_space._worker_xi_sigma (wired by generate_emulator_data.py /
+    # config_space._worker_xi_sigma (wired by generate_covar_data.py /
     # fourier_space.main). Both the serial and parallel paths route every sample
     # through worker_fn(make_task(s)), which returns (sample, target_vals, tb_str)
     # — tb_str None on success. make_task defaults to the standard context tuple

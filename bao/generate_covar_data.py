@@ -22,7 +22,7 @@ in its own module (core for fourier, config_space for config).
 
 Usage (from bao/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
-        ~/miniconda3/envs/emulator/bin/python generate_emulator_data.py \
+        ~/miniconda3/envs/emulator/bin/python generate_covar_data.py \
         --space config --tracer-bin LRG2 --cosmo-model base \
         --n-samples 5000 --workers 16
 

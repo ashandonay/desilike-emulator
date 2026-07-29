@@ -394,7 +394,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             priors["N_tracers"] = {"dist": "uniform", "low": _nt_lo, "high": _nt_hi}
 
             # z_eff stays None -> derived per sample inside the likelihood
-            # build (matches generate_emulator_data.py's default).
+            # build (matches generate_covar_data.py's default).
             def ground_truth_fn(_setup, sample, _tracer=tracer_bin):
                 return sf_fs.run_fisher(sample, tracer_bin=_tracer)
             return priors, target_names, ground_truth_fn, None

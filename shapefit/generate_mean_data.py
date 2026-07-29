@@ -7,7 +7,7 @@ via desilike's ShapeFitPowerSpectrumExtractor at the tracer's effective
 redshift, compared against the DESI fiducial template. This is the "mean"
 side of the per-tracer ShapeFit Gaussian likelihood in bedcosmo (which has
 no differentiable f_sigmar/m of its own); the "covar" side is
-generate_emulator_data.py.
+generate_covar_data.py.
 
 Per-tracer because z_eff differs per tracer. z_eff is computed ONCE at the
 DESI fiducial cosmology with the FS Fisher weight (the extractor's z is an

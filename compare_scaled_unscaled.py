@@ -7,12 +7,13 @@ import torch
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-from util import latin_hypercube_samples, get_pipeline, build_model
+from util import (latin_hypercube_samples, get_pipeline, build_model,
+                  mlflow_tracking_dir)
 from scale_data import eval_scale_expression
 
-MLRUNS = os.path.expandvars(
-    "$SCRATCH/bedcosmo/num_tracers/emulator/mlruns"
-)
+# Both experiments referenced below (bao_base_unscaled / bao_base_scaled) are
+# bao runs, and MLflow stores are per-analysis since the tree reorg.
+MLRUNS = mlflow_tracking_dir("bao")
 
 # Unscaled experiment (922126930265883867)
 UNSCALED = {

@@ -10,7 +10,7 @@ Entry points
 ------------
 * run_fisher(sample, ...)          -> dict of the 10 sigma_/rho_ targets
 * _worker_run_fisher_targets       : picklable spawn-Pool worker
-  (the training-data CLI is generate_emulator_data.py)
+  (the training-data CLI is generate_covar_data.py)
 """
 from __future__ import annotations
 
