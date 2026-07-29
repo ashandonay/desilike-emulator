@@ -104,4 +104,4 @@ for T in $TRACERS; do
   echo
 done
 
-echo "=== done: all tracers written to .../bao/$DATASET/$COSMO_MODEL/$SPACE/v$VERSION/ ==="
+echo "=== done: all tracers written to .../bao/training_data/$DATASET/$COSMO_MODEL/$SPACE/v$VERSION/ ==="
