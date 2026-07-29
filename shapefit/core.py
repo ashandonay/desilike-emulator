@@ -316,6 +316,7 @@ def build_shapefit_likelihood(
     theory_cls=KaiserTracerPowerSpectrumMultipoles,
     theory_kwargs: Dict | None = None,
     float_sigma_damp: bool = True,
+    cov_override: np.ndarray | None = None,
 ) -> Dict:
     """Build the pre-recon full-shape Gaussian likelihood for one tracer bin.
 
@@ -604,6 +605,21 @@ def build_shapefit_likelihood(
         C_full += C_ssc
         cov_components["C_SSC"] = np.array(C_ssc, copy=True)
 
+    # Validation hook: substitute an externally-supplied covariance (e.g. DESI's
+    # own EZmock covariance) for our analytic one, holding the theory, the
+    # derivatives and the marginalization fixed. That isolates how much of any
+    # sigma difference is the covariance rather than the model — see
+    # compare_to_desi.py. Never used by the generators (default None).
+    if cov_override is not None:
+        cov_override = np.asarray(cov_override, dtype=np.float64)
+        if cov_override.shape != C_full.shape:
+            raise ValueError(
+                f"cov_override shape {cov_override.shape} != observable "
+                f"covariance shape {C_full.shape}"
+            )
+        cov_components["C_analytic"] = np.array(C_full, copy=True)
+        C_full = cov_override.copy()
+
     if not np.all(np.isfinite(C_full)):
         raise ValueError("Non-finite entries in augmented covariance")
 
@@ -645,4 +661,13 @@ def build_shapefit_likelihood(
         "shapefit_kp": _SHAPEFIT_KP,
         "shapefit_a": _SHAPEFIT_A,
         "cov_components": cov_components,
+        # Survey-geometry diagnostics. n_eff is the FKP V_eff-matched effective
+        # density that sets the shot-noise level of the covariance; DESI ships
+        # the measured equivalent as num_shotnoise/norm in its full-shape
+        # bundles, so exposing it makes that comparison a one-liner
+        # (compare_to_desi.py). None when the n(z) slices are unavailable and
+        # the plain V_shell density is used instead.
+        "n_eff": (None if nbar_3d_eff is None else float(nbar_3d_eff)),
+        "nbar_comoving": float(nbar_comoving),
+        "V_survey": float(footprint.volume),
     }

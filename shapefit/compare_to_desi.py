@@ -1,0 +1,486 @@
+"""Absolute comparison of the ShapeFit forecast against DESI DR1 products.
+
+The forecast sigmas are a product of exactly two ingredients -- the covariance
+C and the theory derivatives dP/dtheta -- so this script compares each against
+the DESI DR1 full-shape data products shipped under
+``~/data/desi/bao_dr1/likelihoods/``, rather than against internal
+self-consistency (which is all `regress_sigmas.py` and `validate_forecast.py`
+can establish).
+
+Checks (select with --check, default all):
+
+  shot : our FKP V_eff-matched n_eff vs DESI's MEASURED effective shot noise
+         (num_shotnoise / norm) from the full-shape bundle. One scalar, no
+         model dependence -- if this is wrong every sigma is wrong by the same
+         factor and nothing downstream is interpretable. Bundle-only, so LRG2
+         only (see _FS_BUNDLES).
+  pk   : our fiducial theory P0, P2 vs DESI's measured multipoles on the same
+         k bins. Tests b1 x Kaiser amplitude x FoG damping. Bundle-only.
+         NOTE the measured spectra are window-convolved and ours are not, so
+         this is a shape/amplitude sanity check, not an equality test.
+  cov  : our analytic Gaussian+SSC covariance vs DESI's EZmock covariance,
+         element by element on the identical (ell, k) grid. Available for all
+         tracers with a covariance file.
+  sigma: rebuild the Fisher with DESI's covariance substituted for ours
+         (core.build_shapefit_likelihood(cov_override=...)) and report how far
+         the four sigmas move. Attributes any sigma gap to the covariance vs
+         the model.
+
+Grid alignment
+--------------
+Our klim (0.02, 0.2, 0.005) x ells (0, 2) gives 72 entries. DESI's plain
+covariance files are 240x240 (ells 0,2,4 x 80 bins, edges at multiples of
+0.005 from 0), so ours is exactly their bins 4..39 for ells 0 and 2; the
+rotated/thetacut products are already 36 bins. Rows are matched on k_EDGES,
+never on k values: DESI stores mode-weighted effective bin centers (0.0227 for
+the 0.020-0.025 bin), which do not equal bin midpoints.
+
+Caveats that are physics, not bugs
+----------------------------------
+* DESI's baseline full-shape fit is a JOINT ``power+bao-recon`` fit with
+  REPT-velocileptors, a rotated window and a theta-cut of 0.05. We are
+  pre-recon power-only, Kaiser, windowless. Their published sigma(qiso) and
+  sigma(qap) are therefore tighter than any power-only forecast can be.
+* LRG3_ELG1 has NO DESI full-shape counterpart: the DR1 full-shape analysis
+  splits LRG 0.8-1.1 as LRG-only, while our bin is the combined LRG+ELG1
+  sample used by the BAO analysis. Densities differ, so that bin is reported
+  but flagged.
+* QSO z_eff differs from DESI's 1.484 by ~10% by design (bao CHANGELOG S18:
+  ours is Fisher-weighted, DESI's is volume-weighted). f*sigma8 evolves fast,
+  so never compare f_sigmar across that Delta z without matching z first.
+
+Usage (from shapefit/, emulator env):
+    python compare_to_desi.py                          # all checks, all tracers
+    python compare_to_desi.py --check shot pk cov sigma --tracers LRG2
+    python compare_to_desi.py --check cov --rotated --plot
+"""
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+import argparse
+import sys
+import warnings
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+warnings.filterwarnings("ignore")
+
+import h5py
+
+import fourier_space
+from fourier_space import sf_core
+from util import ntracers
+
+_LIK_DIR = Path.home() / "data" / "desi" / "bao_dr1" / "likelihoods"
+_COV_DIR = _LIK_DIR / "covariance"
+
+TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+
+# DESI full-shape sample name per tracer bin. LRG3_ELG1 maps to LRG-only
+# because the DR1 full-shape analysis does not combine LRG+ELG1 (see caveats).
+_DESI_SAMPLE = {
+    "BGS": "BGS_BRIGHT-21.5_GCcomb_z0.1-0.4",
+    "LRG1": "LRG_GCcomb_z0.4-0.6",
+    "LRG2": "LRG_GCcomb_z0.6-0.8",
+    "LRG3_ELG1": "LRG_GCcomb_z0.8-1.1",
+    "ELG2": "ELG_LOPnotqso_GCcomb_z1.1-1.6",
+    "QSO": "QSO_GCcomb_z0.8-2.1",
+}
+
+# Bins whose DESI sample is not the same galaxy sample as ours.
+_SAMPLE_MISMATCH = {
+    "LRG3_ELG1": "DESI full-shape uses LRG-only in 0.8-1.1; ours is LRG+ELG1",
+}
+
+# Full data bundles (data vector + covariance + window). DR1 ships these per
+# tracer, but only LRG2 has been fetched locally so far.
+_FS_BUNDLES = {
+    "LRG2": _LIK_DIR / (
+        "likelihood_spectrum-poles-rotated_syst-hod_"
+        "LRG_GCcomb_z0.6-0.8_thetacut0.05.h5"
+    ),
+}
+
+# DESI's published (volume-weighted) effective redshifts, for reference only.
+_DESI_ZEFF = {"BGS": 0.295, "LRG1": 0.510, "LRG2": 0.706,
+              "LRG3_ELG1": 0.930, "ELG2": 1.317, "QSO": 1.484}
+
+FID_SAMPLE = {
+    "omega_cdm": 0.1200,
+    "omega_b": 0.02237,
+    "h": 0.6736,
+    "ln10A_s": 3.044,
+    "n_s": 0.9649,
+}
+
+_OUR_ELLS = (0, 2)
+
+
+# ---------------------------------------------------------------------------
+# DESI product readers
+# ---------------------------------------------------------------------------
+def _cov_path(tracer: str, rotated: bool, thetacut: bool) -> Optional[Path]:
+    sample = _DESI_SAMPLE[tracer]
+    stem = "covariance_spectrum-poles-rotated" if rotated else "covariance_spectrum-poles"
+    # The rotated products only exist with the theta-cut applied.
+    suffix = "_thetacut0.05" if (thetacut or rotated) else ""
+    path = _COV_DIR / f"{stem}_{sample}{suffix}.h5"
+    return path if path.exists() else None
+
+
+def _read_observable_grid(group) -> Tuple[np.ndarray, np.ndarray]:
+    """Flattened (ell, k_edges) row labels of a DESI observable group, in the
+    same order the covariance rows are stored."""
+    ells, edges = [], []
+    for key in sorted(group.keys(), key=lambda s: (not s.isdigit(), s)):
+        if not key.isdigit():
+            continue
+        sub = group[key]
+        ke = np.asarray(sub["k_edges"][:], dtype=np.float64)
+        ells.append(np.full(ke.shape[0], int(key)))
+        edges.append(ke)
+    return np.concatenate(ells), np.concatenate(edges, axis=0)
+
+
+def _spectrum_group(f: h5py.File):
+    """DESI stores the multipoles either directly under observable/ (covariance
+    files) or nested under observable/spectrum/ (joint bundles)."""
+    obs = f["observable"]
+    return obs["spectrum"] if "spectrum" in obs else obs
+
+
+def _select_rows(
+    file_ells: np.ndarray,
+    file_edges: np.ndarray,
+    target_edges: np.ndarray,
+    atol: float = 1e-6,
+) -> np.ndarray:
+    """Indices of the DESI rows matching our (ell, k_edges) grid, in OUR order.
+
+    Matching is on edges, not centers (DESI centers are mode-weighted).
+    """
+    idx = []
+    for ell in _OUR_ELLS:
+        for lo, hi in target_edges:
+            hit = np.where(
+                (file_ells == ell)
+                & (np.abs(file_edges[:, 0] - lo) < atol)
+                & (np.abs(file_edges[:, 1] - hi) < atol)
+            )[0]
+            if hit.size != 1:
+                raise ValueError(
+                    f"expected exactly 1 DESI row for ell={ell} "
+                    f"k=[{lo:.4f},{hi:.4f}], found {hit.size}"
+                )
+            idx.append(int(hit[0]))
+    return np.asarray(idx, dtype=int)
+
+
+def read_desi_cov(path: Path, target_edges: np.ndarray) -> np.ndarray:
+    """DESI covariance restricted to our (ells, k) grid, in our row order."""
+    with h5py.File(path, "r") as f:
+        cov = np.asarray(f["value" if "value" in f else "covariance/value"][:],
+                         dtype=np.float64)
+        grp = f["covariance/observable"] if "covariance" in f else f["observable"]
+        grp = grp["spectrum"] if "spectrum" in grp else grp
+        file_ells, file_edges = _read_observable_grid(grp)
+    if cov.shape[0] != file_ells.size:
+        raise ValueError(
+            f"{path.name}: covariance is {cov.shape} but the observable grid "
+            f"has {file_ells.size} rows"
+        )
+    idx = _select_rows(file_ells, file_edges, target_edges)
+    return cov[np.ix_(idx, idx)]
+
+
+def read_desi_bundle(path: Path, target_edges: np.ndarray) -> Dict:
+    """Measured multipoles, effective shot noise and covariance from a bundle."""
+    with h5py.File(path, "r") as f:
+        spec = _spectrum_group(f)
+        file_ells, file_edges = _read_observable_grid(spec)
+        values, shot = [], []
+        for key in sorted(spec.keys(), key=lambda s: (not s.isdigit(), s)):
+            if not key.isdigit():
+                continue
+            sub = spec[key]
+            values.append(np.asarray(sub["value"][:], dtype=np.float64))
+            norm = np.asarray(sub["norm"][:], dtype=np.float64)
+            num = np.asarray(sub["num_shotnoise"][:], dtype=np.float64)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                shot.append(np.where(norm > 0, num / np.where(norm > 0, norm, 1.0),
+                                     np.nan))
+        values = np.concatenate(values)
+        shot = np.concatenate(shot)
+        cov = np.asarray(f["covariance/value"][:], dtype=np.float64)
+        cov_grp = f["covariance/observable"]
+        cov_grp = cov_grp["spectrum"] if "spectrum" in cov_grp else cov_grp
+        cov_ells, cov_edges = _read_observable_grid(cov_grp)
+
+    idx = _select_rows(file_ells, file_edges, target_edges)
+    cidx = _select_rows(cov_ells, cov_edges, target_edges)
+    finite_shot = shot[np.isfinite(shot) & (shot > 0)]
+    return {
+        "data": values[idx],
+        "cov": cov[np.ix_(cidx, cidx)],
+        "P_shot": float(np.median(finite_shot)) if finite_shot.size else float("nan"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Our side
+# ---------------------------------------------------------------------------
+def our_forecast(tracer: str, cov_override: Optional[np.ndarray] = None) -> Dict:
+    """build_shapefit_likelihood at the DESI fiducial cosmology and the DR1
+    passed count, plus the marginalized sigmas."""
+    theta = sf_core._to_shapefit_cosmo_params(
+        {**FID_SAMPLE, "N_tracers": ntracers(tracer, "dr1")}
+    )
+    info = sf_core.build_shapefit_likelihood(
+        N_tracers=float(ntracers(tracer, "dr1")),
+        theta_cosmo=theta,
+        tracer_bin=tracer,
+        cov_override=cov_override,
+    )
+    cov_phys = fourier_space._sf_fisher_reduction(info)
+    targets = dict(zip(fourier_space.TARGET_NAMES,
+                       fourier_space.fisher_cov_to_emulator_targets(cov_phys)))
+    obs = info["observable"]
+    k = np.asarray(obs.k[0], dtype=np.float64)
+    dk = float(np.median(np.diff(k)))
+    edges = np.column_stack([k - dk / 2.0, k + dk / 2.0])
+    return {
+        "info": info,
+        "targets": targets,
+        "k": k,
+        "k_edges": edges,
+        "data": np.asarray(obs.flatdata, dtype=np.float64),
+        "cov": info["cov_components"]["C_total"],
+        "n_eff": info["n_eff"],
+        "z_eff": info["z_eff"],
+        "b1": float(info["params"]["b1"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------
+def check_shot(tracers: List[str]) -> None:
+    print("\n=== 1. Effective shot noise: our FKP n_eff vs DESI measured ===")
+    print("    (DESI: num_shotnoise/norm from the full-shape bundle)")
+    print(f"{'tracer':>10s} {'z_eff':>6s} {'n_eff_ours':>12s} {'n_eff_DESI':>12s} "
+          f"{'Pshot_ours':>11s} {'Pshot_DESI':>11s} {'ratio':>7s}")
+    any_bundle = False
+    for tracer in tracers:
+        bundle = _FS_BUNDLES.get(tracer)
+        if bundle is None or not bundle.exists():
+            print(f"{tracer:>10s} {'':>6s} {'':>12s} {'no local bundle':>12s}")
+            continue
+        any_bundle = True
+        ours = our_forecast(tracer)
+        desi = read_desi_bundle(bundle, ours["k_edges"])
+        n_ours = ours["n_eff"]
+        p_ours = float("nan") if not n_ours else 1.0 / n_ours
+        n_desi = 1.0 / desi["P_shot"] if desi["P_shot"] > 0 else float("nan")
+        ratio = (p_ours / desi["P_shot"]) if desi["P_shot"] > 0 else float("nan")
+        print(f"{tracer:>10s} {ours['z_eff']:>6.3f} {n_ours:>12.4e} {n_desi:>12.4e} "
+              f"{p_ours:>11.1f} {desi['P_shot']:>11.1f} {ratio:>7.3f}")
+    if not any_bundle:
+        print("  No full-shape bundles found locally -- fetch the DR1 full-shape "
+              "VAC to extend this beyond LRG2.")
+    else:
+        print("  ratio = Pshot_ours/Pshot_DESI. Away from 1 means the V_eff->n_eff")
+        print("  mapping mis-sets the shot-noise floor, which scales every sigma.")
+
+
+def check_pk(tracers: List[str]) -> None:
+    print("\n=== 2. Fiducial multipoles: our theory vs DESI measured ===")
+    print("    (DESI is window-convolved and theta-cut; ours is neither --")
+    print("     read this as an amplitude/shape sanity check, not equality)")
+    for tracer in tracers:
+        bundle = _FS_BUNDLES.get(tracer)
+        if bundle is None or not bundle.exists():
+            continue
+        ours = our_forecast(tracer)
+        desi = read_desi_bundle(bundle, ours["k_edges"])
+        nk = ours["k"].size
+        print(f"\n  {tracer} (b1_fid = {ours['b1']:.3f}, z_eff = {ours['z_eff']:.3f})")
+        print(f"    {'k':>7s} {'P0_ours':>10s} {'P0_DESI':>10s} {'ratio':>7s}   "
+              f"{'P2_ours':>10s} {'P2_DESI':>10s} {'ratio':>7s}")
+        for i in range(0, nk, max(1, nk // 8)):
+            k = ours["k"][i]
+            p0o, p0d = ours["data"][i], desi["data"][i]
+            p2o, p2d = ours["data"][nk + i], desi["data"][nk + i]
+            print(f"    {k:>7.4f} {p0o:>10.1f} {p0d:>10.1f} {p0o / p0d:>7.3f}   "
+                  f"{p2o:>10.1f} {p2d:>10.1f} {p2o / p2d:>7.3f}")
+        r0 = ours["data"][:nk] / desi["data"][:nk]
+        print(f"    P0 ratio: median {np.median(r0):.3f}, "
+              f"range [{r0.min():.3f}, {r0.max():.3f}]")
+
+
+def check_cov(tracers: List[str], rotated: bool, thetacut: bool,
+              plot: bool) -> Dict[str, np.ndarray]:
+    label = ("rotated+thetacut" if rotated
+             else ("thetacut" if thetacut else "plain"))
+    print(f"\n=== 3. Covariance: our Gaussian+SSC vs DESI EZmock ({label}) ===")
+    print(f"{'tracer':>10s} {'diag ratio ours/DESI':>34s}  {'offdiag':>18s}")
+    print(f"{'':>10s} {'median':>9s} {'ell=0':>8s} {'ell=2':>8s} {'k-trend':>7s}"
+          f"  {'|corr| ours':>9s} {'DESI':>7s}")
+    results = {}
+    for tracer in tracers:
+        path = _cov_path(tracer, rotated, thetacut)
+        if path is None:
+            print(f"{tracer:>10s} {'no covariance file':>34s}")
+            continue
+        ours = our_forecast(tracer)
+        try:
+            C_desi = read_desi_cov(path, ours["k_edges"])
+        except ValueError as exc:
+            print(f"{tracer:>10s}  grid mismatch: {exc}")
+            continue
+        C_ours = ours["cov"]
+        nk = ours["k"].size
+        d_ours, d_desi = np.diag(C_ours), np.diag(C_desi)
+        ratio = d_ours / d_desi
+        # low-k half vs high-k half of the monopole, as a trend indicator
+        lo = np.median(ratio[: nk // 2])
+        hi = np.median(ratio[nk // 2: nk])
+        trend = hi / lo if lo > 0 else float("nan")
+
+        def offdiag_mean(C):
+            s = np.sqrt(np.clip(np.diag(C), 1e-300, None))
+            R = C / np.outer(s, s)
+            return float(np.mean(np.abs(R[~np.eye(R.shape[0], dtype=bool)])))
+
+        flag = " *" if tracer in _SAMPLE_MISMATCH else ""
+        print(f"{tracer:>10s} {np.median(ratio):>9.3f} "
+              f"{np.median(ratio[:nk]):>8.3f} {np.median(ratio[nk:]):>8.3f} "
+              f"{trend:>7.2f}  {offdiag_mean(C_ours):>9.3f} "
+              f"{offdiag_mean(C_desi):>7.3f}{flag}")
+        results[tracer] = {"ours": C_ours, "desi": C_desi, "k": ours["k"]}
+
+    for tracer, why in _SAMPLE_MISMATCH.items():
+        if tracer in results:
+            print(f"  * {tracer}: {why} -- densities differ, not apples-to-apples.")
+    print("  ratio < 1 means our covariance is TIGHTER than DESI's (expected:")
+    print("  ours is Gaussian+SSC, theirs is EZmock with the full non-Gaussian")
+    print("  term, the window and the theta-cut). k-trend != 1 means a")
+    print("  scale-dependent discrepancy, which a pure n_eff error cannot make.")
+
+    if plot and results:
+        _plot_cov(results, label)
+    return results
+
+
+def _plot_cov(results: Dict, label: str) -> None:
+    import matplotlib.pyplot as plt
+
+    n = len(results)
+    fig, axes = plt.subplots(2, n, figsize=(3.6 * n, 6.4), squeeze=False)
+    for i, (tracer, r) in enumerate(results.items()):
+        k, nk = r["k"], r["k"].size
+        ax = axes[0][i]
+        for j, ell in enumerate(_OUR_ELLS):
+            sl = slice(j * nk, (j + 1) * nk)
+            ax.plot(k, np.sqrt(np.diag(r["ours"])[sl]), "-",
+                    label=rf"ours $\ell={ell}$")
+            ax.plot(k, np.sqrt(np.diag(r["desi"])[sl]), "--",
+                    label=rf"DESI $\ell={ell}$")
+        ax.set_yscale("log")
+        ax.set_title(tracer)
+        ax.set_xlabel(r"$k$ [$h$/Mpc]")
+        if i == 0:
+            ax.set_ylabel(r"$\sigma(P_\ell)$")
+            ax.legend(fontsize=7)
+        ax = axes[1][i]
+        for j, ell in enumerate(_OUR_ELLS):
+            sl = slice(j * nk, (j + 1) * nk)
+            ax.plot(k, (np.diag(r["ours"]) / np.diag(r["desi"]))[sl],
+                    label=rf"$\ell={ell}$")
+        ax.axhline(1.0, color="k", lw=0.8, ls=":")
+        ax.set_xlabel(r"$k$ [$h$/Mpc]")
+        if i == 0:
+            ax.set_ylabel("diag ratio ours/DESI")
+            ax.legend(fontsize=7)
+    fig.suptitle(f"ShapeFit covariance vs DESI DR1 EZmock ({label})")
+    fig.tight_layout()
+    out = f"cov_vs_desi_{label.replace('+', '_')}.png"
+    fig.savefig(out, dpi=140)
+    print(f"  wrote {out}")
+
+
+def check_sigma(tracers: List[str], rotated: bool, thetacut: bool) -> None:
+    """Swap DESI's covariance into our Fisher and report the sigma shift."""
+    print("\n=== 4. Sigmas with OUR covariance vs with DESI's covariance ===")
+    print("    (theory, derivatives and marginalization held fixed)")
+    names = fourier_space.TARGET_NAMES[:4]
+    print(f"{'tracer':>10s} {'source':>8s} " + " ".join(f"{n[6:]:>11s}" for n in names))
+    for tracer in tracers:
+        path = _cov_path(tracer, rotated, thetacut)
+        if path is None:
+            print(f"{tracer:>10s} {'--':>8s}  no covariance file")
+            continue
+        ours = our_forecast(tracer)
+        try:
+            C_desi = read_desi_cov(path, ours["k_edges"])
+        except ValueError as exc:
+            print(f"{tracer:>10s}  grid mismatch: {exc}")
+            continue
+        swapped = our_forecast(tracer, cov_override=C_desi)
+        a = [ours["targets"][n] for n in names]
+        b = [swapped["targets"][n] for n in names]
+        print(f"{tracer:>10s} {'ours':>8s} " + " ".join(f"{v:>11.5f}" for v in a))
+        print(f"{tracer:>10s} {'DESI C':>8s} " + " ".join(f"{v:>11.5f}" for v in b))
+        print(f"{tracer:>10s} {'ratio':>8s} "
+              + " ".join(f"{x / y:>11.3f}" for x, y in zip(a, b)))
+    print("  ratio < 1 means our covariance alone makes the forecast tighter.")
+    print("  A ratio near 1 with a large gap to DESI's PUBLISHED sigmas would")
+    print("  point at the theory/derivative side instead.")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                               formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--check", nargs="*",
+                   choices=["shot", "pk", "cov", "sigma", "all"], default=["all"])
+    p.add_argument("--tracers", nargs="*", default=None,
+                   help=f"subset of {list(TRACERS_ALL)}; default all")
+    p.add_argument("--rotated", action="store_true",
+                   help="use DESI's rotated+thetacut covariance (their baseline) "
+                        "instead of the plain one")
+    p.add_argument("--thetacut", action="store_true",
+                   help="use the theta-cut variant of the plain covariance")
+    p.add_argument("--plot", action="store_true", help="write the covariance plot")
+    args = p.parse_args()
+
+    tracers = args.tracers or list(TRACERS_ALL)
+    bad = [t for t in tracers if t not in _DESI_SAMPLE]
+    if bad:
+        p.error(f"unknown tracers {bad}; choose from {list(TRACERS_ALL)}")
+    checks = set(args.check)
+    do = lambda name: "all" in checks or name in checks  # noqa: E731
+
+    print(f"DESI DR1 products: {_LIK_DIR}")
+    print(f"Tracers: {tracers}")
+
+    if do("shot"):
+        check_shot(tracers)
+    if do("pk"):
+        check_pk(tracers)
+    if do("cov"):
+        check_cov(tracers, args.rotated, args.thetacut, args.plot)
+    if do("sigma"):
+        check_sigma(tracers, args.rotated, args.thetacut)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

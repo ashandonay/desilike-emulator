@@ -114,3 +114,85 @@ in-domain after §2) through `train.py --analysis shapefit --quantity
   `sigma_`/`rho_` name-prefix transforms apply end to end.
 - v99 is smoke-scale only (accuracy numbers are meaningless); production
   training needs the full `generate_training_data.sh` runs.
+
+## 4. 2026-07-29 — First absolute comparison against DESI DR1 (`compare_to_desi.py`)
+
+Everything above validates the pipeline against *itself*: `regress_sigmas.py`
+pins the numbers across a dependency upgrade (that is its stated trigger — not
+repo edits), and `validate_forecast.py` checks orderings, scaling laws and
+damping sensitivity. None of it can say whether the absolute σ are right.
+
+A Fisher σ has exactly two ingredients — the covariance C and the derivatives
+∂P/∂θ — so `compare_to_desi.py` compares each against the DESI DR1 full-shape
+products under `~/data/desi/bao_dr1/likelihoods/`. Our klim (0.02, 0.2, 0.005)
+× ells (0, 2) is **exactly** DESI's bins 4..39, so nothing is interpolated.
+Rows match on `k_edges`, never on centers: DESI stores mode-weighted effective
+centers (0.0227 for the 0.020–0.025 bin).
+
+`core.py` additions used by the comparison — `n_eff`/`nbar_comoving`/
+`V_survey` in the return dict, and `cov_override` — leave every existing
+number untouched (193/193 shared arrays bit-identical to
+`golden_4cfd6bec.npz`).
+
+**Sound:** inverting our own covariance through the Gaussian formula returns a
+*flat* effective volume 4.94e9 against `V_survey` = 5.18e9 (5%, no k-trend).
+The covariance engine does exactly what it claims.
+
+**Finding 1 — the theory model breaks down over the upper half of the fit
+band.** LRG2, ours/DESI-measured:
+
+| k | P₀ | P₂ |
+|---|---|---|
+| 0.023 | 1.285 | 0.932 |
+| 0.103 | 1.019 | 0.528 |
+| 0.143 | 0.880 | 0.171 |
+| 0.183 | 0.658 | **−0.312** |
+
+The Kaiser quadrupole **goes negative above k ≈ 0.16** where DESI measures
+≈ +2000. Kaiser × Gaussian FoG cannot hold to k = 0.2. The quadrupole carries
+the AP and RSD information, so σ(qap) and σ(f_sigmar) are built from
+derivatives of a model that has failed over roughly half the band. Part of the
+low-k P₀ excess is window convolution (DESI's spectra are convolved, ours are
+not) — but the window does not produce a sign flip.
+
+**Finding 2 — our covariance is ≈1.95× DESI's EZmock** (BGS 1.32, LRG1 2.03,
+LRG2 1.98, ELG2 1.95, QSO 1.92). Note the sign: Gaussian+SSC comes out
+*looser*, not tighter, than a covariance containing the full non-Gaussian
+term. It decomposes cleanly — the (P + P_shot)² amplitude error accounts for
+**all** of the k-dependence, leaving a **flat 1.72 with no k-trend**, i.e. a
+normalization/volume factor. Four tracers of very different density landing at
+~1.95 indicates a common cause, not per-tracer physics.
+LRG3_ELG1 reads 0.40 and is **excluded**: DESI's full-shape 0.8–1.1 bin is
+LRG-only while ours is the combined LRG+ELG1 BAO bin.
+
+**Finding 3 — n_eff is 23% low**: ours 1.465e-4 vs DESI's measured 1.912e-4
+(P_shot 6825 vs 5229). Caveat: DESI's FKP weights use a fixed P₀ while our
+n_eff is V_eff-matched to the actual P_g, so the definitions are not
+identical — but it is the same quantity in the covariance's role.
+
+**Where the σ actually come from.** Substituting DESI's covariance into our
+Fisher moves the σ by only 7–20% (qiso 1.074, qap 1.095, f_sigmar 1.061, m
+1.197) — far less than the √2 a 2× covariance naively implies, because DESI's
+larger off-diagonal correlations (⟨|corr|⟩ 0.070 vs our 0.012) remove the
+information their smaller diagonal adds back. **The covariance is not the
+dominant lever on σ; the derivatives are.** Effort belongs on Finding 1.
+
+**Open — the `area` convention.** `area = 14000` deg² is a code default
+inherited from `bao/core.py` (the DESI 5-year footprint) used with DR1 counts;
+`desi_data.csv` carries no area column. It is the obvious suspect for the flat
+1.72, but **the sign is wrong**: 14000 exceeds DESI DR1's actual footprint, so
+our volume is too *large*, which makes our covariance *smaller*. Correcting
+area alone widens the gap to ~4×. Not changed pending analysis — and it is not
+shapefit-specific, since `bao/core.py` carries the same default and lands at a
+uniform 0.72–0.80× DESI, which an over-large volume would also produce.
+
+Cheapest next test for Finding 1: refit at `kmax = 0.10` instead of 0.20. If
+the σ barely move, the broken high-k region was contributing little
+information and the labels are safer than they look. Otherwise the
+velocileptors swap (already pluggable via `theory_cls`) is a prerequisite for
+trustworthy labels, not a refinement.
+
+Still missing for a full absolute check: DESI's **recorded** per-tracer
+compressed values and their σ (qiso, qap, f_sigmar, m). Only the data bundles
+and covariances are local — and only LRG2 has a full bundle. The rest needs the
+`dr1_full-shape-bao-clustering v1.0` VAC.
