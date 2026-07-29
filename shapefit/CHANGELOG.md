@@ -271,3 +271,66 @@ Measured with a local shim: REPT costs **0.267 s/call vs Kaiser's 0.001 s**
 (~270×) with 11 varied nuisances instead of 6, and gives positive high-k P₂.
 Pin velocileptors to a numpy-1.x-compatible version rather than upgrading numpy
 (which would invalidate the regression baseline) or patching site-packages.
+
+## 6. 2026-07-29 — Damping fixed: `sigmapar = σ_FoG`, `sigmaper = 0`
+
+Applied the §5 fix. `params` now passes the Finger-of-God dispersion alone as
+the line-of-sight damping and **zero** transverse damping; the pre-recon BAO
+scales Σ∥/Σ⊥ no longer enter the broadband (they are still computed, and still
+recorded in the footprint attrs, as diagnostics). `float_sigma_damp` now floats
+only `sigmapar` — `sigmaper` is not an uncertain quantity but an absent one, and
+floating a physically-zero parameter opens a marginalization direction that
+removes real information.
+
+**The quadrupole is positive everywhere.** LRG2 vs DESI measured:
+
+| k | P₂ before | P₂ after | DESI | P₀ ratio before | P₀ ratio after |
+|---|---|---|---|---|---|
+| 0.0225 | 32726 | 33738 | 35129 | 1.285 | 1.297 |
+| 0.1025 | 4216 | 7553 | 6700 | 1.019 | 1.231 |
+| 0.1625 | −187 | 3675 | 2319 | 0.736 | 1.170 |
+| 0.1825 | −611 | 3067 | 1961 | 0.658 | 1.174 |
+
+The important change is not the sign but the **shape**: the P₀ ratio went from a
+2× swing across the band (1.285 → 0.658) to nearly flat (median 1.250, range
+1.144–1.353). A flat offset is what a window-convolution difference plus a
+modest amplitude offset looks like; the running ratio was a genuine shape error.
+The covariance k-trend likewise flattened, 0.63 → 0.89.
+
+Regression partition (`golden_4cfd6bec.npz` vs a fresh LRG2 dump) came out
+exactly as designed: **73 damping-independent arrays unchanged, 120
+damping-dependent arrays moved, zero exceptions.** Nothing leaked into `z_eff`,
+`f_sigmar_fid`, `m_fid`, the observable grid or the mean pipeline.
+
+New fiducial table (DESI fiducial cosmology, DR1 passed counts):
+
+| tracer | z_eff | σ(qiso) | σ(qap) | σ(f_sigmar) | σ(m) | σ(fsr)/fsr |
+|---|---|---|---|---|---|---|
+| BGS       | 0.292 | 0.0119 | 0.0351 | 0.0395 | 0.0391 | 8.3% |
+| LRG1      | 0.508 | 0.0080 | 0.0240 | 0.0313 | 0.0275 | 6.6% |
+| LRG2      | 0.704 | 0.0066 | 0.0196 | 0.0251 | 0.0223 | 5.4% |
+| LRG3_ELG1 | 0.945 | 0.0060 | 0.0172 | 0.0148 | 0.0179 | 3.4% |
+| ELG2      | 1.303 | 0.0097 | 0.0254 | 0.0170 | 0.0213 | 4.3% |
+| QSO       | 1.343 | 0.0152 | 0.0434 | 0.0280 | 0.0269 | 7.1% |
+
+All σ tightened 9–19% (LRG2: qiso 0.00769 → 0.00658, m 0.02762 → 0.02231), as
+§5 predicted — over-damping was destroying high-k information. ρ(qap, f_sigmar)
+≈ −0.73…−0.80 still, and ρ(qap, m) collapsed to ≈ 0, which is sensible: with no
+transverse damping there is no longer a spurious isotropic suppression coupling
+the AP ratio to the shape slope.
+
+**Two things remain open, and they now point in the same direction.**
+
+1. Our P is ~1.25× DESI's *measured* multipoles, near-uniformly. DESI's spectra
+   are window-convolved and ours are not, and the bundle ships the 72×1050
+   window matrix — so this can be settled properly by convolving our theory
+   rather than argued about. That is the next step.
+2. The covariance excess grew from 1.98× to 2.92× (expected: C ∝ (P+P_shot)²,
+   and P is no longer suppressed) and is now nearly flat in k, i.e. clearly a
+   normalization rather than a shape problem. With the shape error removed, the
+   flat factor is the whole story, and 1 may well explain part of it.
+
+Because §5's prediction held — the σ tightened, widening the gap to DESI — the
+earlier apparent agreement with DESI's 4–10% band was partly two errors
+cancelling. The current table is *more* correct and looks *less* reassuring.
+That is the expected direction of travel, not a regression.

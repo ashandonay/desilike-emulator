@@ -505,15 +505,38 @@ def build_shapefit_likelihood(
     sigma_v_sq_total = sigma_v_sq_eff + z_err_kms * z_err_kms
     sigma_fog = bao_core._sigma_fog_from_sigma_v_sq(sigma_v_sq_total, z=z, cosmo=cosmo)
 
-    # Kaiser's damping is a Gaussian exp(-k^2(sigmapar^2 mu^2 + sigmaper^2(1-mu^2))/2):
-    # there is no separate Lorentzian streaming parameter, so the FoG dispersion
-    # is added in quadrature to the LOS damping scale. Documented approximation;
-    # validate_forecast.py carries a with/without-floating sensitivity check.
+    # Kaiser's damping is a Gaussian
+    #   exp(-k^2 (sigmapar^2 mu^2 + sigmaper^2 (1 - mu^2)) / 2)
+    # applied by desilike to the ENTIRE pktable, not to the wiggle component
+    # (full_shape.py:492-497 — contrast bao.py:126,138, where the identical
+    # algebra multiplies only the oscillatory part). Two consequences fix the
+    # parameters we may pass:
+    #
+    #   sigmapar = sigma_fog ALONE. The pre-recon BAO scales (Sigma_par,
+    #     Sigma_perp) describe smearing of the BAO *feature* by large-scale
+    #     displacements; feeding them here suppresses the broadband instead.
+    #     The original build added sigma_fog to Sigma_par in quadrature, giving
+    #     sigma_par = 8.18 Mpc/h for LRG2 — enough to drive P2 NEGATIVE above
+    #     k ~ 0.155 where DESI measures +2000, and P0 34% low at k = 0.18
+    #     (CHANGELOG S5).
+    #   sigmaper = 0. Finger-of-God suppression is purely line-of-sight. A
+    #     transverse Gaussian damps the monopole isotropically for no physical
+    #     reason; Sigma_perp = 4.28 Mpc/h was doing exactly that.
+    #
+    # Sigma_par/Sigma_perp are still computed above: they remain meaningful as
+    # diagnostics and are recorded in the footprint attrs. They simply do not
+    # belong in a full-shape broadband damping.
+    #
+    # Not modelled, and deliberately so: BAO smearing itself. It is an
+    # IR-resummation effect that belongs inside the theory (REPT provides it),
+    # and this template hands Kaiser the full linear pk_dd with no wiggle-only
+    # damping available. sigma(qiso) is therefore somewhat optimistic in the
+    # Kaiser path, since the BAO feature is sharper than reality.
     params = {
         "b1": float(b1),
         "sn0": 0.0,
-        "sigmaper": float(sigma_perp_pre),
-        "sigmapar": float(np.sqrt(sigma_par_pre**2 + sigma_fog**2)),
+        "sigmaper": 0.0,
+        "sigmapar": float(sigma_fog),
     }
 
     # ------------------------------------------------------------------
@@ -639,11 +662,12 @@ def build_shapefit_likelihood(
     # analytically-computed values (analog of the BAO float_sigma_bao;
     # width 2.0 Mpc/h, the DESI Adame+24 Sec 4.2.1 convention). sn0 keeps
     # its desilike yaml prior (norm, scale 1000) — the only stochastic term.
+    # Only sigmapar floats. The FoG scale is genuinely uncertain, so it is
+    # marginalized with a prior centered on the HOD-derived value. sigmaper
+    # stays FIXED at 0: it is not an uncertain quantity but an absent one
+    # (FoG is line-of-sight only), and floating a physically-zero parameter
+    # would open a marginalization direction that removes real information.
     if float_sigma_damp:
-        likelihood.all_params["sigmaper"].update(
-            fixed=False,
-            prior={"dist": "norm", "loc": float(params["sigmaper"]), "scale": 2.0},
-        )
         likelihood.all_params["sigmapar"].update(
             fixed=False,
             prior={"dist": "norm", "loc": float(params["sigmapar"]), "scale": 2.0},
