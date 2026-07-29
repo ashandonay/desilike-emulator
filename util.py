@@ -475,6 +475,24 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
         raise ValueError(f"Unknown analysis: {analysis}")
 
 
+def mlflow_tracking_dir(analysis: str) -> str:
+    """Filesystem path of the per-analysis MLflow store.
+
+    Each analysis owns its own store ({analysis}/mlruns) alongside its
+    training_data/, models/ and logs/. Note the consequence: run IDs are only
+    resolvable within one analysis, so cross-analysis run comparison needs two
+    stores opened separately (two `mlflow ui` invocations).
+    """
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    return os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "mlruns")
+
+
+def mlflow_tracking_uri(analysis: str) -> str:
+    """``file:`` URI of the per-analysis MLflow store."""
+    return f"file:{mlflow_tracking_dir(analysis)}"
+
+
 def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
                           cosmo_model: str | None = None,
                           dataset: str | None = None) -> str:
@@ -530,6 +548,7 @@ def compare_losses(
         log_scale: bool = True,
         y_lim: tuple | None = None,
         per_step: bool = False,
+        analysis: str = "bao",
         ) -> None:
     """Compare train/test loss curves across multiple MLflow runs.
 
@@ -539,12 +558,13 @@ def compare_losses(
         log_scale: Use log scale for y-axis.
         y_lim: Tuple of (min, max) y-axis limits.
         per_step: If True, plot per-batch losses instead of epoch-averaged.
+        analysis: Which per-analysis MLflow store the run IDs live in. Stores
+            are separate, so all run_ids must come from the same analysis.
     """
     import mlflow
     from mlflow.tracking import MlflowClient
 
-    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
-    mlflow.set_tracking_uri(f"file:{scratch}/bedcosmo/num_tracers/emulator/mlruns")
+    mlflow.set_tracking_uri(mlflow_tracking_uri(analysis))
     client = MlflowClient()
 
     if labels is None:

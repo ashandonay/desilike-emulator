@@ -10,7 +10,7 @@ This package builds PyTorch regressors that emulate **desilike** outputs: Fisher
 Default layout (when `SCRATCH` is set):
 
 - Training data: `$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/training_data/{cosmo_model}/{quantity}/v{N}/`
-- MLflow runs: `file:$SCRATCH/bedcosmo/num_tracers/emulator/mlruns`
+- MLflow runs: `file:$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/mlruns`
 
 Run scripts from this directory (`emulator/`) so imports such as `util` → `bao` / `shapefit` resolve correctly:
 
@@ -144,7 +144,7 @@ Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must ident
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--run-id` | `None` | MLflow run ID; resolves artifacts under `file:$SCRATCH/bedcosmo/num_tracers/emulator/mlruns`. |
+| `--run-id` | `None` | MLflow run ID; resolves artifacts under `file:$SCRATCH/bedcosmo/num_tracers/emulator/{analysis}/mlruns`. |
 | `--run-dir` | `None` | Directory containing `checkpoints/model_best.pt` or `model.pt`. |
 | `--model-path` | `None` | Direct path to `.pt`. |
 | `--n-samples` | `200` | LHS comparison samples. |
