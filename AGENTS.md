@@ -1,5 +1,11 @@
 # AGENTS.md
 
+> **Note (2026-07-27):** parts of this file predate the June consolidation
+> (`prep_covar.py` → `core.py` etc.); `bao/README.md` + `bao/CHANGELOG.md` are
+> authoritative for current filenames. The full-shape (ShapeFit) pipeline
+> lives in `shapefit/` — see `shapefit/README.md`; it shares `bao/core.py`'s
+> survey physics and the same environment/pinning rules.
+
 Guide to the primary BAO Fisher-forecast testing scripts and plots in `bao/`.
 This repo is a working tree for the DESI BAO Fisher/emulator forecast; the
 day-to-day work is comparing the production pipeline's forecast errors against

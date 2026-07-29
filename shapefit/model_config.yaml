@@ -1,6 +1,8 @@
 # Shared NN settings for all cosmo models. If --nn-model is omitted and your
 # --cosmo-model name is not a key here, training falls back to this block.
-base:
+# (Keyed "default" so the train.py fallback actually fires for every
+# --cosmo-model; the old "base" key only matched --cosmo-model base.)
+default:
   architecture: resnet
   hidden_dim: 32
   n_hidden: 13
