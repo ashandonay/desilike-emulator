@@ -156,7 +156,7 @@ def run_fisher(
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
     param_defaults: Dict[str, float] | None = None,
-    area: float = 14000.0,
+    area: float = sf_core._DEFAULT_AREA,
     resolution: int = 3,
     float_sigma_damp: bool = True,
     theory_cls=None,

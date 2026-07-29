@@ -122,8 +122,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Cosmology model determining which params are varied (default: base).",
     )
     p.add_argument(
-        "--area", type=float, default=14000.0,
-        help="Effective survey area in deg^2 used by CutskyFootprint.",
+        "--area", type=float, default=None,
+        help="Effective survey area in deg^2 used by CutskyFootprint. "
+             "Default: the dataset footprint (dr1 7500, dr2 14000).",
     )
     return p
 
@@ -167,9 +168,14 @@ def main() -> None:
                               cosmo_model=cosmo_model, dataset=args.dataset)
     )
 
+    # Resolve the survey footprint from the dataset unless overridden. dr1 is
+    # 7500 deg^2, not 14000 -- see sf_core.DATASET_AREAS.
+    area = (float(args.area) if args.area is not None
+            else sf_core.DATASET_AREAS[args.dataset])
+
     worker_fn = fourier_space._worker_run_fisher_targets
     make_task = lambda s: (  # noqa: E731
-        s, args.tracer_bin, zrange, z_eff, param_defaults, args.area,
+        s, args.tracer_bin, zrange, z_eff, param_defaults, area,
     )
 
     target_names = sf_core.emulator_target_names(args.tracer_bin, args.dataset)
@@ -185,7 +191,7 @@ def main() -> None:
     print(f"Active constraints: {list(constraints.keys())}")
     print(f"Redshift range: {zrange}, z_eff = "
           f"{'derived per sample' if z_eff is None else f'{z_eff:.3f} (pinned)'}")
-    print(f"Area: {args.area:.3f} deg^2")
+    print(f"Area: {area:.3f} deg^2 ({args.dataset} footprint)")
     print(f"Target: {target_names}")
     print("Writing dataset to:", save_path)
 
@@ -202,7 +208,7 @@ def main() -> None:
             workers=args.workers,
             param_defaults=param_defaults,
             constraints=constraints,
-            area=args.area,
+            area=area,
             worker_fn=worker_fn,
             make_task=make_task,
             maxtasksperchild=args.maxtasksperchild or None,

@@ -414,3 +414,80 @@ low is the leading candidate, and `area = 14000` deg² — the DESI 5-year
 footprint used with DR1 counts — remains an unexamined geometry input feeding
 both. `fkp_analytic_cov`'s `P_FKP = 1e4` default matches DESI's LRG FKP weight
 choice, but would need per-tracer values beyond LRG2.
+
+## 8. 2026-07-29 — DR1 area is 7500 deg², not 14000
+
+`shapefit` defaulted to `area = 14000.0`, inherited from `bao/core.py`. The repo
+already had an explicit convention saying that is wrong for DR1 —
+`bao/mcmc.py:66`:
+
+    _DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
+
+and it is honoured everywhere the production BAO code touches DR1:
+`bao/config_space.py:56` (`_AREA = 7500`, the config-space σ-triplet driver),
+`bao/desi_reference.py:33`, and `bao/plot_nz_cov_scaling.py:51` (commented
+"DR1 footprint (7500)"). Only the Fourier lineage carries 14000, so a DR1-only
+pipeline was forecasting DR1 galaxy counts spread over the **DR2** footprint —
+nearly twice the sky.
+
+Fixed: `core.DATASET_AREAS` + `_DEFAULT_AREA = DATASET_AREAS["dr1"]` drive the
+`build_shapefit_likelihood` and `run_fisher` defaults, and
+`generate_covar_data.py --area` now defaults to `None` and resolves from
+`--dataset` (printing which footprint it used) rather than hardcoding.
+
+Effect on LRG2 at the fiducial:
+
+| | area 14000 | area 7500 |
+|---|---|---|
+| b1 | 2.4178 | 2.1705 |
+| V_survey | 5.181e9 | 2.775e9 |
+| n_eff | 1.465e-4 | 2.734e-4 |
+| **P₀ / DESI measured** | **1.250** | **1.032** |
+
+The theory amplitude discrepancy is gone. Larger area at fixed N depresses
+n̄ = N/V, and the HOD responds by raising b1 for the rarer sample; since P ∝ b1²,
+a 11% b1 error is a 25% power error. Landing at 1.032 is strong independent
+evidence that 7500 is the right footprint — a wrong area would not put P₀ on top
+of DESI's measured monopole.
+
+New fiducial table (all σ loosened 6–27%, as expected from the smaller volume):
+
+| tracer | z_eff | σ(qiso) | σ(qap) | σ(f_sigmar) | σ(m) | σ(fsr)/fsr |
+|---|---|---|---|---|---|---|
+| BGS       | 0.292 | 0.0140 | 0.0419 | 0.0448 | 0.0494 | 9.5% |
+| LRG1      | 0.508 | 0.0097 | 0.0291 | 0.0356 | 0.0350 | 7.5% |
+| LRG2      | 0.704 | 0.0079 | 0.0237 | 0.0285 | 0.0284 | 6.2% |
+| LRG3_ELG1 | 0.945 | 0.0066 | 0.0194 | 0.0164 | 0.0217 | 3.7% |
+| ELG2      | 1.303 | 0.0099 | 0.0264 | 0.0167 | 0.0235 | 4.2% |
+| QSO       | 1.343 | 0.0146 | 0.0417 | 0.0253 | 0.0272 | 6.4% |
+
+**§7's "one common normalization" hypothesis was wrong.** The area fix closed
+the theory gap and left the covariance essentially untouched: unwindowed
+1.93 → 2.05, windowed 0.489 → 0.512 against the bundle covariance. The reason is
+cancellation — halving the area halves V (raising the covariance) but doubles n̄
+(lowering the shot-noise term), and the smaller b1 lowers P as well. These are
+two independent problems, not one.
+
+**What remains, in order.**
+
+1. **Covariance is ~2× too small after windowing** (0.512). The direction is now
+   physically sensible — an analytic Gaussian *should* fall below an EZmock
+   covariance carrying the non-Gaussian term, and the bundle's θ-cut removes
+   modes, inflating DESI's side — but a factor 2 exceeds the BAO experience
+   (config/bundle 0.66–0.88, `project_gaussian_xi_cov_findings`). Off-diagonal
+   correlation is also still short: 0.051 windowed vs DESI's 0.095.
+2. **n_eff now overshoots the other way.** P_shot ours 3657 vs DESI's measured
+   5229, a ratio of 0.699 (it was 1.305 at area 14000). Our sample is ~43% too
+   dense, which *suppresses* the shot term and is a live candidate for item 1.
+   Caveat as in §4: DESI's FKP weights use a fixed P₀ = 1e4 and include the
+   random-catalog term, while our n_eff is V_eff-matched to the actual P_g, so
+   the two are not the same functional and need not agree exactly.
+3. **P₂ is over-predicted at high k** — 1.32× at k = 0.12 rising to 1.91× at
+   k = 0.198. This is Kaiser without EFT counterterms and is a genuine model
+   limitation rather than a bug; it is the argument for REPT (blocked on the
+   numpy pin, §5), not something to tune.
+
+The Fourier path in `bao/core.py` carries the same `area = 14000.0` default and
+was **not** touched here — it is regression-frozen, and config-space is the
+production BAO driver. Worth checking separately whether anything still consumes
+the BAO Fourier path for DR1.

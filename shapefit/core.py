@@ -146,6 +146,20 @@ MEAN_TARGET_NAMES = list(_PHYS_NAMES)
 _ELLS = (0, 2)
 _KLIM = (0.02, 0.2, 0.005)
 
+# Effective survey area per data release [deg^2]. Mirrors the convention
+# already established in bao/mcmc.py:66 (_DATASET_AREAS) and used by the
+# production config-space driver (bao/config_space.py:56 _AREA = 7500) and
+# bao/desi_reference.py:33.
+#
+# shapefit previously defaulted to 14000, which is the DR2 footprint, while
+# being a DR1-only pipeline -- so every forecast ran DR1 galaxy counts over
+# roughly twice the sky. That inflates V, depresses nbar = N/V, and pushes the
+# HOD to a higher b1 for the same sample. Measured on LRG2 at the fiducial:
+# b1 2.418 -> 2.171 and P0/DESI_measured 1.250 -> 1.032, i.e. the theory
+# amplitude discrepancy against DESI's own spectra essentially closes.
+DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
+_DEFAULT_AREA = DATASET_AREAS["dr1"]
+
 # ShapeFit template pivot/slope conventions (desilike defaults; DESI/Brieden+21).
 _SHAPEFIT_KP = 0.03
 _SHAPEFIT_A = 0.6
@@ -308,7 +322,7 @@ def build_shapefit_likelihood(
     tracer_bin: str = "LRG2",
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
-    area: float = 14000.0,
+    area: float = _DEFAULT_AREA,
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
     klim_spec: Tuple[float, float, float] = _KLIM,

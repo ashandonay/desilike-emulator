@@ -490,7 +490,7 @@ def _windowed_analytic_cov(tracer: str, win: Dict, P_ells: np.ndarray,
 
     cosmo = get_cosmo(("DESI", dict(theta)))
     slices = fac.load_nz_slices(
-        tracer, cosmo, area_deg2=14000.0, N_design=float(ntracers(tracer, "dr1")))
+        tracer, cosmo, area_deg2=sf_core._DEFAULT_AREA, N_design=float(ntracers(tracer, "dr1")))
     blocks = fac.fkp_analytic_cov(
         k=win["th_k"], P_ells_in=P_ells, ells_in=win["th_ells"],
         ells_obs=win["th_ells"], slices=slices)
@@ -526,7 +526,7 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
               if kk in ("b1", "sn0", "sigmapar", "sigmaper")})
     cosmo = get_cosmo(("DESI", dict(ours["theta"])))
     slices = fac.load_nz_slices(
-        tracer, cosmo, area_deg2=14000.0,
+        tracer, cosmo, area_deg2=sf_core._DEFAULT_AREA,
         N_design=float(ntracers(tracer, "dr1")))
     blocks = fac.fkp_analytic_cov(
         k=k, P_ells_in=np.asarray(theory.power), ells_in=(0, 2, 4),
