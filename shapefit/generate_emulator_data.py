@@ -72,6 +72,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Number of parallel worker processes (default: 1 = serial).",
     )
     p.add_argument(
+        "--maxtasksperchild", type=int, default=50,
+        help="Recycle each worker after this many tasks. The covar path leaks "
+             "~50 MB per accepted sample inside desilike/cosmoprimo, so "
+             "long-lived workers pass 4.5 GB in 10 h and a wide pool OOMs the "
+             "box on multi-hour runs. 0 disables recycling.",
+    )
+    p.add_argument(
         "--tracer-bin", dest="tracer_bin", type=str, default="LRG2",
         choices=TRACER_TYPE_CHOICES,
         help="DESI tracer bin key (must match tracers.yaml).",
@@ -198,6 +205,7 @@ def main() -> None:
             area=args.area,
             worker_fn=worker_fn,
             make_task=make_task,
+            maxtasksperchild=args.maxtasksperchild or None,
         )
         print(f"Generated dataset with shape X={X.shape}, y={y.shape}")
         save_dataset(
