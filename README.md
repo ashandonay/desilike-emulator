@@ -97,7 +97,6 @@ shapefit/generate_training_data.sh --quantity mean  --cosmo-model base --n-sampl
 | **`eval.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
 | **`scale_data.py`** | Post-processes a directory of `.npz` files: multiplies `y` by user-defined factors of input variables; writes a sibling directory and **`scale_info.json`** (used at train/eval time to track scaling). |
 | **`test_cov_scaling.py`** | Tests for the scale expression language. |
-| **`run_pipeline.py`** | **Legacy**: docstring and paths point to old `prep_shapefit_data.py` / different CLI; prefer explicit prep → train → eval. |
 | **`notebooks/`** | Exploration (training, errors, shapefit extractor). |
 
 ---
