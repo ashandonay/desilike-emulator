@@ -334,3 +334,83 @@ Because §5's prediction held — the σ tightened, widening the gap to DESI —
 earlier apparent agreement with DESI's 4–10% band was partly two errors
 cancelling. The current table is *more* correct and looks *less* reassuring.
 That is the expected direction of travel, not a regression.
+
+## 7. 2026-07-29 — Window convolution: settles one gap, not the other
+
+`compare_to_desi.py --check window` applies DESI's window matrix to our theory
+and our covariance, following the precedent already in production on the BAO
+side: `bao/config_space.py:416` computes `C = W @ C_theory @ W.T` for the
+correlation pipeline, justified at `config_space.py:399-400` because W is
+"computed from the RANDOM catalog — geometry, not data". That is what
+distinguishes it from the rejected data-derived rescalings: a randoms-derived
+window describes the survey mask, not the measured clustering. It is also
+frame-fixed there, held at the fiducial frame together with FKP volume/n̄.
+
+Neither Fourier path has ever had one — `grep` finds nothing in
+`bao/fourier_space.py`, and `bao/core.py` carries only
+`kmin_window = 2π/L_survey`, commented as "a simplified approximation to the
+full DESI window-function". shapefit inherited that. So the missing window is an
+**inherited asymmetry between the config-space and Fourier lineages**, not a
+policy choice.
+
+W for LRG2 is 72 × 1050: 72 measured points out, and a theory side of ells
+(0, 2, 4) × 349 k over [0.001, 0.349] plus 3 rotation/photo systematic columns
+we zero. The ell=4 input matters — the window leaks hexadecapole power into the
+measured monopole and quadrupole, so the convolution needs a multipole our
+forecast does not otherwise compute.
+
+**Engine control, run as part of the check and not optional.** The windowed
+covariance is built with `bao/fkp_analytic_cov.py` (the theory grid needs ells
+(0,2,4) at dk = 0.001 down to k = 0.001, outside what the desilike observable
+path is built for), while the unwindowed one comes from desilike's
+`ObservablesCovarianceMatrix`. A naive before/after would conflate the window
+with the engine swap. Running the analytic engine on the observable grid with no
+window: **median ratio 0.989, range [0.909, 1.030]** against desilike+SSC. The
+engines agree to ~1%, so the window numbers below are the window.
+
+**Result 1 — the window does NOT explain the theory amplitude offset.**
+
+    P0 median ratio vs DESI measured:  raw 1.250  ->  convolved 1.286
+
+It gets marginally *worse*. The reason is that DESI's baseline uses a **rotated**
+window (`wmatrix='rotated'` in the KP fit config), which is constructed to be
+compact and near-diagonal precisely so it barely redistributes the mean. So the
+~25-29% excess in our P₀ is a **genuine amplitude discrepancy** — b₁, n_eff or
+growth — and not a comparison artifact. Combined with §4's finding that our
+n_eff is 23% low (P_shot 30% high), the b₁/n_eff normalization is now the prime
+suspect, and it is the same normalization that sets the covariance.
+
+**Result 2 — the window dominates the covariance, and overshoots.**
+
+| | diag ratio vs DESI | mean \|off-diag corr\| |
+|---|---|---|
+| ours, unwindowed | 1.930 | 0.016 |
+| ours, windowed | **0.489** | 0.049 |
+| DESI | 1.000 | 0.095 |
+
+Applying the window moves us from 2× too large to 2× too small, and closes
+about half the off-diagonal correlation deficit. Direction is now physically
+sensible — a Gaussian covariance *should* fall below an EZmock covariance
+carrying the non-Gaussian term — and the θ-cut in the bundle product removes
+modes, inflating DESI's side further. But a factor 2 is larger than the BAO
+experience (config/bundle 0.66-0.88, `project_gaussian_xi_cov_findings`).
+
+Note the comparison baseline differs between checks: §4/§6 quote the **plain**
+covariance file (2.92× after the damping fix), this section the **bundle's**
+rotated+θ-cut covariance (1.93× unwindowed). Different DESI products, not a
+changed result.
+
+**What this establishes.** The window is a first-order effect on the covariance
+that shapefit omits entirely, so the Fourier path is missing a term the
+config-space path has had in production all along. That is a real modelling gap,
+not a comparison detail. It does not by itself close the gap — it overshoots —
+which means there is a second normalization issue, and Result 1 says the same
+thing from the theory side.
+
+**Open, and now sharpened to one question:** an amplitude/normalization error
+common to the theory and the covariance, ~1.25× in P and ~2× in C (C ∝ P², so
+1.25² ≈ 1.56 of the 2× would follow from the P offset alone). n_eff being 23%
+low is the leading candidate, and `area = 14000` deg² — the DESI 5-year
+footprint used with DR1 counts — remains an unexamined geometry input feeding
+both. `fkp_analytic_cov`'s `P_FKP = 1e4` default matches DESI's LRG FKP weight
+choice, but would need per-tracer values beyond LRG2.

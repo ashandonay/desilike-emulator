@@ -417,6 +417,197 @@ def _plot_cov(results: Dict, label: str) -> None:
     print(f"  wrote {out}")
 
 
+def read_desi_window(path: Path) -> Dict:
+    """Window matrix and its theory-side grid from a full-shape bundle.
+
+    DESI's model is ``measured = W @ theory``, W of shape (n_obs, n_theory).
+    The theory side spans MORE multipoles and a wider, finer k range than the
+    observable (ells 0,2,4 on 349 k from 0.001 to 0.349 for LRG2), because the
+    window leaks ell=4 power and out-of-range k into the measured ell=0 and
+    ell=2. Trailing columns beyond n_ells*n_k are DESI's rotation/photo
+    systematic templates, which we have no counterpart for and set to zero.
+    """
+    with h5py.File(path, "r") as f:
+        W = np.asarray(f["window/value"][:], dtype=np.float64)
+        grp = f["window/theory"]
+        grp = grp["spectrum"] if "spectrum" in grp else grp
+        th_ells, th_k = [], None
+        for key in sorted(grp.keys(), key=lambda s: (not s.isdigit(), s)):
+            if not key.isdigit():
+                continue
+            th_ells.append(int(key))
+            kk = np.asarray(grp[key]["k"][:], dtype=np.float64)
+            if th_k is None:
+                th_k = kk
+            elif not np.allclose(th_k, kk):
+                raise ValueError(f"{path.name}: window theory k differs per ell")
+    n_extra = W.shape[1] - len(th_ells) * th_k.size
+    if n_extra < 0:
+        raise ValueError(f"{path.name}: W has {W.shape[1]} cols, theory grid "
+                         f"needs {len(th_ells) * th_k.size}")
+    return {"W": W, "th_ells": tuple(th_ells), "th_k": th_k, "n_extra": n_extra}
+
+
+def our_theory_on_window_grid(tracer: str, win: Dict) -> Dict:
+    """Our Kaiser multipoles on the window's theory grid, at the pipeline's
+    fiducial nuisances. Returns the flat theory vector W expects plus the
+    per-ell spectra (needed for the analytic Gaussian covariance)."""
+    from desilike.theories.galaxy_clustering import (
+        ShapeFitPowerSpectrumTemplate, KaiserTracerPowerSpectrumMultipoles)
+
+    base = our_forecast(tracer)
+    info = base["info"]
+    theta = sf_core._to_shapefit_cosmo_params(
+        {**FID_SAMPLE, "N_tracers": ntracers(tracer, "dr1")})
+    template = ShapeFitPowerSpectrumTemplate(
+        z=info["z_eff"], fiducial=("DESI", dict(theta)),
+        apmode="qisoqap", with_now="wallish2018")
+    theory = KaiserTracerPowerSpectrumMultipoles(
+        template=template, k=win["th_k"], ells=win["th_ells"])
+    theory(**{k: v for k, v in info["params"].items()
+              if k in ("b1", "sn0", "sigmapar", "sigmaper")})
+    P = np.asarray(theory.power, dtype=np.float64)          # (n_ells, n_k)
+    vec = np.concatenate([P.ravel(), np.zeros(win["n_extra"])])
+    return {"P_ells": P, "vec": vec, "base": base, "theta": theta}
+
+
+def _windowed_analytic_cov(tracer: str, win: Dict, P_ells: np.ndarray,
+                           theta: Dict) -> np.ndarray:
+    """W @ C_theory @ W.T with C_theory the Grieb/FKP analytic Gaussian on the
+    window's theory grid.
+
+    Uses bao/fkp_analytic_cov.py rather than desilike's ObservablesCovarianceMatrix
+    because the theory grid needs ells (0,2,4) at dk=0.001 down to k=0.001 --
+    outside the range the observable path is built for. This is the same
+    operation bao/config_space.py:416 performs in production for the
+    correlation-function pipeline (C = W @ C_theory @ W.T), with the same
+    justification: W comes from the RANDOM catalog, so it is survey geometry,
+    not measured clustering.
+    """
+    from desilike.theories.primordial_cosmology import get_cosmo
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bao"))
+    import fkp_analytic_cov as fac
+
+    cosmo = get_cosmo(("DESI", dict(theta)))
+    slices = fac.load_nz_slices(
+        tracer, cosmo, area_deg2=14000.0, N_design=float(ntracers(tracer, "dr1")))
+    blocks = fac.fkp_analytic_cov(
+        k=win["th_k"], P_ells_in=P_ells, ells_in=win["th_ells"],
+        ells_obs=win["th_ells"], slices=slices)
+    C_theory = fac.assemble_full_cov(blocks, win["th_ells"])
+    n = C_theory.shape[0] + win["n_extra"]
+    C_pad = np.zeros((n, n), dtype=np.float64)
+    C_pad[:C_theory.shape[0], :C_theory.shape[0]] = C_theory
+    W = win["W"]
+    C_win = W @ C_pad @ W.T
+    return 0.5 * (C_win + C_win.T)
+
+
+def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
+    """The same analytic Gaussian engine as `_windowed_analytic_cov`, evaluated
+    on the OBSERVABLE grid with no window applied. Control for the engine
+    change (see check_window)."""
+    from desilike.theories.galaxy_clustering import (
+        ShapeFitPowerSpectrumTemplate, KaiserTracerPowerSpectrumMultipoles)
+    from desilike.theories.primordial_cosmology import get_cosmo
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bao"))
+    import fkp_analytic_cov as fac
+
+    base = ours["base"]
+    k = base["k"]
+    template = ShapeFitPowerSpectrumTemplate(
+        z=base["info"]["z_eff"], fiducial=("DESI", dict(ours["theta"])),
+        apmode="qisoqap", with_now="wallish2018")
+    # ells (0,2,4) as MODEL input even though the observable is (0,2): the
+    # Grieb formula needs the hexadecapole of the model to build the (0,2) block.
+    theory = KaiserTracerPowerSpectrumMultipoles(
+        template=template, k=k, ells=(0, 2, 4))
+    theory(**{kk: v for kk, v in base["info"]["params"].items()
+              if kk in ("b1", "sn0", "sigmapar", "sigmaper")})
+    cosmo = get_cosmo(("DESI", dict(ours["theta"])))
+    slices = fac.load_nz_slices(
+        tracer, cosmo, area_deg2=14000.0,
+        N_design=float(ntracers(tracer, "dr1")))
+    blocks = fac.fkp_analytic_cov(
+        k=k, P_ells_in=np.asarray(theory.power), ells_in=(0, 2, 4),
+        ells_obs=_OUR_ELLS, slices=slices)
+    return fac.assemble_full_cov(blocks, _OUR_ELLS)
+
+
+def check_window(tracers: List[str]) -> None:
+    """Does the missing survey window explain the theory and covariance gaps?"""
+    print("\n=== 5. Window convolution: does it close the gap? ===")
+    print("    measured = W @ theory. Our forecast applies NO window (the")
+    print("    Fourier paths never have); bao/config_space.py:416 does apply")
+    print("    one in production for the correlation pipeline.")
+    for tracer in tracers:
+        bundle = _FS_BUNDLES.get(tracer)
+        if bundle is None or not bundle.exists():
+            print(f"\n  {tracer}: no local full-shape bundle (window ships with it)")
+            continue
+        win = read_desi_window(bundle)
+        ours = our_theory_on_window_grid(tracer, win)
+        base = ours["base"]
+        nk = base["k"].size
+        desi = read_desi_bundle(bundle, base["k_edges"])
+        C_desi = desi["cov"]
+
+        conv = win["W"] @ ours["vec"]
+        raw = base["data"]
+        print(f"\n  {tracer}: W is {win['W'].shape}, theory grid ells "
+              f"{win['th_ells']} x {win['th_k'].size} k "
+              f"[{win['th_k'][0]:.3f}, {win['th_k'][-1]:.3f}], "
+              f"{win['n_extra']} systematic columns zeroed")
+        print(f"    {'k':>7s} {'P0 raw/DESI':>12s} {'P0 conv/DESI':>13s}   "
+              f"{'P2 raw/DESI':>12s} {'P2 conv/DESI':>13s}")
+        for i in range(0, nk, max(1, nk // 7)):
+            print(f"    {base['k'][i]:>7.4f} "
+                  f"{raw[i] / desi['data'][i]:>12.3f} "
+                  f"{conv[i] / desi['data'][i]:>13.3f}   "
+                  f"{raw[nk + i] / desi['data'][nk + i]:>12.3f} "
+                  f"{conv[nk + i] / desi['data'][nk + i]:>13.3f}")
+        r_raw = raw[:nk] / desi["data"][:nk]
+        r_con = conv[:nk] / desi["data"][:nk]
+        print(f"    P0 median ratio: raw {np.median(r_raw):.3f} -> "
+              f"convolved {np.median(r_con):.3f}")
+
+        try:
+            C_win = _windowed_analytic_cov(tracer, win, ours["P_ells"],
+                                           ours["theta"])
+        except Exception as exc:
+            print(f"    windowed covariance failed: {type(exc).__name__}: {exc}")
+            continue
+
+        # CONTROL, and it is not optional. The windowed covariance is built with
+        # bao/fkp_analytic_cov.py while the unwindowed one comes from desilike's
+        # ObservablesCovarianceMatrix, so a raw before/after comparison would
+        # conflate "applied the window" with "changed covariance engine". Run the
+        # analytic engine on the OBSERVABLE grid with no window: if it matches
+        # desilike, the windowed/unwindowed difference is the window.
+        ctrl = _analytic_cov_on_obs_grid(tracer, ours)
+        r_ctrl = np.diag(ctrl) / np.diag(base["cov"])
+        print(f"    engine control (same grid, no window, analytic/desilike): "
+              f"median {np.median(r_ctrl):.3f}, "
+              f"range [{r_ctrl.min():.3f}, {r_ctrl.max():.3f}]")
+        if not 0.9 <= np.median(r_ctrl) <= 1.1:
+            print("    ** control outside 10%: the window numbers below are "
+                  "CONFOUNDED by the engine change, do not interpret them **")
+
+        def offdiag(C):
+            s = np.sqrt(np.clip(np.diag(C), 1e-300, None))
+            R = C / np.outer(s, s)
+            return float(np.mean(np.abs(R[~np.eye(R.shape[0], dtype=bool)])))
+
+        d_ours = np.diag(base["cov"])
+        d_win = np.diag(C_win)
+        d_desi = np.diag(C_desi)
+        print(f"    covariance diag ratio vs DESI: "
+              f"unwindowed {np.median(d_ours / d_desi):.3f} -> "
+              f"windowed {np.median(d_win / d_desi):.3f}")
+        print(f"    mean |off-diag corr|:  unwindowed {offdiag(base['cov']):.3f}"
+              f"   windowed {offdiag(C_win):.3f}   DESI {offdiag(C_desi):.3f}")
+
+
 def check_sigma(tracers: List[str], rotated: bool, thetacut: bool) -> None:
     """Swap DESI's covariance into our Fisher and report the sigma shift."""
     print("\n=== 4. Sigmas with OUR covariance vs with DESI's covariance ===")
@@ -450,7 +641,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--check", nargs="*",
-                   choices=["shot", "pk", "cov", "sigma", "all"], default=["all"])
+                   choices=["shot", "pk", "cov", "sigma", "window", "all"],
+                   default=["all"])
     p.add_argument("--tracers", nargs="*", default=None,
                    help=f"subset of {list(TRACERS_ALL)}; default all")
     p.add_argument("--rotated", action="store_true",
@@ -477,6 +669,8 @@ def main() -> int:
         check_pk(tracers)
     if do("cov"):
         check_cov(tracers, args.rotated, args.thetacut, args.plot)
+    if do("window"):
+        check_window(tracers)
     if do("sigma"):
         check_sigma(tracers, args.rotated, args.thetacut)
     return 0
