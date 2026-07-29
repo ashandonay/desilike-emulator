@@ -15,6 +15,14 @@ Checks (select with --check, default all):
   damping  : sensitivity of the fiducial sigmas to floating vs fixing the
              Gaussian damping scales (float_sigma_damp), documenting the
              Kaiser FoG-in-quadrature approximation.
+  kmax     : sigmas vs the fit kmax, plus the k where the Kaiser quadrupole
+             crosses zero. compare_to_desi.py (CHANGELOG S4) found our P2 going
+             negative above k ~ 0.16 for LRG2 where DESI measures positive
+             power, so the top of the band contributes derivatives from a model
+             that has broken down. This quantifies how much information is
+             actually being drawn from there: if sigma(kmax=0.10) is close to
+             sigma(kmax=0.20), the broken region carries little weight and the
+             labels are safer than the P2 comparison alone suggests.
 
 Usage (from shapefit/, emulator env):
     python validate_forecast.py --check fiducial --tracers LRG2 QSO
@@ -145,9 +153,73 @@ def check_damping(tracers) -> None:
         print(f"{tracer:>10s} " + " ".join(deltas) + "   (float vs fixed)")
 
 
+_KMAX_GRID = (0.10, 0.125, 0.15, 0.175, 0.20)
+
+
+def _forecast_at_kmax(tracer: str, kmax: float) -> dict:
+    """Marginalized sigmas at a given fit kmax, plus the fiducial multipoles.
+
+    run_fisher does not expose klim_spec (the generators never vary it), so this
+    drives core.build_shapefit_likelihood directly.
+    """
+    sample = _fid_sample_for(tracer)
+    theta = sf_core._to_shapefit_cosmo_params(sample)
+    info = sf_core.build_shapefit_likelihood(
+        N_tracers=float(sample["N_tracers"]),
+        theta_cosmo=theta,
+        tracer_bin=tracer,
+        klim_spec=(0.02, float(kmax), 0.005),
+    )
+    cov_phys = fourier_space._sf_fisher_reduction(info)
+    out = dict(zip(fourier_space.TARGET_NAMES,
+                   fourier_space.fisher_cov_to_emulator_targets(cov_phys)))
+    out["k"] = np.asarray(info["observable"].k[0], dtype=np.float64)
+    out["flatdata"] = np.asarray(info["observable"].flatdata, dtype=np.float64)
+    return out
+
+
+def check_kmax(tracers) -> None:
+    print("\n=== sigma vs fit kmax (is the broken high-k region informative?) ===")
+    names = fourier_space.TARGET_NAMES[:4]
+    for tracer in tracers:
+        print(f"\n  {tracer}")
+        print(f"    {'kmax':>6s} " + " ".join(f"{n[6:]:>11s}" for n in names)
+              + f"   {'vs kmax=0.20':>12s}")
+        rows = {}
+        for kmax in _KMAX_GRID:
+            rows[kmax] = _forecast_at_kmax(tracer, kmax)
+        ref = rows[_KMAX_GRID[-1]]
+        for kmax in _KMAX_GRID:
+            r = rows[kmax]
+            infl = np.mean([r[n] / ref[n] for n in names])
+            print(f"    {kmax:>6.3f} " + " ".join(f"{r[n]:>11.5f}" for n in names)
+                  + f"   {infl:>11.2f}x")
+        # Zero-crossing of the Kaiser quadrupole on the widest band.
+        k, flat = ref["k"], ref["flatdata"]
+        nk = k.size
+        P2 = flat[nk:2 * nk]
+        neg = np.where(P2 < 0)[0]
+        if neg.size:
+            i = int(neg[0])
+            if i == 0:
+                kz = float(k[0])
+            else:  # linear interpolation between the bracketing bins
+                kz = float(k[i - 1] + (k[i] - k[i - 1]) * P2[i - 1]
+                           / (P2[i - 1] - P2[i]))
+            print(f"    P2 crosses zero at k = {kz:.3f} "
+                  f"({(k[-1] - kz) / (k[-1] - k[0]):.0%} of the band is past it)")
+        else:
+            print(f"    P2 stays positive to k = {k[-1]:.3f}")
+    print("\n  'vs kmax=0.20' is the mean sigma inflation from truncating the band.")
+    print("  Close to 1.0 => the high-k region carries little information, so the")
+    print("  Kaiser breakdown there costs little. Much above 1.0 => the labels")
+    print("  depend on a regime where the model is known to be wrong.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--check", choices=["fiducial", "scaling", "damping", "all"],
+    p.add_argument("--check",
+                   choices=["fiducial", "scaling", "damping", "kmax", "all"],
                    default="all")
     p.add_argument("--tracers", nargs="*", default=None,
                    choices=list(TRACER_TYPE_CHOICES),
@@ -161,6 +233,8 @@ def main() -> int:
         check_scaling(tracers)
     if args.check in ("damping", "all"):
         check_damping(tracers)
+    if args.check in ("kmax", "all"):
+        check_kmax(tracers)
     return 0
 
 

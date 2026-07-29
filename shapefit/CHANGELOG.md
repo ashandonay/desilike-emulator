@@ -196,3 +196,78 @@ Still missing for a full absolute check: DESI's **recorded** per-tracer
 compressed values and their σ (qiso, qap, f_sigmar, m). Only the data bundles
 and covariances are local — and only LRG2 has a full bundle. The rest needs the
 `dr1_full-shape-bao-clustering v1.0` VAC.
+
+## 5. 2026-07-29 — The negative quadrupole is our damping, not Kaiser
+
+§4 attributed the P₂ sign flip to Kaiser breaking down at high k. That was
+wrong, and the correction matters because it makes the problem fixable without
+swapping the theory. **Bare Kaiser gives a positive, well-behaved quadrupole**
+(P₂ = 2645, 2185, 1986 at k = 0.16, 0.18, 0.195). The sign flip comes from the
+damping parameters *we* supply.
+
+`KaiserPowerSpectrumMultipoles.calculate` (desilike `full_shape.py:492-497`)
+applies
+
+    damping = exp(-k²(σ∥²μ² + σ⊥²(1-μ²))/2)
+
+to the **entire** `pktable`, not to the wiggle component. §1 fed it
+`sigmapar = sqrt(Σ∥_pre² + σ_FoG²)` and `sigmaper = Σ⊥_pre`, i.e. the BAO
+*de-wiggling* scales. For LRG2 that is σ∥ = 8.18, σ⊥ = 4.28 Mpc/h.
+
+Two things are wrong with that:
+
+1. **Σ∥/Σ⊥ do not belong here at all.** They describe smearing of the BAO
+   *feature* by large-scale displacements. In a BAO template the damping
+   multiplies only the oscillatory part (`bao.py:126,138` — same algebra,
+   applied to the wiggles). Applied to the full spectrum it suppresses the
+   broadband, which no physics asks for.
+2. **σ⊥ should be 0.** Finger-of-God suppression is purely line-of-sight; a
+   transverse Gaussian damping suppresses the monopole isotropically for no
+   reason.
+
+Measured effect on the LRG2 quadrupole (DESI = measured, window-convolved):
+
+| k | as-built | no damping | DESI |
+|---|---|---|---|
+| 0.0225 | 32726 | 33765 | 35129 |
+| 0.0975 | 4216 | 8369 | 7417 |
+| 0.1475 | 334 | 4761 | 3196 |
+| 0.1975 | **−813** | 2927 | 1311 |
+
+The truth sits between the two: real FoG does suppress, but the as-built value
+over-damps by enough to flip the sign above k ≈ 0.155, and undershoots P₀ by 34%
+at k = 0.18. The indicated fix is `sigmapar = σ_FoG`, `sigmaper = 0` — a removal
+of an incorrectly-applied term, not a tuned parameter.
+
+**And the broken region is informative** (`validate_forecast.py --check kmax`,
+new). Mean σ inflation from truncating the fit band, vs kmax = 0.20:
+
+| kmax | LRG2 | QSO |
+|---|---|---|
+| 0.100 | 2.56× | 1.75× |
+| 0.150 | 1.23× | 1.11× |
+| 0.200 | 1.00× | 1.00× |
+
+P₂ crosses zero at k = 0.156 (LRG2) and 0.142 (QSO), so 24% and 32% of the band
+sits past it, and truncating at 0.15 still costs 11–23%. The labels do depend on
+the region where the model is misbehaving. This is not a "restrict kmax and move
+on" situation.
+
+**Not changed pending a decision.** Fixing the damping alters every training
+label and invalidates `golden_4cfd6bec.npz`; §1 recorded the quadrature choice
+deliberately, so it is reversed on purpose or not at all. Note the direction:
+over-damping *loses* high-k information, so correcting it should tighten σ
+further and widen the gap to DESI's published values — the covariance and
+damping errors are currently partially cancelling, which is exactly the §33r
+failure mode.
+
+**velocileptors status.** REPT is the honest long-term theory (DESI's baseline
+is `reptvelocileptors`) and `theory_cls` already accepts it, but it is blocked:
+velocileptors 2.3 calls `np.trapezoid`, which is numpy 2.0's rename of
+`np.trapz`, and this env is pinned at numpy 1.26.4 for the frozen desilike
+`4cfd6bec` / cosmoprimo `1b100803`. Two call sites
+(`velocileptors/Utils/qfuncfft.py:181`, `LPT/gaussian_streaming_model_fftw.py:150`).
+Measured with a local shim: REPT costs **0.267 s/call vs Kaiser's 0.001 s**
+(~270×) with 11 varied nuisances instead of 6, and gives positive high-k P₂.
+Pin velocileptors to a numpy-1.x-compatible version rather than upgrading numpy
+(which would invalidate the regression baseline) or patching site-packages.
