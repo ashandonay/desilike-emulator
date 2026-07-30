@@ -20,10 +20,23 @@ with covariance in units of 1e-4. Our emulator targets map onto it as
     qiso     = (D_V/r_d)  / (D_V/r_d)_fid       -> sigma(qiso) = sigma / value
     qap      = (D_H/D_M)  / (D_H/D_M)_fid       -> sigma(qap)  = sigma / value
     f_sigmar ~ f sigma_s8                       -> compare FRACTIONAL errors
-    m        ~ m + n                            (our dn is fixed, so n does not vary)
+    m        <-> m + n                          -> compare SIGMA ONLY, see below
 
 Ratios of a quantity to its fiducial leave correlations unchanged, so the six
 rho_* targets compare directly with no conversion at all.
+
+On m vs (m + n). DESI varies m with n FIXED, exactly as we do (our `dn` is
+fixed): section 4.9, "we will only consider varying one of the two shape
+variables: we will vary m keeping n fixed. Later, in the interpretation step m
+can be seen as if it were m + n." So the (m+n) label is an interpretive relabel
+of a single varied parameter, and sigma(m+n) = sigma(m) -- the ERROR comparison
+is exact and the parameterisations match.
+
+The CENTRAL VALUES do not compare. In DESI's Eq. (4.9) m is a DEVIATION (m = 0
+means no shape change from the fiducial), i.e. our `dm`. Our emulator target is
+the ABSOLUTE slope m = m_fid + dm, which is -0.5775 at the fiducial for LRG2.
+The two differ by m_fid. Anything comparing mean m values -- bedcosmo included
+-- has to account for that offset.
 
 Dividing sigma by the MEASURED central value rather than the fiducial is a ~1%
 approximation (DR1 is consistent with the fiducial at that level) and is the

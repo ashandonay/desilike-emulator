@@ -245,17 +245,29 @@ def read_desi_bundle(path: Path, target_edges: np.ndarray) -> Dict:
 # ---------------------------------------------------------------------------
 # Our side
 # ---------------------------------------------------------------------------
-def our_forecast(tracer: str, cov_override: Optional[np.ndarray] = None) -> Dict:
+def our_forecast(tracer: str, cov_override: Optional[np.ndarray] = None,
+                 theory: str = "kaiser") -> Dict:
     """build_shapefit_likelihood at the DESI fiducial cosmology and the DR1
     passed count, plus the marginalized sigmas."""
     theta = sf_core._to_shapefit_cosmo_params(
         {**FID_SAMPLE, "N_tracers": ntracers(tracer, "dr1")}
     )
+    kw = {}
+    if theory == "rept":
+        from desilike.theories.galaxy_clustering import (
+            REPTVelocileptorsTracerPowerSpectrumMultipoles as _REPT)
+        import desi_reference as _dr  # noqa: F401  (tracer preset lives in core)
+        kw = dict(theory_cls=_REPT,
+                  theory_kwargs=dict(prior_basis="physical",
+                                     tracer=sf_core._REPT_TRACER_PRESET[tracer]))
+    elif theory != "kaiser":
+        raise ValueError(f"theory must be 'kaiser' or 'rept', got {theory!r}")
     info = sf_core.build_shapefit_likelihood(
         N_tracers=float(ntracers(tracer, "dr1")),
         theta_cosmo=theta,
         tracer_bin=tracer,
         cov_override=cov_override,
+        **kw,
     )
     cov_phys = fourier_space._sf_fisher_reduction(info)
     targets = dict(zip(fourier_space.TARGET_NAMES,
@@ -273,7 +285,8 @@ def our_forecast(tracer: str, cov_override: Optional[np.ndarray] = None) -> Dict
         "cov": info["cov_components"]["C_total"],
         "n_eff": info["n_eff"],
         "z_eff": info["z_eff"],
-        "b1": float(info["params"]["b1"]),
+        # Kaiser names it b1, REPT's physical basis names it b1p (= b1 * sigma8).
+        "b1": float(info["params"].get("b1", info["params"].get("b1p", float("nan")))),
     }
 
 
@@ -619,6 +632,62 @@ def check_window(tracers: List[str]) -> None:
               f"   windowed {offdiag(C_win):.3f}   DESI {offdiag(C_desi):.3f}")
 
 
+
+def check_compressed(tracers: List[str], theory: str = "rept") -> None:
+    """Our forecast targets against DESI's PUBLISHED ShapeFit constraints.
+
+    The end-to-end test: DESI 2024 V Appendix A gives per-tracer compressed
+    constraints at DR1 volumes in a basis one division from ours, so this needs
+    no window, no covariance surgery and no volume rescaling. See
+    desi_reference.py for the transcription and its caveats.
+    """
+    import desi_reference as dr
+
+    print(f"\n=== 6. Our targets vs DESI DR1 published ShapeFit ({theory}) ===")
+    print("    DESI 2024 V (2411.12021) Appendix A, ShapeFit-alone fits.")
+    print("    Ratio < 1 = we are TIGHTER than DESI. A Fisher forecast at the")
+    print("    truth is expected somewhat tight against an MCMC posterior.")
+    print(f"\n{'tracer':>10s} {'z_us':>6s} {'z_DESI':>7s} "
+          f"{'qiso':>17s} {'qap':>17s} {'fsr/fsr':>17s} {'m':>17s}")
+    rows = {}
+    for tracer in tracers:
+        try:
+            ref = dr.sigma_targets(tracer)
+            z_desi, _, _ = dr.datavector(tracer)
+        except KeyError as exc:
+            print(f"{tracer:>10s}  {exc}")
+            continue
+        ours = our_forecast(tracer, theory=theory)
+        t = ours["targets"]
+        fsr_frac = t["sigma_f_sigmar"] / float(ours["info"]["f_sigmar_fid"])
+        pairs = [
+            (t["sigma_qiso"], ref["sigma_qiso"]),
+            (t["sigma_qap"], ref["sigma_qap"]),
+            (fsr_frac, ref["sigma_f_sigmar_frac"]),
+            (t["sigma_m"], ref["sigma_m"]),
+        ]
+        flag = " *" if dr.TRACER_MAP[tracer] in dr.SAMPLE_MISMATCH else ""
+        cells = " ".join(f"{a:.4f}/{b:.4f}={a / b:>4.2f}" for a, b in pairs)
+        print(f"{tracer:>10s} {ours['z_eff']:>6.3f} {z_desi:>7.2f} {cells}{flag}")
+        rows[tracer] = (ours, ref)
+
+    print("\n  correlations (ours / DESI), sign disagreements marked X:")
+    rho_names = [n for n in fourier_space.TARGET_NAMES if n.startswith("rho_")]
+    print(f"{'tracer':>10s} " + " ".join(f"{n[4:]:>17s}" for n in rho_names))
+    for tracer, (ours, ref) in rows.items():
+        cells = []
+        for n in rho_names:
+            a, b = ours["targets"][n], ref[n]
+            bad = "X" if (a * b < 0) else " "
+            cells.append(f"{a:+.2f}/{b:+.2f}{bad}")
+        print(f"{tracer:>10s} " + " ".join(f"{c:>17s}" for c in cells))
+    for tracer, why in dr.SAMPLE_MISMATCH.items():
+        if any(dr.TRACER_MAP[t] == tracer for t in rows):
+            print(f"  * {why}")
+    print("  NB DESI warns BGS alpha_AP is prior-dominated (flat 0.8-1.2), so")
+    print("  its sigma(qap) is a prior width, not a measurement.")
+
+
 def check_sigma(tracers: List[str], rotated: bool, thetacut: bool) -> None:
     """Swap DESI's covariance into our Fisher and report the sigma shift."""
     print("\n=== 4. Sigmas with OUR covariance vs with DESI's covariance ===")
@@ -652,7 +721,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--check", nargs="*",
-                   choices=["shot", "pk", "cov", "sigma", "window", "all"],
+                   choices=["shot", "pk", "cov", "sigma", "window", "compressed", "all"],
                    default=["all"])
     p.add_argument("--tracers", nargs="*", default=None,
                    help=f"subset of {list(TRACERS_ALL)}; default all")
@@ -662,6 +731,8 @@ def main() -> int:
     p.add_argument("--thetacut", action="store_true",
                    help="use the theta-cut variant of the plain covariance")
     p.add_argument("--plot", action="store_true", help="write the covariance plot")
+    p.add_argument("--theory", choices=["kaiser", "rept"], default="rept",
+                   help="theory for --check compressed (default rept)")
     args = p.parse_args()
 
     tracers = args.tracers or list(TRACERS_ALL)
@@ -680,6 +751,8 @@ def main() -> int:
         check_pk(tracers)
     if do("cov"):
         check_cov(tracers, args.rotated, args.thetacut, args.plot)
+    if do("compressed"):
+        check_compressed(tracers, args.theory)
     if do("window"):
         check_window(tracers)
     if do("sigma"):

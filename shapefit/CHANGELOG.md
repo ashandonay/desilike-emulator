@@ -833,11 +833,13 @@ the BAO pipeline's 0.72–0.80.
 | ρ(qap,m) | −0.052 | −0.200 | +0.004 |
 | ρ(f_sigmar,m) | +0.074 | +0.242 | **−0.244** ✗ |
 
-**REPT reproduces all six signs. Kaiser gets two backwards** — ρ(qiso,qap) and
-ρ(f_sigmar,m). Independent of the σ argument in §14, and it bears on the
-correlation targets specifically, which the Lai comparison could not reach. Our
-weaker ρ are systematically under-magnitude; the dominant one, ρ(qap,f_sigmar)
-(the AP–RSD degeneracy), is over-magnitude at −0.69 vs −0.54.
+**REPT reproduces five of six signs; Kaiser gets two backwards** — ρ(qiso,qap)
+and ρ(f_sigmar,m), both of which are LARGE in DESI. REPT's one miss,
+ρ(qiso,f_sigmar) at +0.056 vs −0.013, is a pair where both values are consistent
+with zero. (An earlier draft of this section said "all six" — wrong; corrected,
+and see §16 for the all-tracer picture, which is worse.) Independent of the σ
+argument in §14, and it bears on the correlation targets specifically, which the
+Lai comparison could not reach.
 
 ### Full DESI reference, in our target basis
 
@@ -863,3 +865,51 @@ rather than a measurement.
 yes, we recover DESI's recorded ShapeFit errors to 0.77–0.92 and their
 correlation structure with the right signs. With Kaiser we did not — 0.41–0.56
 on the σ, and two correlations inverted.
+
+## 16. 2026-07-29 — All six tracers vs DESI (`--check compressed`)
+
+§15 read LRG2 off by hand. `compare_to_desi.py --check compressed [--theory
+kaiser|rept]` now scores every tracer against `desi_reference.py`. LRG2 was
+flattering.
+
+**Transcription validated independently.** DESI's ShapeFit+BAO BGS entry
+(Eq. A.13/A.14) gives D_V/r_d = 7.920703 ± 0.15489; `desi_data.csv`'s BAO-only
+value is 7.925129 ± 0.15074 — 0.06% on the centre, 2.8% on σ. BAO dominates D_V,
+so those should nearly coincide, and they do. Appendix A came across correctly.
+
+σ ratios, ours (REPT) / DESI, ShapeFit-alone:
+
+| tracer | qiso | qap | fsr/fsr | m |
+|---|---|---|---|---|
+| BGS | 0.59 | 0.93 | 0.67 | 0.68 |
+| LRG1 | 0.97 | 0.98 | 1.03 | 1.07 |
+| LRG2 | 0.77 | 0.87 | 0.91 | 0.87 |
+| LRG3_ELG1 | 0.69 | 0.68 | 0.48 | 0.96 * |
+| ELG2 | 0.64 | 0.55 | 0.54 | 0.87 |
+| QSO | 0.79 | 0.83 | 0.73 | 0.99 |
+
+`*` sample mismatch, not comparable (ours is LRG+ELG1, denser, hence tighter).
+
+**LRG1 is essentially exact (0.97–1.07). Agreement then degrades with redshift**,
+with ELG2 worst at 0.54–0.64. That is a trend across tracers, not scatter, and it
+is the thing to chase next: a uniform offset would be a normalisation, a
+z-dependent one is physics. Candidates: our z_eff being Fisher- rather than
+volume-weighted (QSO 1.343 vs 1.484), the FoG/counterterm treatment at higher z,
+and the n̄P regime differing most for the sparse high-z tracers.
+
+**Correlations: 6 sign disagreements out of 36.** §15's "five of six" was LRG2
+only. Most sit on pairs where DESI's own value is near zero (ρ(qiso,f_sigmar)
+spans −0.03 to +0.15), so their sign carries no information. Two are
+substantive: **ELG2 ρ(qiso,qap)** ours −0.08 vs DESI +0.17, and **QSO
+ρ(f_sigmar,m)** ours −0.01 vs DESI +0.24.
+
+Two systematic biases hold for *every* tracer:
+
+- ρ(qap, f_sigmar) consistently **too strong**: ours −0.65…−0.73, DESI −0.53…−0.63
+- ρ(f_sigmar, m) consistently **too weak**: ours +0.01…+0.07, DESI +0.23…+0.37
+
+Structural, not noise, and they matter: ρ is 6 of the 10 emulator targets, and
+bedcosmo assembles the 4×4 from them.
+
+BGS remains a special case — DESI flags its α_AP as prior-dominated, so its
+σ(qap) is a prior width and the 0.93 ratio there is not a physics result.
