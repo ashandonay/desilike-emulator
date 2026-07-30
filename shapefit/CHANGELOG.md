@@ -1511,3 +1511,59 @@ but **cannot catch a flaw in the de-wiggling algorithm itself**. The known
 | qiso, qap | cosmoprimo distances, independent | 7e−5 |
 | f_sigmar | DESI Table 11 fiducial (§23) | ≤0.4%, 4 tracers |
 | m | wallish2018 slope, independent code path | 6e−5 |
+
+### §25a — How much of the above is a real test (asked, and worth answering)
+
+Grading the three checks by how much they could actually have failed:
+
+**`f_sigmar` vs Table 11 — a real external test.** DESI computed 0.4608 for
+LRG2 with their own pipeline and published it; nothing of ours entered that
+number. It exercises the cosmology mapping, z_eff, f(z) and — the part most
+likely to be silently wrong — the σ_s8 convention (cold+baryon vs total, r = 8
+Mpc/h, no-wiggle vs full). A convention mismatch would show at 0.1–0.5%; we see
+0.01%.
+
+**`qiso`/`qap` — a wiring test, not a validation of the AP mapping.** It was
+described that way above and that was too strong. The reference uses the same
+cosmoprimo object *and* the D_V = D_H^⅓ D_M^⅔ z^⅓ formula copied from
+`BAOExtractor._set_base` — the code under test. It catches inversions, wrong z,
+wrong parameter mapping and unit slips, which is not nothing (exactly those
+bugs — inverted qap, a spurious ×h — were caught this way earlier), but it
+cannot catch a shared convention error. The external anchor for the distance
+side is §20's `fiducial_dv_dhdm` vs Table 11 at ≤0.13%, not this.
+
+**`m` vs the reimplemented slope — near-tautological.** Same engine, and the
+formula was reimplemented from the source lines being checked. 6e−5 largely
+means "the source was read correctly".
+
+#### One genuinely non-circular test of m
+
+With `n_varied=False`, m is the log-slope of P_nw ∝ k^{n_s} T²(k). Changing n_s
+leaves T(k) untouched, so **dm must equal Δn_s exactly** — from the definition
+of the primordial spectrum, not from any code.
+
+| n_s | Δn_s | dm ours | dm/Δn_s |
+|---|---|---|---|
+| 0.8800 | −0.08490 | −0.08419 | 0.99160 |
+| 0.9200 | −0.04490 | −0.04452 | 0.99160 |
+| 1.0100 | +0.04510 | +0.04472 | 0.99160 |
+| 1.0500 | +0.08510 | +0.08439 | 0.99160 |
+
+Fit: `dm = 0.99160 Δn_s + 3.5e−10`. Perfectly linear, 0.84% shy of unity.
+
+The **constancy** is the informative part: a purely multiplicative 0.84% with no
+nonlinearity is the de-wiggling filter partially absorbing the primordial tilt
+when it re-fits the smooth component — not noise, not plumbing. DESI's fiducial
+de-wiggling is also Wallisch2018, so the bias is shared and largely cancels
+against them.
+
+This would catch a tilt applied twice, a wrong pivot, a parameter-mapping swap
+or a sign error — none of which the reimplementation check could.
+
+#### The gap that remains
+
+n_s does not move T(k), so this says nothing about **m's Ω_m response** — and
+Ω_m is the direction the emulator is mostly used in. There is currently no
+non-circular check on it: any reference must reproduce the de-wiggling, which
+is the k-range-sensitive component (§24) and the source of the known ~0.15%
+Ω_m-locked sawtooth. Recorded as open, not solved.
