@@ -536,3 +536,54 @@ the right area for free when shapefit is extended past DR1.
 Lesson worth keeping: the original bug was a default constant carried into a
 context where it did not apply, and the first fix repeated the same pattern one
 level down. The dataset is the input; the area is a function of it.
+
+## 10. 2026-07-29 — P_shot is NOT the covariance bug (retracts §8's lead)
+
+§8 named the n_eff overshoot as the leading candidate for the remaining
+covariance deficit. That was wrong, and the test is cheap enough that it should
+have been run before the claim.
+
+DESI's shot noise is pypower's `shotnoise_nonorm / wnorm`, i.e. the FKP
+estimator's S/A = ∫dV n̄w² / ∫dV n̄²w² with w = 1/(1 + n̄P_FKP) — an n̄w²-weighted
+mean of 1/n̄, not 1/n̄ anywhere. In `fkp_analytic_cov`'s notation that is
+**I12/I22**, computable from the very slices the config-space pipeline uses.
+
+LRG2, area 7500, P_FKP = 1e4:
+
+| method | P_shot | vs DESI |
+|---|---|---|
+| DESI's own formula I12/I22 (config-space machinery) | 3598 | 0.688 |
+| volume-weighted 1/⟨n⟩ | 3595 | 0.688 |
+| shapefit's Brent n_eff collapse | 3657 | 0.699 |
+| **DESI measured** | **5229** | 1.000 |
+
+**The three reductions agree to 2%.** Two consequences:
+
+1. The Brent V_eff→n_eff collapse is not lossy in any way that matters. It
+   reproduces DESI's own functional on the same inputs.
+2. **`bao/config_space.py` carries the identical offset** — the first row was
+   computed with `fkp_analytic_cov._fkp_integrals` at config-space's own
+   `_AREA = 7500` via the shared `load_nz_slices`. So this is a property of the
+   shared n(z) inputs, not a shapefit defect. Since config-space is the
+   validated production driver, an offset it also carries is not the bug.
+
+The likelier explanation is that DESI's measured value is not the same quantity:
+`num_shotnoise` sums w²_tot over data plus α²-scaled randoms, with completeness
+weights inside w_tot. Both inflate it relative to ∫dV n̄w² from a smooth n(z),
+and both are absent from our side by construction. Not measured here, so not
+claimed as the full explanation — only as the right order.
+
+**Loose end, flagged not resolved.** P_shot ∝ area, so matching 5229 would want
+an effective area of ~10900 deg² (7500 × 5229/3598 = 10900; 14000 × 5229/6713 =
+10905 — consistent from either end). But §8's theory-amplitude test independently
+pinned 7500 through the HOD b₁, landing P₀/DESI at 1.032. Those point at
+different areas. P₀ is a direct comparison against DESI's measured monopole while
+P_shot compares across a known weighting-convention mismatch, so P₀ is the one to
+trust — but this is unresolved.
+
+**Where that leaves the covariance.** Back to unexplained, but better posed:
+config-space sits at 0.66–0.88 against DESI's covariance
+(`project_gaussian_xi_cov_findings`), the same direction as our windowed 0.512.
+So part of the deficit is the known Gaussian-vs-non-Gaussian shortfall shared
+with the validated pipeline, and only the excess beyond ~0.7 needs its own
+explanation.
