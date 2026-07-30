@@ -1127,3 +1127,69 @@ what survives makes the fit *slightly tighter*, not looser.
 
   So the modelling side is settled and should not be reopened as an explanation
   for the residual.
+
+---
+
+## §20 — DESI's fiducial cosmology, and two transcription errors it exposed
+
+"Which cosmology are the published ShapeFit numbers tied to?" — §4.7 item 10
+and Table 6, row 1: **AbacusSummit c000, "Planck ΛCDM"**.
+
+| ω_b | ω_cdm | h | 10⁹A_s | n_s | N_ur | w₀ | w_a |
+|---|---|---|---|---|---|---|---|
+| 0.02237 | 0.1200 | 0.6736 | 2.0830 | 0.9649 | 2.0328 | −1 | 0 |
+
+N_ur = 2.0328 is one massive neutrino at 0.06 eV. One cosmology does both jobs:
+the **grid** cosmology that turns redshifts into comoving distances, and the
+ShapeFit **template** cosmology generating the reference P_lin(k) — *"For
+simplicity, this cosmology, namely template cosmology, is chosen to be the same
+as the grid cosmology."* This is exactly cosmoprimo's `("DESI", {})`, which the
+pipeline already uses.
+
+### Table 11 validates our fiducial distances
+
+Appendix C publishes the fiducial D_M/r_d, D_H/r_d, D_V/r_d, D_H/D_M, σ_s8 and
+fσ_s8 per bin. `fiducial_dv_dhdm` reproduces them to **≤0.13%** on all six
+tracers, and our r_d = 99.0844 Mpc against their 99.0792 (0.005%). Independent
+confirmation that our fiducial cosmology *and* our D_H/D_M/D_V conventions are
+DESI's. (Their caption labels r_d "Mpc/h"; that is a slip — in Mpc/h it is
+66.74.)
+
+Table 11 is now transcribed into `desi_reference._T11` and
+`sigma_targets` divides by **those** published values rather than recomputing
+them. There is no reason to recompute a number DESI printed.
+`fiducial_dv_dhdm` stays as the cross-check.
+
+### Two errors of ours that this caught
+
+1. **Rounded z_eff.** The Appendix A headings round to 2 d.p. ("at z_eff =
+   0.30"); Table 1 has 0.295, 0.510, 0.706, 0.919, 1.317, 1.491. We transcribed
+   the headings, and those z were feeding the fiducial denominators in
+   `sigma_targets`. Corrected shifts in DESI's σ:
+
+   | | σ(qiso) | σ(qap) |
+   |---|---|---|
+   | BGS | +1.39% | −1.69% |
+   | LRG2 | +0.43% | −0.74% |
+   | ELG2 | +0.11% | −0.31% |
+   | LRG1 / LRG3 / QSO | ≤0.09% | ≤0.19% |
+
+   BGS was the worst by an order of magnitude — a ~1.5% error on the tracer
+   whose scorecard entry (0.62/0.94/0.67/0.68) is already the odd one out.
+   Also fixed `_DESI_ZEFF` in `compare_to_desi.py`, which carried the **BAO**
+   paper's 0.930 and 1.484 for LRG3 and QSO instead of full-shape's 0.919 and
+   1.491.
+
+2. **Wrong fiducial A_s.** Every fiducial sample in `shapefit/` used
+   `ln10A_s = 3.044`, the Planck 2018 TT,TE,EE+lowE+lensing value. DESI's
+   fiducial is A_s = 2.083e-9, i.e. **ln10A_s = 3.036394**. We were 0.76% high
+   in A_s, 0.38% in σ8, and therefore 0.38% high in every mean-pipeline
+   f_sigmar. Negligible for the σ targets (a fiducial shift, not a derivative
+   one) but wrong, and free to correct. Changed in `compare_to_desi.py`,
+   `validate_forecast.py`, `validate_mean.py`, `generate_mean_data.py` and the
+   `regress_sigmas.py` probe grid.
+
+The regress grid change means the golden baseline must be regenerated — it was
+already stale from the §14 damping fix, the §15 theory dispatch and the §18
+area fix, so this costs nothing extra. **Any σ ratio quoted before this entry
+carries the z-rounding error**, largest for BGS.

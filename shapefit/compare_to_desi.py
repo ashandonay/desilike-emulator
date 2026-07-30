@@ -59,7 +59,7 @@ Caveats that are physics, not bugs
   splits LRG 0.8-1.1 as LRG-only, while our bin is the combined LRG+ELG1
   sample used by the BAO analysis. Densities differ, so that bin is reported
   but flagged.
-* QSO z_eff differs from DESI's 1.484 by ~10% by design (bao CHANGELOG S18:
+* QSO z_eff differs from DESI's 1.491 by ~10% by design (bao CHANGELOG S18:
   ours is Fisher-weighted, DESI's is volume-weighted). f*sigma8 evolves fast,
   so never compare f_sigmar across that Delta z without matching z first.
 
@@ -125,14 +125,16 @@ _FS_BUNDLES = {
 }
 
 # DESI's published (volume-weighted) effective redshifts, for reference only.
+# Table 1 of arXiv:2411.12021 -- the FULL-SHAPE z_eff. LRG3 and QSO previously
+# carried 0.930 and 1.484, which are the BAO paper's values for those bins.
 _DESI_ZEFF = {"BGS": 0.295, "LRG1": 0.510, "LRG2": 0.706,
-              "LRG3_ELG1": 0.930, "ELG2": 1.317, "QSO": 1.484}
+              "LRG3_ELG1": 0.919, "ELG2": 1.317, "QSO": 1.491}
 
 FID_SAMPLE = {
     "omega_cdm": 0.1200,
     "omega_b": 0.02237,
     "h": 0.6736,
-    "ln10A_s": 3.044,
+    "ln10A_s": 3.036394,
     "n_s": 0.9649,
 }
 

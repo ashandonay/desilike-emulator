@@ -38,8 +38,8 @@ the ABSOLUTE slope m = m_fid + dm, which is -0.5775 at the fiducial for LRG2.
 The two differ by m_fid. Anything comparing mean m values -- bedcosmo included
 -- has to account for that offset.
 
-The denominator is the FIDUCIAL value, computed from cosmoprimo at DESI's
-z_eff, not the measured central value. An earlier version divided by the
+The denominator is the FIDUCIAL value from DESI's own Table 11 (Appendix C),
+not the measured central value. An earlier version divided by the
 measurement on the assumption that DR1 sits within ~1% of the fiducial. It does
 not: measured/fiducial runs to 0.948 for LRG2 D_V/r_d and 0.923 for LRG1
 D_H/r_d (the latter being DR1's well-known low point). Those are real data
@@ -75,15 +75,53 @@ import numpy as np
 
 _FID_CACHE: Dict[float, Tuple[float, float]] = {}
 
+# ---------------------------------------------------------------------------
+# Table 11 (Appendix C): DESI's OWN fiducial values, at the Table 1 z_eff.
+#   label: (z_eff, DM/rd, DH/rd, DV/rd, DH/DM, sigma_s8, f sigma_s8)
+# The fiducial cosmology is AbacusSummit c000 "Planck LCDM" (Table 6, row 1):
+#   omega_b 0.02237, omega_cdm 0.1200, h 0.6736, 1e9 A_s 2.0830, n_s 0.9649,
+#   N_ur 2.0328 (one 0.06 eV neutrino), w0 -1, wa 0.
+# Section 4.7 item 10: this same cosmology is BOTH the grid cosmology (z ->
+# comoving distance) and the ShapeFit template cosmology. It is exactly
+# cosmoprimo's "DESI", which is what our pipeline uses -- fiducial_dv_dhdm
+# below reproduces this table to <=0.13%.
+# rd = 99.0792 Mpc. (The paper's caption says "Mpc/h"; that is a slip -- in
+# Mpc/h it would be 66.74. Our cosmoprimo value is 99.0844 Mpc, 0.005% away.)
+# ---------------------------------------------------------------------------
+_T11 = {
+    "BGS":  (0.295,  8.2908, 25.8506,  8.0663, 3.1180, 0.6936, 0.4723),
+    "LRG1": (0.510, 13.4928, 22.7462, 12.8269, 1.6858, 0.6210, 0.4733),
+    "LRG2": (0.706, 17.6976, 20.1727, 16.4597, 1.1399, 0.5638, 0.4608),
+    "LRG3": (0.919, 21.7238, 17.7321, 19.7356, 0.8162, 0.5108, 0.4398),
+    "ELG2": (1.317, 28.0276, 14.0956, 24.4318, 0.5029, 0.4320, 0.3944),
+    "QSO":  (1.491, 30.3606, 12.8359, 26.0292, 0.4228, 0.4042, 0.3750),
+}
+
+
+def published_fiducial(tracer_bin: str) -> Dict[str, float]:
+    """DESI's Table 11 fiducial row for a tracer. The denominators of record."""
+    key = TRACER_MAP.get(tracer_bin, tracer_bin)
+    if key not in _T11:
+        raise KeyError(f"No Table 11 entry for {tracer_bin!r} (mapped {key!r})")
+    z, dm, dh, dv, dhdm, s8, fs8 = _T11[key]
+    return {"z_eff": z, "DM_over_rd": dm, "DH_over_rd": dh, "DV_over_rd": dv,
+            "DH_over_DM": dhdm, "sigma_s8": s8, "f_sigma_s8": fs8}
+
 
 def fiducial_dv_dhdm(z: float) -> Tuple[float, float]:
-    """(D_V/r_d, D_H/D_M) at the DESI fiducial cosmology.
+    """(D_V/r_d, D_H/D_M) recomputed from cosmoprimo at the DESI fiducial.
+
+    Cross-check on `published_fiducial`, which is what sigma_targets actually
+    uses -- there is no reason to recompute a number DESI printed. Agrees with
+    Table 11 to <=0.13% on every tracer.
 
     Conventions match desilike's BAOExtractor._set_base:
         D_H = (c/1e3) / (100 * efunc(z)),  D_M = comoving_angular_distance(z),
         D_V = D_H^(1/3) * D_M^(2/3) * z^(1/3),  all already Mpc/h.
-    Validated against DESI's published BAO in desi_data.csv: most quantities
-    agree to 1-2%, the expected data-vs-fiducial scatter.
+
+    Feed it the Table 1 z_eff, not a rounded one: at z=0.30 instead of 0.295
+    BGS moves +1.4% in D_V/r_d and -1.7% in D_H/D_M, which is a bigger error
+    than anything it is being used to measure.
     """
     key = round(float(z), 6)
     if key not in _FID_CACHE:
@@ -124,32 +162,32 @@ def _sym(upper: List[List[float]]) -> np.ndarray:
 # ShapeFit alone -- Eqs. (A.1)-(A.12)
 # ---------------------------------------------------------------------------
 _SF = {
-    "BGS": (0.30, [7.788174, 3.053800, 0.377174, -0.031370], [
+    "BGS": (0.295, [7.788174, 3.053800, 0.377174, -0.031370], [
         [1314.664401, -142.669742, 109.427163, -217.509715],
         [0.0, 829.170940, -158.101737, -61.084426],
         [0.0, 0.0, 88.510877, -2.272457],
         [0.0, 0.0, 0.0, 279.702360]]),
-    "LRG1": (0.51, [12.514437, 1.637266, 0.513635, 0.027840], [
+    "LRG1": (0.510, [12.514437, 1.637266, 0.513635, 0.027840], [
         [541.309833, 48.425593, -4.652853, -37.707751],
         [0.0, 97.249820, -34.923265, -14.418597],
         [0.0, 0.0, 41.295470, 15.405508],
         [0.0, 0.0, 0.0, 48.918910]]),
-    "LRG2": (0.71, [15.675560, 1.165867, 0.483623, 0.046650], [
+    "LRG2": (0.706, [15.675560, 1.165867, 0.483623, 0.046650], [
         [762.457717, 39.781004, -1.896006, -62.812849],
         [0.0, 36.344098, -17.341350, -8.333900],
         [0.0, 0.0, 28.119682, 8.865225],
         [0.0, 0.0, 0.0, 47.624520]]),
-    "LRG3": (0.92, [19.676985, 0.844996, 0.422164, -0.024690], [
+    "LRG3": (0.919, [19.676985, 0.844996, 0.422164, -0.024690], [
         [847.499793, 26.038900, 3.257324, -37.016091],
         [0.0, 16.251088, -10.044074, -3.698790],
         [0.0, 0.0, 22.370314, 6.467510],
         [0.0, 0.0, 0.0, 34.883220]]),
-    "ELG2": (1.32, [23.861806, 0.470709, 0.376715, 0.059960], [
+    "ELG2": (1.317, [23.861806, 0.470709, 0.376715, 0.059960], [
         [2342.506886, 26.159601, 13.521001, -95.336060],
         [0.0, 10.309303, -6.654663, -5.183903],
         [0.0, 0.0, 13.997473, 9.109619],
         [0.0, 0.0, 0.0, 43.575710]]),
-    "QSO": (1.49, [25.708520, 0.426508, 0.434858, 0.064550], [
+    "QSO": (1.491, [25.708520, 0.426508, 0.434858, 0.064550], [
         [3013.788566, -2.205101, 36.332110, -98.167826],
         [0.0, 5.845806, -6.747133, -1.913326],
         [0.0, 0.0, 19.785658, 5.357546],
@@ -176,14 +214,16 @@ def sigma_targets(tracer_bin: str, variant: str = "sf") -> Dict[str, float]:
     """DESI's constraints expressed as our emulator targets.
 
     sigma_qiso and sigma_qap are divided by the FIDUCIAL D_V/r_d and D_H/D_M
-    (see fiducial_dv_dhdm), which is what the definitions of qiso and qap
-    require. sigma_f_sigmar is returned as a FRACTION of f sigma_s8,
+    as published in Table 11 (see published_fiducial), which is what the
+    definitions of qiso and qap require. sigma_f_sigmar is returned as a
+    FRACTION of f sigma_s8,
     since our f_sigmar and DESI's f sigma_s8 share a definition but are
     evaluated at slightly different z_eff. sigma_m is absolute.
     """
     z, vec, C = datavector(tracer_bin, variant)
     sig = np.sqrt(np.diag(C))
-    fid_dv, fid_dhdm = fiducial_dv_dhdm(z)
+    fid = published_fiducial(tracer_bin)
+    fid_dv, fid_dhdm = fid["DV_over_rd"], fid["DH_over_DM"]
     out = {
         "sigma_qiso": float(sig[0] / fid_dv),
         "sigma_qap": float(sig[1] / fid_dhdm),

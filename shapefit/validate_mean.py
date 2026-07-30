@@ -74,7 +74,7 @@ from util import ntracers
 TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
 
 FID = {"omega_cdm": 0.1200, "omega_b": 0.02237, "h": 0.6736,
-       "ln10A_s": 3.044, "n_s": 0.9649}
+       "ln10A_s": 3.036394, "n_s": 0.9649}
 
 # Cosmology grid. Every point stays inside DEFAULT_PRIORS and satisfies the
 # Omega_m domain guard; the w0/wa point respects high_z_matter_dom (w0+wa <= 0).
