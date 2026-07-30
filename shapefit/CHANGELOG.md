@@ -784,3 +784,82 @@ failure this section documents.
 
 Kaiser is behaviour-preserved by the refactor: σ = 0.00787 / 0.02370 / 0.02854 /
 0.02836 reproduces §8 exactly.
+
+## 15. 2026-07-29 — DESI's recorded ShapeFit constraints (`desi_reference.py`)
+
+The reference this whole effort was missing. DESI 2024 V (arXiv:2411.12021)
+Appendix A, "Datavectors and covariances for the compressed ShapeFit
+parameters", publishes per-tracer 4-vectors and full 4×4 covariances for all six
+DR1 bins, in **both** ShapeFit-alone (Eqs. A.1–A.12) and ShapeFit+BAO
+(A.13–A.24) variants. Transcribed into `shapefit/desi_reference.py` — the
+full-shape analogue of `bao/desi_reference.py`.
+
+Obtained by downloading the PDF and running `pdftotext -layout`; every web
+fetcher truncates around §4.4, well before the appendix. `data.desi.lbl.gov` was
+simultaneously down ("power outage maintenance of the underlying Spin service at
+NERSC"), so the VAC route was unavailable anyway — the paper turned out to be
+the faster path and needs no NERSC access at all.
+
+DESI reports `[D_V/r_d, D_H/D_M, f σ_s8, m+n]`, one division from our basis:
+qiso = (D_V/r_d)/fid, qap = (D_H/D_M)/fid. Ratios leave correlations untouched,
+so **the six rho targets compare with no conversion whatsoever** — which matters,
+because nothing had ever validated them.
+
+We use the **ShapeFit-alone** variant. The +BAO fits are tighter, particularly
+on qiso, and comparing our pre-recon power-only forecast against them would
+flatter us.
+
+### LRG2, ours (REPT) vs DESI
+
+| | ours | DESI | ratio |
+|---|---|---|---|
+| σ(qiso) | 0.0136 | 0.01762 | 0.77 |
+| σ(qap) | 0.0450 | 0.05171 | 0.87 |
+| σ(f_sigmar)/f_sigmar | 10.03% | 10.96% | 0.92 |
+| σ(m) | 0.0602 | 0.06901 | 0.87 |
+
+**0.77–0.92**, in the direction a Fisher forecast at the truth should sit
+relative to an MCMC posterior carrying prior-volume effects, and comparable to
+the BAO pipeline's 0.72–0.80.
+
+### Correlations — first validation of 6 of the 10 targets
+
+| | ours (REPT) | DESI | Kaiser |
+|---|---|---|---|
+| ρ(qiso,qap) | +0.269 | +0.239 | **−0.110** ✗ |
+| ρ(qiso,f_sigmar) | +0.056 | −0.013 | +0.248 |
+| ρ(qiso,m) | −0.169 | −0.330 | −0.373 |
+| ρ(qap,f_sigmar) | −0.694 | −0.542 | −0.754 |
+| ρ(qap,m) | −0.052 | −0.200 | +0.004 |
+| ρ(f_sigmar,m) | +0.074 | +0.242 | **−0.244** ✗ |
+
+**REPT reproduces all six signs. Kaiser gets two backwards** — ρ(qiso,qap) and
+ρ(f_sigmar,m). Independent of the σ argument in §14, and it bears on the
+correlation targets specifically, which the Lai comparison could not reach. Our
+weaker ρ are systematically under-magnitude; the dominant one, ρ(qap,f_sigmar)
+(the AP–RSD degeneracy), is over-magnitude at −0.69 vs −0.54.
+
+### Full DESI reference, in our target basis
+
+| tracer | z_DESI | σ(qiso) | σ(qap) | σ(fsr)/fsr | σ(m) |
+|---|---|---|---|---|---|
+| BGS | 0.30 | 0.04656 | 0.09429 | 24.94% | 0.16724 |
+| LRG1 | 0.51 | 0.01859 | 0.06023 | 12.51% | 0.06994 |
+| LRG2 | 0.71 | 0.01762 | 0.05171 | 10.96% | 0.06901 |
+| LRG3 | 0.92 | 0.01479 | 0.04771 | 11.20% | 0.05906 * |
+| ELG2 | 1.32 | 0.02028 | 0.06821 | 9.93% | 0.06601 |
+| QSO | 1.49 | 0.02135 | 0.05669 | 10.23% | 0.05125 |
+
+`*` DESI's 0.8–1.1 bin is **LRG-only**; our LRG3_ELG1 is LRG+ELG1. Different
+sample, different density — not comparable.
+
+ρ(qap, f_sigmar) sits at −0.53 to −0.63 for every tracer, so the AP–RSD
+degeneracy is a robust structural feature and a good target to reproduce. BGS is
+an outlier throughout, and DESI flags why: its α_AP is prior-dominated, "highly
+affected by the flat prior between 0.8 and 1.2", so its σ(qap) is a prior width
+rather than a measurement.
+
+**This answers the original question.** For LRG2 on the covar side, with REPT:
+yes, we recover DESI's recorded ShapeFit errors to 0.77–0.92 and their
+correlation structure with the right signs. With Kaiser we did not — 0.41–0.56
+on the σ, and two correlations inverted.
