@@ -1908,9 +1908,21 @@ everywhere else — **exactly 1.5×**, i.e. the area accumulator summed 3 file-r
 instead of 2. That slice is the trimmed bin boundary (`Nbin_file` 241310.6 vs
 `shape_weight` 162885.2, trim 0.674, which matches the comoving-volume fraction
 of trimming a native ~0.59–0.62 bin to 0.60–0.62 — the trimming itself is
-correct). It corrupts only `file_area_deg2` → `nbar_file`, which the pipeline
-never reads (it rebuilds n̄ = N·frac/V). Not the cause of anything, and LRG1
-shows the same anomaly-free but equally low V_eff, so it could not have been.
+correct). It is confined to the `file_area_deg2` /
+`file_effective_area_deg2` **metadata** columns.
+
+Two claims made about this in passing were both wrong, and they cancelled:
+`nbar_file` is **not** corrupted — it is `shape_weight / volume_file_trimmed`
+exactly on every slice, built from counts and volumes and never from the area,
+and the density sequence is smooth across the bad row (5.4535, 5.4011, 5.2802,
+… 5.7359 e−4; a 1.5× error would be glaring). And the pipeline **does** read
+`nbar_file` — `shapefit/core.py:386` and `bao/core.py:221` use it for the
+per-slice FKP weight that sets `z_eff`, and `bao/fkp_analytic_cov.py:235` reads
+it directly. So it is harmless for the opposite reason to the one first given:
+the pipeline consumes `nbar_file`, and `nbar_file` is clean.
+
+Not the cause of anything, and LRG1 shows the same anomaly-free but equally low
+V_eff, so it could not have been.
 
 ### RETRACTION: the V_eff/P_shot "inconsistency" was a P₀ artifact
 
