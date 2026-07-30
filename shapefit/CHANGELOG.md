@@ -1385,3 +1385,69 @@ volume-weighted average over redshift slices and the area multiplies every
 slice identically, so it drops out of the normalised weight — all six tracers
 agree to 5 decimal places between 7500 and 14000. Fixed anyway, since the
 constant was wrong and inconsistent with the generator.
+
+---
+
+## §24 — REPT's k-range shifts the template's `m_fid` by 0.092 (no target affected)
+
+Regenerating the golden baseline under REPT (§22) changed 816/1158 arrays.
+Structurally correct: all 198 `mean/` arrays are **bit-identical** — the mean
+pipeline uses `ShapeFitPowerSpectrumExtractor`, not `theory_cls`, so a theory
+switch must not touch it — as are `obs_k`, `obs_ells` and `z_eff`. Everything
+downstream of the theory moved.
+
+One entry in that list needed explaining: `m_fid` shifted by **−0.0921,
+identically on all six tracers** (−0.5775 → −0.6699), and `f_sigmar_fid` by a
+uniform +0.031%.
+
+### Cause, confirmed
+
+`power_template.py:_set_base` computes
+
+```python
+state['m'] = np.diff(np.log(pknow_dd / pk_prim))[0] / np.diff(np.log(k))[0]
+```
+
+at `k = kp/s * [1∓0.01]`, kp = 0.03 — the log-slope of the **no-wiggle**
+spectrum. `pknow_dd_interpolator` is built over whatever k grid the attached
+theory requests, and `with_now='wallish2018'` fits its smooth component across
+that range, so the range changes the no-wiggle spectrum and hence the slope.
+
+A/B, LRG2 z_eff, same fiducial:
+
+| | m_fid | template k grid |
+|---|---|---|
+| template standalone | −0.577531 | — |
+| template + Kaiser | −0.577531 | 1.00e−3 … 1.00e0 (n=500) |
+| template + REPT | **−0.669599** | **2.50e−4** … 1.01e0 (n=500) |
+| `ShapeFitPowerSpectrumExtractor` | −0.577530 | — (mean pipeline) |
+
+REPT asks for k down to 2.5e−4 rather than 1e−3 — 4× wider at the bottom, same
+500 points. Three of the four agree to 1e−6; REPT is the outlier. This is the
+same family as the known wallish2018 k-sensitivity, an order of magnitude
+larger than the ~0.15% sawtooth already on record.
+
+### Impact: none on any emulator target
+
+An earlier note in this session called it a 1.3σ systematic for bedcosmo. **That
+was wrong.**
+
+- σ(m) is offset-invariant — `J = diag(1, 1, f_sigmar_fid, 1)`, the m entry is
+  1, so σ(m) = σ(dm) wherever m_fid sits. Covar targets untouched.
+- Absolute `m` is produced by the **mean** emulator, which uses the extractor
+  and is theory-independent (hence the bit-identical `mean/` arrays).
+- bedcosmo takes `m` from mean and σ(m) from covar, and never adds the two
+  zero-points.
+
+What is true is narrower: `dm` is defined relative to the attached template, so
+`m = m_fid + dm` is internally self-consistent *within* the covar pipeline —
+but the covar path's recorded `m_fid` now sits on a different zero-point from
+the mean path's.
+
+**Rule: do not use the covar path's `m_fid` as the absolute zero-point.** It is
+theory-dependent bookkeeping. The extractor's −0.5775 (per-tracer values in
+§23) is the reference, and it is the one the mean emulator is trained on.
+
+`f_sigmar_fid` moves by the same mechanism, but there the attached template's
+value is the *correct* one — `df` is defined relative to it, so using it is
+required for self-consistency — and at +0.031% it is negligible either way.
