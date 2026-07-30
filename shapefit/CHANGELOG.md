@@ -2006,3 +2006,38 @@ regime.
    real factor is tracer-dependent, or a warning against the assumption.
 3. `bao/` is regression-frozen and was **not modified** — this is a read-only
    measurement through the public `XiSigmaGenerator` API.
+
+### §29a — RETRACTION: "correcting n̄ by 1.4545" is not a correction, and the test was malformed
+
+§29 framed `sigma_triplet(N_tracers=N/1.4545)` as *correcting* n̄ and concluded
+the BAO 23% gap is roughly half explained. **Both the framing and the test are
+wrong.**
+
+**1. It is a fudge factor.** 1.4545 is an unexplained *discrepancy*, not a known
+correction — §26a ruled out the V_eff/I₁₂/I₂₂ definition, §26c/§27 ruled out
+completeness, §28 ruled out the slice bug, and the cause remains open (three
+mutually inconsistent area normalisations, §28). Applying it would be
+data-derived, constant in `N_tracers`, and would fit our pipeline to DESI's
+number — destroying the independence that makes the comparison meaningful. It is
+precisely what this project rejects, and what §26b/§26c argued against twice
+before §29 went and did it anyway. Since `N_tracers` is the **design variable**,
+rescaling n̄ by it means "asked for N, return σ for N/1.4545", which corrupts
+the design mapping itself.
+
+**2. The test does not correspond to the plausible physical fix.** n̄ = N·frac/V.
+The leading candidate cause is the volume/area, so a real fix changes n̄ **and**
+V_survey together: larger V lowers sample variance (more modes) while lower n̄
+raises shot noise, and the two partially cancel. Scaling N alone captures only
+the σ-inflating half. The ×1.09–1.26 factors therefore **overstate the effect by
+an unknown amount**, and the "closes half the gap on LRG, nearly all on
+ELG2/QSO" conclusion is withdrawn.
+
+**What survives from §29:**
+- `bao/config_space.py` builds n̄ identically to shapefit — verified, and the
+  numbers match exactly. The excess is shared, not a shapefit bug. *(fact)*
+- BAO σ are sensitive to n̄ at the ~10–26% level, sparse tracers most.
+  *(a sensitivity, not a correction — and an upper bound, per point 2)*
+
+**What does not survive:** any statement about how much of the documented BAO
+23% under-prediction, or the 0.66–0.88 ξ-cov deficit, this accounts for. That
+needs the *cause* identified, not a ratio applied.
