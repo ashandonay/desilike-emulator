@@ -1001,3 +1001,96 @@ from the input cosmology. Both z_eff are annotated there, since fσ8 evolves fas
 and ours are Fisher-weighted against DESI's volume-weighted. m is plotted as a
 deviation on both sides — DESI's is already one, ours is absolute, and plotting
 them raw would show a spurious ~0.58 offset (§17).
+
+---
+
+## §19 — The DESI survey window, done consistently, is a no-op for ShapeFit
+
+§16/§18 left "we never apply DESI's survey window" as the leading suspect for
+the residual σ gap. Tested on LRG2, the only tracer whose full-shape bundle we
+have locally (`likelihood_spectrum-poles-rotated_syst-hod_LRG_GCcomb_z0.6-0.8_thetacut0.05.h5`).
+**It is not the explanation.**
+
+### Getting the window into desilike at all
+
+Two separate obstacles, both now cleared:
+
+1. Passing the bundle *path* makes lsstypes return the whole
+   `GaussianLikelihood`, and desilike falls through to its deprecated pypower
+   branch → `AttributeError: 'GaussianLikelihood' object has no attribute
+   'deepcopy'`. Pass `bundle.window`, not the path.
+2. `bundle.window` still fails, at `window.py:340`, `wmatrix.theory.ells`. This
+   was previously written up here as a desilike-4cfd6bec-vs-lsstypes-1.1.0 API
+   mismatch. **That was wrong.** The DR1 bundles ship the *rotated* window,
+   whose theory axis is an `ObservableTree` — the P0/P2/P4 spectrum block
+   (3×349) plus two `rotation` and one `photo` nuisance-template columns — and
+   a tree legitimately has no `.ells`. Select the spectrum block on both axes:
+
+   ```python
+   W = (bundle.window.at.theory.get(observables='spectrum')
+                     .at.observable.get(observables='spectrum'))   # (72, 1047)
+   ```
+
+   No desilike fork, no version bump. This does drop the 3 systematic-template
+   columns DESI marginalizes over, which makes the result mildly optimistic.
+
+### The covariance does not follow the window
+
+`ObservablesCovarianceMatrix` has **no window handling at all** — grep
+`wmatrix|window` in `observables/galaxy_clustering/covariance.py` returns
+nothing. So `wmatrix=W` convolves the theory and its derivatives and leaves the
+covariance unconvolved. Measured on LRG2:
+
+| | diag ours/DESI | P0 nearest-neighbour corr |
+|---|---|---|
+| no window | 1.586 | 0.059 |
+| `wmatrix=W`, desilike's covariance | 1.594 | 0.063 |
+| `C_obs = M C_kin M^T` | **0.815** | **0.788** |
+| DESI (EZmock, rotated) | 1 | 0.666 |
+
+That middle row is a trap: smoothed derivatives against an unsmoothed
+covariance double-counts the window's information loss and inflates σ by
+1.38×/1.30× on qiso/qap. Any number produced that way is meaningless.
+
+The two outer rows are the real finding. Our analytic Gaussian covariance was
+never 1.6× too large — that ratio was comparing an unconvolved covariance to a
+convolved one. Rotated properly it lands at **0.815** of DESI's, with the right
+correlation structure, which is exactly the modest non-Gaussian deficit the BAO
+side already documents (config/bundle 0.66–0.88, `bao` CHANGELOG). `compare_to_desi.py --check cov` compares the *unrotated* covariances and so
+still reports ~1.6; its docstring now carries the corrected reading.
+
+`C_kin` is built by calling `build_shapefit_likelihood` again on the window's
+own theory grid — `ells=(0,2,4)`, `klim_spec=(0.0005, 0.3495, 0.001)`,
+`skip_kmin_guard=True` (new kwarg; the guard would clamp kmin to 0.0052 and
+break the grid match). 1047×1047, 36 s. The k grids agree to 2.8e-16.
+
+### Result: the window barely moves the compressed parameters
+
+LRG2, REPT, ours/DESI:
+
+| | no window | W, derivs only | **W, consistent** | DESI |
+|---|---|---|---|---|
+| σ(qiso) | 0.82 | 1.12 | **0.81** | — |
+| σ(qap) | 0.85 | 1.10 | **0.79** | — |
+| σ(fσ_r)/fσ_r | 0.91 | 1.00 | **0.85** | — |
+| σ(m) | 0.87 | 0.89 | **0.80** | — |
+
+Every ρ moves by less than 0.03 between the unwindowed and consistently-windowed
+runs. Derivative smoothing and covariance correlation cancel almost exactly, and
+what survives makes the fit *slightly tighter*, not looser.
+
+### Consequences
+
+- **Production stays windowless.** It costs 36 s/cosmology (≈15× the current
+  per-sample cost) to change σ by ~5% in the wrong direction. The hook and
+  `skip_kmin_guard` stay for diagnostics.
+- **The high-z degradation is not geometry.** ELG2/QSO at 0.54–0.65 (§16) has
+  to be physics or nuisance freedom. The remaining full-shape bundles drop off
+  the critical path — worth having, no longer blocking.
+- **The residual ~20% is accounted for, qualitatively.** Two effects, same
+  sign: our covariance is 0.815 of DESI's (Gaussian only), and we marginalize
+  b1p/sn0/σ_par where DESI marginalizes a full EFT set (b2, bs, b3, α0/α2/α4,
+  SN0/SN2/SN4). Both make us optimistic; together they are about the right
+  size. Neither is a fudge factor to be tuned — the first is the known
+  non-Gaussian deficit, the second is a modelling choice to revisit on its own
+  merits.

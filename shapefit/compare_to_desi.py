@@ -23,11 +23,18 @@ Checks (select with --check, default all):
          tracers with a covariance file.
          *** NOT apples-to-apples. *** DESI's covariance -- plain or rotated --
          is the covariance of a WINDOW-CONVOLVED estimator, and ours is not
-         convolved. On LRG2 the window moves the ratio 2.046 -> 0.512, a factor
-         of 4, so the absolute level here is meaningless and the spread ACROSS
-         tracers is not a density-response signal either (the window differs per
-         footprint). Use `--check window`, which needs a bundle. This check is
-         only good for k-SHAPE trends at fixed tracer.
+         convolved, so the absolute level here is meaningless and the spread
+         ACROSS tracers is not a density-response signal either (the window
+         differs per footprint). This check is only good for k-SHAPE trends at
+         fixed tracer.
+         The apples-to-apples version is C_obs = M C_kin M^T, with M the
+         window's 72x1047 value and C_kin our covariance on the window's own
+         theory grid (CHANGELOG S19 has the recipe). Doing that on LRG2 turns
+         a raw ratio of 1.586 into 0.815 with the right correlation structure
+         (P0 nearest-neighbour 0.79 vs DESI's 0.67), i.e. our Gaussian
+         covariance is ~18% LOW, not 60% high -- the familiar non-Gaussian
+         deficit. Not wired in here: it needs a per-tracer bundle and a
+         1047-bin auxiliary covariance (36 s).
   sigma: rebuild the Fisher with DESI's covariance substituted for ours
          (core.build_shapefit_likelihood(cov_override=...)) and report how far
          the four sigmas move. Attributes any sigma gap to the covariance vs

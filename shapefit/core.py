@@ -393,6 +393,7 @@ def build_shapefit_likelihood(
     float_sigma_damp: bool = True,
     cov_override: np.ndarray | None = None,
     wmatrix=None,
+    skip_kmin_guard: bool = False,
 ) -> Dict:
     """Build the pre-recon full-shape Gaussian likelihood for one tracer bin.
 
@@ -648,6 +649,11 @@ def build_shapefit_likelihood(
     L_survey = base_footprint.volume ** (1 / 3)
     kmin_window = 2.0 * np.pi / L_survey
     kmin_eff = max(float(klim_spec[0]), kmin_window)
+    if skip_kmin_guard:
+        # Only for building an auxiliary covariance on a prescribed k-grid (the
+        # window's theory grid starts at k=0.001, below the guard). Never for a
+        # fit range.
+        kmin_eff = float(klim_spec[0])
 
     # ------------------------------------------------------------------
     # ShapeFit template + full-shape theory
@@ -663,30 +669,56 @@ def build_shapefit_likelihood(
 
     klim = {int(ell): [kmin_eff, float(klim_spec[1]), float(klim_spec[2])]
             for ell in ells}
-    # wmatrix: DESI's survey window, as a path to a full-shape bundle or an
-    # lsstypes.WindowMatrix. Default None keeps the pipeline windowless, which
-    # is what every Fourier path in this repo has always been (bao/core.py:1625
-    # calls its kmin guard "a simplified approximation to the full DESI
-    # window-function"). Supplying one makes desilike evaluate the theory on the
-    # window's own k-grid and convolve, so the covariance built from this
-    # observable is windowed too -- theory and covariance stay consistent, which
-    # is the only way a windowed Fisher means anything.
+    # wmatrix: DESI's survey window, as an lsstypes.WindowMatrix (a bundle path
+    # also works but loads the whole GaussianLikelihood, which desilike then
+    # rejects -- pass the matrix). Default None keeps the pipeline windowless,
+    # which is what every Fourier path in this repo has always been
+    # (bao/core.py:1625 calls its kmin guard "a simplified approximation to the
+    # full DESI window-function"). Supplying one makes desilike evaluate the
+    # theory on the window's own k-grid and convolve it down to the fit bins.
     #
-    # NOT for production as things stand: W is DR1 geometry derived from the
-    # random catalogue at fiducial-cosmology distances, so windowing while also
+    # Two things to know before using this.
+    #
+    # 1. The DR1 full-shape bundles ship the ROTATED window. Its theory axis is
+    #    the P0/P2/P4 spectrum block (3 x 349) PLUS two "rotation" and one
+    #    "photo" nuisance-template columns, i.e. an ObservableTree, and
+    #    desilike's WindowedPowerSpectrumMultipoles wants a plain poles->poles
+    #    matrix (it reads wmatrix.theory.ells, which a tree has no attribute
+    #    for -- the "lsstypes 1.1.0 vs desilike" AttributeError). Select the
+    #    spectrum block on both axes first:
+    #        W = (bundle.window.at.theory.get(observables='spectrum')
+    #                          .at.observable.get(observables='spectrum'))
+    #    That drops the 3 systematic-template columns DESI marginalizes over,
+    #    so the resulting Fisher is mildly optimistic on that account.
+    #
+    # 2. *** THE COVARIANCE DOES NOT FOLLOW. *** desilike's
+    #    ObservablesCovarianceMatrix has no window handling whatsoever (grep
+    #    wmatrix/window in observables/galaxy_clustering/covariance.py: no
+    #    hits), so it returns the unconvolved Gaussian covariance regardless.
+    #    Measured on LRG2: passing W changes the covariance diagonal by 0.5%
+    #    and the P0 nearest-neighbour correlation from 0.059 to 0.063, while
+    #    DESI's own covariance for the same estimator sits at 0.666. So a run
+    #    with wmatrix set has SMOOTHED DERIVATIVES AND AN UNSMOOTHED
+    #    COVARIANCE, which double-counts the window's information loss and
+    #    inflates sigma (LRG2: 1.38x on qiso, 1.30x on qap). Do not read those
+    #    sigmas as "the windowed answer". The consistent object is
+    #    C_obs = M C_kin M^T, with C_kin the Gaussian+SSC covariance on the
+    #    window's own theory grid -- build it by calling this function again
+    #    with ells=(0,2,4), klim_spec=the window k-edges, skip_kmin_guard=True,
+    #    and pass the result back through cov_override alongside wmatrix.
+    #
+    # Doing that (CHANGELOG S19) shows the window is very nearly a NO-OP for
+    # the compressed parameters: on LRG2 the consistently-windowed sigmas are
+    # 0.81/0.79/0.85/0.80 of DESI against 0.82/0.85/0.91/0.87 unwindowed, and
+    # every rho moves by <0.03. Derivative smoothing and covariance correlation
+    # cancel. It is worth ~36 s/cosmology, so production stays windowless; the
+    # residual ~20% gap to DESI is nuisance freedom and non-Gaussian covariance,
+    # not geometry.
+    #
+    # Also unresolved for production: W is DR1 geometry derived from the random
+    # catalogue at fiducial-cosmology distances, so windowing while also
     # recomputing V/nbar/z_eff per cosmology mixes frames (the issue
-    # bao/config_space.py:626-632 documents). Diagnostic use only until that is
-    # settled.
-    #
-    # CURRENTLY BLOCKED UPSTREAM (2026-07-29). desilike 4cfd6bec's
-    # observables/galaxy_clustering/window.py:340 does `wmatrix.theory.ells`,
-    # but lsstypes 1.1.0's ObservableTree has no `.ells` -- it exposes
-    # labels()/select()/get(). The pinned desilike and the installed lsstypes
-    # disagree on the WindowMatrix API, so passing either a bundle path (loads
-    # as GaussianLikelihood, no .deepcopy) or its `.window` (AttributeError:
-    # ells) fails inside desilike. Reported, not patched: forking desilike would
-    # break the regression baseline the whole pipeline is pinned against. The
-    # hook stays so the wiring is done when the versions line up.
+    # bao/config_space.py:626-632 documents). Diagnostic use only.
     obs_kwargs = {}
     if wmatrix is not None:
         obs_kwargs["wmatrix"] = str(wmatrix) if isinstance(wmatrix, (str, Path)) else wmatrix
@@ -718,8 +750,16 @@ def build_shapefit_likelihood(
     k_centers = np.asarray(observable.k[0], dtype=np.float64)
     V_survey = float(footprint.volume)
 
-    theory(**params)
-    pk_multipoles = np.asarray(theory.power, dtype=np.float64)
+    observable(**params)
+    # Take the multipoles off the OBSERVABLE, not the theory calculator. With a
+    # wmatrix the theory lives on the window's own k-grid (349 points per ell
+    # for the DR1 bundles) while the observable is the 36-bin convolved vector,
+    # and the SSC response has to be built on the same grid as C_gauss. Without
+    # a wmatrix flattheory is the theory evaluated on the observable bins, so
+    # this is a no-op (checked bit-exact against observable.theory on LRG2).
+    pk_multipoles = np.asarray(
+        observable.flattheory, dtype=np.float64
+    ).reshape(len(ell_tuple), -1)
 
     sigma_b_sq = bao_core._sigma_b_sq(cosmo, fo, z, V_survey)
     C_ssc = bao_core._ssc_cov(
