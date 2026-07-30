@@ -613,3 +613,66 @@ Separately, this surfaced a latent fragility: `shapefit/core.py` calls
 `bao_core` above it patched numpy globally. Any reordering or deferral of that
 import would have broken shapefit at import time. It now guards locally instead
 of relying on another module's side effect.
+
+## 12. 2026-07-29 — Mean pipeline validated (`validate_mean.py`)
+
+The mean pipeline's only prior validation was the fiducial identity — at the
+DESI fiducial the extractor returns qiso = qap = 1. That holds **by
+construction** and proves nothing, which is why the two bugs this pipeline has
+actually suffered (`w0_fde` never reaching cosmoprimo; an Ω_m that dropped the
+neutrino density) both survived it: at the fiducial there is nothing to map
+wrongly. `validate_mean.py` targets the mapping and the compression separately,
+over an 11-point cosmology grid.
+
+**1. Cosmology mapping round trip — 11/11 exact.** Build the cosmology our
+mapping produces, read the parameters back out of cosmoprimo, compare to what we
+asked for. Worst relative delta 7e-7 (CLASS's own precision), including
+`omega_cdm` reconstructed via Ω_m — the quantity where the neutrino density was
+previously dropped — and `w0_fld`/`wa_fld`, the `w0_fde` failure mode. Note
+cosmoprimo exposes `Omega0_*` and no `omega_cdm`, so physical densities are
+recovered as `Omega0_x · h²`.
+
+**2. qiso / qap vs distances computed directly — agree to 1e-7 and 1e-11.**
+Genuinely independent: qiso and qap are pure background quantities, so this is a
+second implementation rather than a paraphrase. The qiso residual is CLASS
+interpolation noise.
+
+**3. f_sigmar / m vs a transcription of the extractor's definitions — 5e-6 to
+1.4e-4.** Cross-implementation, not independent: it re-derives desilike's own
+formulas from cosmoprimo primitives, so it validates our *usage* (z, with_now,
+fiducial, mapping) and not the formulas. Largest residuals sit at the
+cosmologies furthest from fiducial in shape, consistent with de-wiggling plus
+a two-point finite difference.
+
+Two convention traps were caught while writing the check, both in the check
+rather than the pipeline, and both worth recording because they are easy to
+repeat:
+
+- `qap = DH_over_DM / fid`, **not** DM/DH. An inverted qap shows up as exact
+  reciprocals, which is a recognisable signature.
+- desilike's `DH = (c/1e3)/(100·efunc(z))` and `DM = comoving_angular_distance`
+  are **already Mpc/h**, as is `rs_drag` (99.08 at the fiducial). Adding explicit
+  `·h` factors cancels in DM/r_d but leaves a spurious 1/h in DH/r_d — so it
+  corrupts only the rows where h is varied, and looks like a physics
+  disagreement rather than a units bug.
+
+**4. covar-vs-mean fiducials: a definitional difference, not an error.** The
+covar template sets `fiducial=theta_cosmo`, so s = r_d(θ)/r_d(fid) = 1 and it
+evaluates the ShapeFit slope at kp = 0.03 exactly. The mean extractor keeps the
+DESI fiducial, so s ≠ 1 and it evaluates at kp/s. **The two report the slope at
+different pivots.** Exactly the rows that move r_d disagree (lowOc 11%, highOc
+22%, lowh 21%, highh 19%, lowob 2.7%) while those that do not (lowA, highA,
+lowns, highns, w0wa) agree to ~1e-4. The sign confirms the mechanism: lower
+ω_cdm raises the sound horizon, s > 1, smaller pivot, less negative slope
+(−0.864 vs −0.959).
+
+Consequence for bedcosmo, flagged not fixed: the mean pipeline supplies the
+central value of m in the DESI-fiducial convention while the covar pipeline
+supplies σ(m) in θ's own convention. σ(m) is the error on a shape slope and is
+only weakly pivot-dependent, so pairing them is approximately consistent — but
+it is an approximation nobody has quantified, and it should be before the two
+emulators are combined in a likelihood.
+
+**Verdict: the mean pipeline is sound.** The mapping is exact, the background
+compression is exact, and the shape compression reproduces to 1e-4. Nothing here
+blocks training the mean emulator.
