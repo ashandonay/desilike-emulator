@@ -1304,7 +1304,7 @@ default. Regenerate.
 
 ## §23 — First REPT training set, and the mean pipeline validated against Table 11
 
-Generated `dr1/base/{covar,mean}/v101`, all six tracers, 512 accepted samples
+Generated `dr1/base/{covar,mean}/v1`, all six tracers, 512 accepted samples
 each (409 train / 103 test), on the §22 REPT default.
 
 **Correction to an earlier claim in this session.** It was stated that nothing
@@ -1319,8 +1319,11 @@ What was already there:
 | `dr1/base/{covar,mean}/v100` | 800 / 1600 | 2026-07-29 | rebuilt pipeline, smoke test |
 
 All superseded regardless (v3 predates even the de-wiggling fix), but the claim
-was wrong as stated. Note the auto-versioner therefore landed production at
-**v101**, next to two smoke tests — a naming wart, not a correctness one.
+was wrong as stated. The auto-versioner consequently landed production at
+v101, next to those two smoke tests; it was renamed to **v1** afterwards.
+Nothing inside the .npz records a version, and no model had been trained
+against it, so the rename is a plain directory move with no stale references.
+The v99/v100 smoke tests are left in place — superseded, not deleted.
 
 ### Validation
 
