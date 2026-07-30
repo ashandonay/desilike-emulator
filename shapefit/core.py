@@ -392,6 +392,7 @@ def build_shapefit_likelihood(
     theory_kwargs: Dict | None = None,
     float_sigma_damp: bool = True,
     cov_override: np.ndarray | None = None,
+    wmatrix=None,
 ) -> Dict:
     """Build the pre-recon full-shape Gaussian likelihood for one tracer bin.
 
@@ -662,10 +663,38 @@ def build_shapefit_likelihood(
 
     klim = {int(ell): [kmin_eff, float(klim_spec[1]), float(klim_spec[2])]
             for ell in ells}
+    # wmatrix: DESI's survey window, as a path to a full-shape bundle or an
+    # lsstypes.WindowMatrix. Default None keeps the pipeline windowless, which
+    # is what every Fourier path in this repo has always been (bao/core.py:1625
+    # calls its kmin guard "a simplified approximation to the full DESI
+    # window-function"). Supplying one makes desilike evaluate the theory on the
+    # window's own k-grid and convolve, so the covariance built from this
+    # observable is windowed too -- theory and covariance stay consistent, which
+    # is the only way a windowed Fisher means anything.
+    #
+    # NOT for production as things stand: W is DR1 geometry derived from the
+    # random catalogue at fiducial-cosmology distances, so windowing while also
+    # recomputing V/nbar/z_eff per cosmology mixes frames (the issue
+    # bao/config_space.py:626-632 documents). Diagnostic use only until that is
+    # settled.
+    #
+    # CURRENTLY BLOCKED UPSTREAM (2026-07-29). desilike 4cfd6bec's
+    # observables/galaxy_clustering/window.py:340 does `wmatrix.theory.ells`,
+    # but lsstypes 1.1.0's ObservableTree has no `.ells` -- it exposes
+    # labels()/select()/get(). The pinned desilike and the installed lsstypes
+    # disagree on the WindowMatrix API, so passing either a bundle path (loads
+    # as GaussianLikelihood, no .deepcopy) or its `.window` (AttributeError:
+    # ells) fails inside desilike. Reported, not patched: forking desilike would
+    # break the regression baseline the whole pipeline is pinned against. The
+    # hook stays so the wiring is done when the versions line up.
+    obs_kwargs = {}
+    if wmatrix is not None:
+        obs_kwargs["wmatrix"] = str(wmatrix) if isinstance(wmatrix, (str, Path)) else wmatrix
     observable = TracerPowerSpectrumMultipolesObservable(
         data=params,
         klim=klim,
         theory=theory,
+        **obs_kwargs,
     )
 
     # Gaussian covariance. theories= is passed explicitly: with a template-based
