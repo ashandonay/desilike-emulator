@@ -150,19 +150,58 @@ def _load_hod_configs(path: Path) -> Dict[str, Dict[str, object]]:
 HOD_CONFIGS: Dict[str, Dict[str, float]] = _load_hod_configs(_HOD_CONFIG_PATH)
 
 
-def get_tracer_config(tracer_bin: str) -> Dict[str, object]:
-    """Return validated tracer config dict."""
+def tracers_for(analysis: str) -> List[str]:
+    """Tracer bins belonging to ``analysis``, in tracers.yaml order.
+
+    A block with no ``analyses`` key belongs to every analysis. Exists because
+    DESI's 0.8-1.1 bin differs between analyses: LRG3+ELG1 for BAO, LRG3-only
+    for full shape (see the tracers.yaml header and shapefit CHANGELOG S31).
+    """
+    out = []
+    for key, cfg in TRACER_CONFIGS.items():
+        an = cfg.get("analyses")
+        if an is None or analysis in an:
+            out.append(key)
+    return out
+
+
+def get_tracer_config(tracer_bin: str, analysis: str | None = None,
+                      dataset: str | None = None) -> Dict[str, object]:
+    """Return validated tracer config dict.
+
+    With ``analysis``/``dataset`` omitted this is exactly the historical
+    behaviour — the base yaml block, minus bookkeeping keys — so existing
+    callers (all of ``bao/``, which is regression-frozen) are untouched.
+
+    Passing ``analysis`` validates the bin against the block's ``analyses``
+    list and merges any ``overrides`` on top, in the order ``<analysis>`` then
+    ``<analysis>/<dataset>``. The override mechanism is wired but only DR1
+    values are populated (DR1-first rule).
+    """
     key = tracer_bin.strip()
     if key not in TRACER_CONFIGS:
         raise ValueError(f"Unknown tracer bin {tracer_bin!r}. Choices: {TRACER_TYPE_CHOICES}")
     cfg = dict(TRACER_CONFIGS[key])
     if not cfg.get("supported", True):
         raise ValueError(f"Tracer bin {tracer_bin!r} is marked unsupported in tracers.yaml")
+
+    overrides = cfg.pop("overrides", None) or {}
+    if analysis is not None:
+        allowed = cfg.get("analyses")
+        if allowed is not None and analysis not in allowed:
+            raise ValueError(
+                f"Tracer bin {tracer_bin!r} is not part of the {analysis!r} analysis "
+                f"(tracers.yaml declares analyses={list(allowed)}). "
+                f"Valid bins: {tracers_for(analysis)}")
+        for okey in (analysis, f"{analysis}/{dataset}" if dataset else None):
+            if okey and okey in overrides:
+                cfg.update(dict(overrides[okey]))
     return cfg
 
 
 _CSV_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
 _NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {csv_label: passed}
+_COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {component: passed}
 
 
 def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
@@ -175,6 +214,28 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     Using a mismatched N silently shifts the HOD-weighted b1 and invalidates
     downstream b1/f_AB calibration.
     """
+    # Bins declaring `components` are not in desi_data.csv, which only carries
+    # the BAO combinations (there is no LRG3 row, only LRG3+ELG1). Sum the
+    # per-component passed counts from desi_tracers.csv instead:
+    #     passed = targets x comp x efficiency
+    # verified to reproduce DESI 2024 V Table 1 for every tracer.
+    cfg = TRACER_CONFIGS.get(tracer_bin.strip(), {})
+    components = cfg.get("components")
+    if components:
+        if dataset not in _COMPONENTS_CACHE:
+            import pandas as pd
+            tpath = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_tracers.csv"
+            tdf = pd.read_csv(tpath)
+            _COMPONENTS_CACHE[dataset] = {
+                str(r["tracer"]): float(r["targets"]) * float(r["comp"]) * float(r["efficiency"])
+                for _, r in tdf.iterrows()}
+        ccache = _COMPONENTS_CACHE[dataset]
+        missing = [c for c in components if c not in ccache]
+        if missing:
+            raise KeyError(f"desi_tracers.csv ({dataset}) has no rows {missing} for "
+                           f"{tracer_bin!r}; available: {sorted(ccache)}")
+        return float(sum(ccache[c] for c in components))
+
     if dataset not in _NTRACERS_CACHE:
         import pandas as pd
         path = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv"

@@ -47,7 +47,7 @@ import fourier_space
 from fourier_space import sf_core
 from util import TRACER_TYPE_CHOICES, ntracers, ntracers_range
 
-TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
 FID_SAMPLE = {
     "omega_cdm": 0.1200,

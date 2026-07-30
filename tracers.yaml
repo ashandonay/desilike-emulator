@@ -34,6 +34,30 @@
 #                    build_bao_likelihood / run_fisher; those scripts may
 #                    not reflect the current best-practice z_eff.
 #
+# Analysis / data-release scoping:
+#
+#   analyses         Which analyses this bin belongs to, e.g. [bao, shapefit].
+#                    Absent means "all" (back-compatible). This exists because
+#                    DESI does NOT use the same samples for both: the 0.8-1.1
+#                    bin is LRG3+ELG1 for BAO but LRG3-only for full shape,
+#                    since ELG1 failed the pre-unblinding fibre-collision tests
+#                    for growth-rate measurements while remaining harmless for
+#                    BAO (DESI 2024 V Sec 2; shapefit CHANGELOG S31). Hence the
+#                    two separate blocks LRG3_ELG1 (bao) and LRG3 (shapefit).
+#   components       (optional) Sub-samples making up this bin, as labels in
+#                    ~/data/desi/bao_{dataset}/desi_tracers.csv. When present,
+#                    util.ntracers sums targets x comp x efficiency over them
+#                    instead of reading desi_data.csv's `passed` column, which
+#                    only carries the BAO bin combinations.
+#   nz_slices        (optional) Basename of the n(z) slice file if it differs
+#                    from the bin key: ~/data/desi/nz_slices/<name>_nz_slices.csv.
+#   overrides        (optional) Per-analysis / per-release deltas, merged on top
+#                    of the base block by util.get_tracer_config(analysis=,
+#                    dataset=). Keys are "<analysis>" then "<analysis>/<dataset>",
+#                    applied in that order. Populated for DR1 only so far — the
+#                    mechanism is here so a DR2 sample change drops in without
+#                    another refactor, per the DR1-first rule.
+#
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
 #
@@ -90,12 +114,35 @@ LRG2:
   high: 1.5
 
 LRG3_ELG1:
+  # BAO ONLY. DESI's BAO analysis combines LRG3 + ELG1 in 0.8-1.1; the ELG1
+  # fibre-collision systematics were negligible for BAO (DESI 2024 V Sec 2).
+  # Full shape uses the LRG3 block below instead.
+  analyses: [bao]
   tracer_type: MIX
   zrange: [0.8, 1.1]
   z_eff: 0.934                   # FALLBACK ONLY (see header)
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
+  low: 0.5                       # factor x passed[dataset]; box centred on passed
+  high: 1.5
+
+LRG3:
+  # FULL SHAPE ONLY. DESI 2024 V Sec 2: "for the Full-Shape type of analyses
+  # presented in this paper, the ELG bin between 0.8 < z < 1.1 (ELG1) was not
+  # included as it failed to pass the required tests before unblinding ...
+  # uncorrected systematic effects related to fibre collisions". So this bin is
+  # LRG-only, with 859,822 tracers against LRG3_ELG1's 1,876,187 - a factor
+  # 2.18 that fully explained the old scorecard outlier (shapefit CHANGELOG S31).
+  analyses: [shapefit]
+  tracer_type: LRG
+  zrange: [0.8, 1.1]
+  z_eff: 0.919                   # FALLBACK ONLY; DESI 2024 V Table 1 (LRG3)
+  bias_recon: 2.0                # LRG value, as LRG1/LRG2 - not the MIX blend
+  smoothing_scale: 15.0          # unused pre-recon; kept for schema symmetry
+  f_interloper: 0.002            # LRG value (Adame+24 Table 2), not the blend
+  components: [LRG3]             # N from desi_tracers.csv, not desi_data.csv
+  nz_slices: LRG3                # LRG-only slices, not the LRG+ELG1 combination
   low: 0.5                       # factor x passed[dataset]; box centred on passed
   high: 1.5
 
@@ -127,6 +174,7 @@ QSO:
   high: 1.5
 
 Lya_QSO:
+  analyses: [bao]                # Lya is a BAO-only probe (and gated off below)
   # Marked unsupported until a proper Lyα forecast (Arinyo-i-Prats bias
   # + β_F + pixel-noise P_N) is wired in.
   supported: false

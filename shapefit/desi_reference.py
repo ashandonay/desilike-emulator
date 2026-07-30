@@ -60,9 +60,12 @@ Caveats
   Fisher-weighted; bao CHANGELOG S18). Sigmas are not strongly z-sensitive over
   these offsets, but f sigma_s8 evolves fast -- do not compare its ABSOLUTE
   value across a z offset, only the fractional error.
-* **LRG3 is not our LRG3_ELG1.** DESI's full-shape 0.8-1.1 bin is LRG-only; our
-  bin is the combined LRG+ELG1 sample used by the BAO analysis. Different
-  galaxy sample, different density. Flagged by `SAMPLE_MISMATCH`.
+* The 0.8-1.1 bin is `LRG3` (LRG-only), matching DESI's full-shape sample.
+  ELG1 is excluded there because it failed the pre-unblinding fibre-collision
+  tests for growth-rate measurements, though it stays in the BAO analysis
+  (DESI 2024 V Sec 2). The BAO-side combined bin is `LRG3_ELG1`, a separate
+  tracers.yaml block. Before CHANGELOG S31 this module compared our combined
+  bin against DESI's LRG-only one -- a factor 2.18 in N.
 * The BGS entry carries DESI's own warning that alpha_AP is not well
   constrained there and D_H/D_M is "highly affected by the flat prior between
   0.8 and 1.2". Its sigma(qap) is a prior width, not a measurement.
@@ -138,14 +141,10 @@ def fiducial_dv_dhdm(z: float) -> Tuple[float, float]:
 DESI_ORDER = ("DV_over_rd", "DH_over_DM", "f_sigma_s8", "m_plus_n")
 TARGET_ORDER = ("qiso", "qap", "f_sigmar", "m")
 
-SAMPLE_MISMATCH = {
-    "LRG3": "DESI full-shape 0.8-1.1 is LRG-only; our LRG3_ELG1 is LRG+ELG1",
-}
-
 # Our tracer-bin names -> DESI's appendix labels.
 TRACER_MAP = {
     "BGS": "BGS", "LRG1": "LRG1", "LRG2": "LRG2",
-    "LRG3_ELG1": "LRG3", "ELG2": "ELG2", "QSO": "QSO",
+    "LRG3": "LRG3", "ELG2": "ELG2", "QSO": "QSO",
 }
 
 _COV_SCALE = 1e-4

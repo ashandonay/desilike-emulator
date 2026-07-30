@@ -66,8 +66,8 @@ from compare_to_desi import FID_SAMPLE, our_forecast
 from fourier_space import sf_core
 from util import ntracers
 
-_TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
-_DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
+_TRACERS = ["BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO"]
+_DISPLAY = {}
 _HERE = Path(__file__).resolve().parent
 
 _SIGMA_PANELS = [

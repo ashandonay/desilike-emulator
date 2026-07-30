@@ -2151,3 +2151,73 @@ mismatch is a factor 2.18 in N, not a footnote.
 
 Not fixed here — the design decision (how to express an analysis-dependent bin
 without touching frozen `bao/`) is the user's.
+
+## §32 — tracers.yaml is analysis- and release-scoped; LRG3 replaces LRG3_ELG1 for full shape
+
+Implements §31. The raw `*_nz.txt` turned out to be **local** after all
+(`~/data/desi/nz_data/`), so the LRG-only slices were never blocked on CFS.
+
+### Schema
+
+`tracers.yaml` gains four optional keys, all documented in its header:
+
+- `analyses` — which analyses a bin belongs to; absent means all
+  (back-compatible). `LRG3_ELG1` is now `[bao]`, the new `LRG3` is `[shapefit]`,
+  `Lya_QSO` is `[bao]`.
+- `components` — sub-samples in `desi_tracers.csv`. `util.ntracers` sums
+  `targets × comp × efficiency` over them, because `desi_data.csv` has only the
+  BAO combinations (no LRG3 row, only LRG3+ELG1).
+- `nz_slices` — slice-file basename when it differs from the bin key.
+- `overrides` — per-analysis / per-release deltas, merged as `<analysis>` then
+  `<analysis>/<dataset>`. **Wired but unpopulated**: the mechanism exists so a
+  DR2 sample change drops in without another refactor, per the DR1-first rule.
+
+`util.get_tracer_config(bin, analysis=None, dataset=None)` and
+`util.ntracers(bin, dataset, analysis=None)` take the new arguments; plus
+`util.tracers_for(analysis)`.
+
+### Backward compatibility (bao/ is frozen)
+
+With `analysis` omitted the accessors return exactly what they did before.
+Verified: all six BAO tracers return identical N, tracer_type, zrange and
+f_interloper. Both drivers list tracers explicitly, so the new key cannot leak
+into a BAO run, and requesting `get_tracer_config('LRG3','bao')` raises. **No
+file under `bao/` was modified** — including `parse_desi_nz.py`, which the new
+`shapefit/make_lrg3_nz_slices.py` drives by injecting the bin at runtime rather
+than forking the slicing code.
+
+`LRG3_nz_slices.csv`: 15 slices, `slice_fraction` sums to 1.000000, coverage
+0.800–1.100, uniform `file_area_deg2` (no §28 boundary anomaly).
+
+### RESULT — and a correction to §31
+
+§31 claimed that correcting the bin would move it to ~0.86/0.80, "in line with
+LRG1 and LRG2". **That was from the partial fix** (LRG3-only N while keeping the
+MIX HOD and the combined n(z)). The full fix gives:
+
+| | b1p | n_eff | z_eff | σ(qiso)/DESI |
+|---|---|---|---|---|
+| old LRG3_ELG1 bin | 0.906 | 1.50e−4 | 0.9453 | 0.69 |
+| **new LRG3 bin** | **1.344** | 1.44e−4 | **0.9122** | **0.68** |
+
+The driver is **b1, not N or n(z)**: the HOD switch MIX→LRG raises the bias 48%,
+and more signal against the same shot noise tightens σ. Both are self-consistent
+— b1p/σ8(0.92) gives b_E ≈ 1.77 for the MIX (matching a number-weighted
+LRG+ELG1 blend) and ≈ 2.63 for LRG-only. z_eff also moves to 0.9122 against
+DESI's 0.919, much closer than the old 0.9453.
+
+Full LRG3 scorecard: **0.68 / 0.66 / 0.73 / 0.73**.
+
+**So §31's knock-on was also wrong.** It said the redshift trend was weaker than
+recorded. With the properly-corrected bin the trend is *restored*:
+
+| | LRG1 | LRG2 | LRG3 | ELG2 | QSO |
+|---|---|---|---|---|---|
+| σ(qiso)/DESI | 0.99 | 0.81 | 0.68 | 0.65 | 0.79 |
+
+§16's "agreement degrades with redshift" stands, with QSO the exception.
+
+### Follow-ups
+
+- The `v1` `LRG3_ELG1_*.npz` training files are orphaned — regenerate as `LRG3`.
+- The REPT golden baseline is invalid again (its grid names LRG3_ELG1).

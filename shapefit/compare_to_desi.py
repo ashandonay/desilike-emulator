@@ -53,12 +53,11 @@ Caveats that are physics, not bugs
 ----------------------------------
 * DESI's baseline full-shape fit is a JOINT ``power+bao-recon`` fit with
   REPT-velocileptors, a rotated window and a theta-cut of 0.05. We are
-  pre-recon power-only, Kaiser, windowless. Their published sigma(qiso) and
+  pre-recon power-only, REPT, windowless. Their published sigma(qiso) and
   sigma(qap) are therefore tighter than any power-only forecast can be.
-* LRG3_ELG1 has NO DESI full-shape counterpart: the DR1 full-shape analysis
-  splits LRG 0.8-1.1 as LRG-only, while our bin is the combined LRG+ELG1
-  sample used by the BAO analysis. Densities differ, so that bin is reported
-  but flagged.
+* The 0.8-1.1 bin is `LRG3` (LRG-only) and now MATCHES DESI's full-shape
+  sample. ELG1 is excluded from full shape (failed pre-unblinding fibre-collision
+  tests) while staying in BAO -- see CHANGELOG S31.
 * QSO z_eff differs from DESI's 1.491 by ~10% by design (bao CHANGELOG S18:
   ours is Fisher-weighted, DESI's is volume-weighted). f*sigma8 evolves fast,
   so never compare f_sigmar across that Delta z without matching z first.
@@ -97,22 +96,16 @@ from util import ntracers
 _LIK_DIR = Path.home() / "data" / "desi" / "bao_dr1" / "likelihoods"
 _COV_DIR = _LIK_DIR / "covariance"
 
-TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
-# DESI full-shape sample name per tracer bin. LRG3_ELG1 maps to LRG-only
-# because the DR1 full-shape analysis does not combine LRG+ELG1 (see caveats).
+# DESI full-shape sample name per tracer bin.
 _DESI_SAMPLE = {
     "BGS": "BGS_BRIGHT-21.5_GCcomb_z0.1-0.4",
     "LRG1": "LRG_GCcomb_z0.4-0.6",
     "LRG2": "LRG_GCcomb_z0.6-0.8",
-    "LRG3_ELG1": "LRG_GCcomb_z0.8-1.1",
+    "LRG3": "LRG_GCcomb_z0.8-1.1",
     "ELG2": "ELG_LOPnotqso_GCcomb_z1.1-1.6",
     "QSO": "QSO_GCcomb_z0.8-2.1",
-}
-
-# Bins whose DESI sample is not the same galaxy sample as ours.
-_SAMPLE_MISMATCH = {
-    "LRG3_ELG1": "DESI full-shape uses LRG-only in 0.8-1.1; ours is LRG+ELG1",
 }
 
 # Full data bundles (data vector + covariance + window). DR1 ships these per
@@ -128,7 +121,7 @@ _FS_BUNDLES = {
 # Table 1 of arXiv:2411.12021 -- the FULL-SHAPE z_eff. LRG3 and QSO previously
 # carried 0.930 and 1.484, which are the BAO paper's values for those bins.
 _DESI_ZEFF = {"BGS": 0.295, "LRG1": 0.510, "LRG2": 0.706,
-              "LRG3_ELG1": 0.919, "ELG2": 1.317, "QSO": 1.491}
+              "LRG3": 0.919, "ELG2": 1.317, "QSO": 1.491}
 
 FID_SAMPLE = {
     "omega_cdm": 0.1200,
@@ -394,16 +387,13 @@ def check_cov(tracers: List[str], rotated: bool, thetacut: bool,
             R = C / np.outer(s, s)
             return float(np.mean(np.abs(R[~np.eye(R.shape[0], dtype=bool)])))
 
-        flag = " *" if tracer in _SAMPLE_MISMATCH else ""
+        flag = ""
         print(f"{tracer:>10s} {np.median(ratio):>9.3f} "
               f"{np.median(ratio[:nk]):>8.3f} {np.median(ratio[nk:]):>8.3f} "
               f"{trend:>7.2f}  {offdiag_mean(C_ours):>9.3f} "
               f"{offdiag_mean(C_desi):>7.3f}{flag}")
         results[tracer] = {"ours": C_ours, "desi": C_desi, "k": ours["k"]}
 
-    for tracer, why in _SAMPLE_MISMATCH.items():
-        if tracer in results:
-            print(f"  * {tracer}: {why} -- densities differ, not apples-to-apples.")
     print("  *** These ratios are NOT apples-to-apples: DESI's covariance is of a")
     print("  window-convolved estimator and ours is unwindowed. On LRG2 the window")
     print("  moves the ratio 2.046 -> 0.512. Neither the absolute level nor the")
@@ -680,7 +670,7 @@ def check_compressed(tracers: List[str], theory: str = "rept") -> None:
             (fsr_frac, ref["sigma_f_sigmar_frac"]),
             (t["sigma_m"], ref["sigma_m"]),
         ]
-        flag = " *" if dr.TRACER_MAP[tracer] in dr.SAMPLE_MISMATCH else ""
+        flag = ""
         cells = " ".join(f"{a:.4f}/{b:.4f}={a / b:>4.2f}" for a, b in pairs)
         print(f"{tracer:>10s} {ours['z_eff']:>6.3f} {z_desi:>7.2f} {cells}{flag}")
         rows[tracer] = (ours, ref)
@@ -695,9 +685,6 @@ def check_compressed(tracers: List[str], theory: str = "rept") -> None:
             bad = "X" if (a * b < 0) else " "
             cells.append(f"{a:+.2f}/{b:+.2f}{bad}")
         print(f"{tracer:>10s} " + " ".join(f"{c:>17s}" for c in cells))
-    for tracer, why in dr.SAMPLE_MISMATCH.items():
-        if any(dr.TRACER_MAP[t] == tracer for t in rows):
-            print(f"  * {why}")
     print("  NB DESI warns BGS alpha_AP is prior-dominated (flat 0.8-1.2), so")
     print("  its sigma(qap) is a prior width, not a measurement.")
 

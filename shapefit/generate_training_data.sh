@@ -41,7 +41,7 @@ COSMO_MODEL="base"
 N_SAMPLES=5000
 WORKERS=32          # workers are pinned to 1 BLAS thread each; scale toward ncores
 VERSION=""          # empty => auto-resolve the next free v{N} once for the batch
-TRACERS="BGS LRG1 LRG2 LRG3_ELG1 ELG2 QSO"
+TRACERS="BGS LRG1 LRG2 LRG3 ELG2 QSO"
 SAVE_PATH=""
 EXTRA=()
 

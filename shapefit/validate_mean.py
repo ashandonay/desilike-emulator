@@ -71,7 +71,7 @@ import fourier_space
 from fourier_space import sf_core
 from util import ntracers
 
-TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
 FID = {"omega_cdm": 0.1200, "omega_b": 0.02237, "h": 0.6736,
        "ln10A_s": 3.036394, "n_s": 0.9649}

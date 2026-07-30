@@ -50,7 +50,7 @@ from util import ntracers
 # dict ordering, or an env-dependent default. Every point stays inside
 # DEFAULT_PRIORS (omega basis) and respects high_z_matter_dom (w0 + wa <= 0).
 
-TRACERS: Tuple[str, ...] = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS: Tuple[str, ...] = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
 # (label, omega_cdm, omega_b, h, ln10A_s, n_s, w0, wa, N_factor)
 #   N = N_factor * dr1 passed count
