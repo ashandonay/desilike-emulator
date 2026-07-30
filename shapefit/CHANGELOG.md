@@ -1087,10 +1087,24 @@ what survives makes the fit *slightly tighter*, not looser.
 - **The high-z degradation is not geometry.** ELG2/QSO at 0.54–0.65 (§16) has
   to be physics or nuisance freedom. The remaining full-shape bundles drop off
   the critical path — worth having, no longer blocking.
-- **The residual ~20% is accounted for, qualitatively.** Two effects, same
-  sign: our covariance is 0.815 of DESI's (Gaussian only), and we marginalize
-  b1p/sn0/σ_par where DESI marginalizes a full EFT set (b2, bs, b3, α0/α2/α4,
-  SN0/SN2/SN4). Both make us optimistic; together they are about the right
-  size. Neither is a fudge factor to be tuned — the first is the known
-  non-Gaussian deficit, the second is a modelling choice to revisit on its own
-  merits.
+- **The residual ~20% is accounted for.** Our covariance sits at 0.815 of
+  DESI's, worth ~0.90 on σ on its own; the rest is Fisher-vs-MCMC, the effect
+  already established on the BAO side. Neither is a knob to tune — the first is
+  the known non-Gaussian deficit, the second is expected from a Gaussianised
+  posterior.
+
+  **It is NOT a thin nuisance set** — an earlier draft of this section said we
+  marginalize b1p/sn0/σ_par against DESI's full EFT basis. Wrong, and worth
+  recording so it does not get re-derived. Dumping `likelihood.varied_params`
+  on the REPT path gives 11: qiso, qap, dm, df plus **b1p U[0,3], b2p N(0,5),
+  bsp N(0,5), alpha0p N(0,12.5), alpha2p N(0,12.5), sn0p N(0,2), sn2p
+  N(0,5)** — `prior_basis='physical'` ships the whole set with the KP5 prior
+  widths, and all 7 are Schur-marginalized. The `{b1, sn0, σ_par}` set is the
+  *Kaiser* path, retired in §15. `float_sigma_damp` is a no-op under REPT,
+  since `theory_fiducial_params` hands it only `b1p`.
+
+  Two model differences do remain, unquantified and pushing opposite ways: we
+  fit ℓ=(0,2) where DESI includes the hexadecapole (more information), and
+  DESI's basis may carry a b3/α4/SN4 tail the physical basis does not expose
+  (less). Check against the paper before the next scorecard; this is a
+  correction on an explained gap, not a new suspect.
