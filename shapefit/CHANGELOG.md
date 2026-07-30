@@ -1892,3 +1892,61 @@ confirm it.
 The bundles now answer a sharper question than "is it completeness" (answered,
 no): **why is LRG specifically ~20% off, and does the P_shot deficit track that
 pattern or a different one?**
+
+## §28 — n(z) slice audit: a harmless parser bug, and a RETRACTION of §27's dispersion evidence
+
+### The slice files are sound where it matters
+
+Audited all six. `slice_fraction` sums to **exactly 1.000000** for every tracer,
+and slice coverage matches `tracers.yaml` zrange exactly (BGS 0.10–0.40,
+LRG1 0.40–0.60, LRG2 0.60–0.80, LRG3_ELG1 0.80–1.10, ELG2 1.10–1.60,
+QSO 0.80–2.10).
+
+**One real bug, harmless.** LRG2 is the only tracer with a non-uniform
+`file_area_deg2`: its first slice (0.60–0.62) carries 30092.2 against 20061.5
+everywhere else — **exactly 1.5×**, i.e. the area accumulator summed 3 file-rows
+instead of 2. That slice is the trimmed bin boundary (`Nbin_file` 241310.6 vs
+`shape_weight` 162885.2, trim 0.674, which matches the comoving-volume fraction
+of trimming a native ~0.59–0.62 bin to 0.60–0.62 — the trimming itself is
+correct). It corrupts only `file_area_deg2` → `nbar_file`, which the pipeline
+never reads (it rebuilds n̄ = N·frac/V). Not the cause of anything, and LRG1
+shows the same anomaly-free but equally low V_eff, so it could not have been.
+
+### RETRACTION: the V_eff/P_shot "inconsistency" was a P₀ artifact
+
+§27 argued that DESI's V_eff and P_shot imply different n̄ (0.80 vs 0.6875) in
+the direction dispersion predicts, and called that the positive evidence for
+weight dispersion. **That is wrong.**
+
+V_eff constrains only the **product** n̄·P₀ — s is exactly ∝ 1/P₀ — while
+P_shot = I₁₂/I₂₂ is P₀-independent. §27 used Table 1's "∼8.9×10³", but DESI's
+standard LRG FKP weight is P₀ = 10⁴:
+
+| assumed P₀ | s from V_eff | s from P_shot | ratio |
+|---|---|---|---|
+| 8900 (Table 1) | 0.798 | 0.6875 | 1.160 |
+| 10000 (standard FKP) | **0.710** | 0.6875 | **1.033** |
+
+At a consistent P₀ the two **agree to 3.3%**. There is no inconsistency, and
+therefore no dispersion signal. §27's positive evidence is withdrawn; §26c's and
+§27's *negative* results (mean completeness cancels; the deficit does not track
+`comp`) are unaffected, as is §27a's finding that the anomaly is LRG-specific —
+but §27a should read "LRG-specific in the product n̄·P₀", not "in n̄".
+
+Sanity check that the method is sound rather than broken: the P₀ that would make
+s = 1 is 9083 for BGS (Table 1: 9200), 3018 for ELG2 (2900) and 5081 for QSO
+(5000) — all within a few percent. Only LRG wants 7050 against 8900.
+
+### The corrected picture
+
+Both DESI probes agree, once P₀ is consistent, that **our LRG2 n̄ is ~1.42×
+too high**. A plain normalisation error, not a weighting subtlety — which is a
+better problem to have, being checkable rather than requiring a fibre-assignment
+model.
+
+N is not the culprit: 771,894 against DESI Table 1's 771,875. So the excess is
+in **V** — the shell volume or the 7500 deg² area. Noted for the chase:
+`file_effective_area_deg2` in the LRG slice files is **19,100 deg²** against the
+7,500 the pipeline uses. That is a factor 2.5, not 1.42, so it is not a direct
+explanation, but the area bookkeeping clearly needs understanding before this
+closes.
