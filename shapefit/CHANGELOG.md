@@ -1628,3 +1628,51 @@ residual is accounted for without invoking a non-Gaussian deficit at all.
 **Open, and now the top item**: decide whether the V_eff-matched n_eff is the
 right quantity to set the covariance shot-noise floor, or whether the floor
 should be set from I₁₂/I₂₂ directly. It affects every σ in both pipelines.
+
+### §26a — It is not the V_eff-vs-I₁₂/I₂₂ definition (hypothesis killed)
+
+§26 proposed that the shot-noise gap came from using the V_eff-matched n_eff
+where the covariance wants the estimator's own I₁₂/I₂₂, and flagged switching
+them as the top open item. **Tested and false.** Computed first-principles from
+our own n(z) slices (no DESI data — n̄ = N·frac/V_bin, w = 1/(1+n̄P_FKP)):
+
+| | P_shot |
+|---|---|
+| ours, V_eff-matched n_eff | 3657.3 |
+| ours, I₁₂/I₂₂ first-principles | **3597.7** |
+| DESI measured | 5229.5 |
+
+The two of ours agree to 2%; the choice between them is irrelevant. Insensitive
+to P_FKP too (3597.7 / 3597.5 / 3590.6 at P_FKP = 1e4 / 8.9e3 / 0), because our
+constructed n̄ is nearly flat across the bin (2.66–3.01e−4), so the w² weighting
+has almost nothing to bite on.
+
+**Do not spend effort switching the covariance floor to I₁₂/I₂₂.** §26's
+numerical finding stands — the shot-noise offset does explain most of the 0.815
+covariance ratio, so §19's non-Gaussian attribution is still wrong — but the
+*cause* is a ~1.45× error in the effective density itself, not the definition.
+
+#### Two things that turned up
+
+**`nbar_file` is on a different area normalisation.** `nbar_ours/nbar_file` is
+**0.524 in every slice** — a pure constant — and integrating `nbar_file` gives
+N = 1,473,377 against Table 1's 771,875 (ratio 0.5239). This is the "computed
+at the file's effective area" caveat in `_load_nz_slice_fractions`'s docstring.
+Harmless as used, since the pipeline rebuilds n̄ = N·frac/V and never reads
+`nbar_file` for density — but it must not be used directly, and anything that
+does is wrong by 1.9×.
+
+**Leading candidate for the residual 1.45×: weights.** DESI's `num_shotnoise`
+is Σw²_tot over the real catalogue — completeness and redshift-failure weights
+included, plus the α²·randoms term. Our calculation assumes ideal Poisson
+sampling with no completeness weighting whatsoever. 5229.5/3597.7 = **1.454**,
+the right ballpark for ⟨w²⟩/⟨w⟩² with DESI LRG completeness weights. Stated as
+a plausible size, **not** a measurement — it has not been checked against the
+actual weight distribution.
+
+If it holds, the forecast is optimistic for a concrete physical reason:
+weighted galaxies inflate shot noise without adding proportionate information.
+Whether a survey-design forecast *should* carry that is a separate question —
+it is a property of the observing strategy, and folding in a measured weight
+variance would be exactly the kind of data-derived calibration this project
+rejects. Computing it from an assumed completeness model would not be.
