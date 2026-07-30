@@ -1193,3 +1193,52 @@ The regress grid change means the golden baseline must be regenerated — it was
 already stale from the §14 damping fix, the §15 theory dispatch and the §18
 area fix, so this costs nothing extra. **Any σ ratio quoted before this entry
 carries the z-rounding error**, largest for BGS.
+
+---
+
+## §21 — Golden regression baseline regenerated
+
+`golden_4cfd6bec.npz` had been stale since §14 and was invalidated again by
+§20's probe-grid change. Regenerated, 1158 arrays, ~11 min.
+
+**Reproducibility verified.** Two independent dumps from the same tree compare
+**bit-identical on all 1158 arrays** — which is the harness's entire purpose,
+since these are emulator training labels and it exact-compares.
+
+Old vs new differs on **1050 / 1158** arrays. Largest relative deltas are QSO
+`C_gauss`/`C_total` at ~1.95, consistent with §18's footprint fix (14000 →
+7500 h⁻²Mpc² is 1.867 in a covariance). At the fiducial cosmology, the ten
+emulator targets moved:
+
+| new/old | σ(qiso) | σ(qap) | σ(fσ_r) | σ(m) |
+|---|---|---|---|---|
+| BGS | 0.945 | 0.907 | 0.987 | 0.988 |
+| LRG1 | 1.005 | 0.963 | 1.012 | 1.014 |
+| LRG2 | 1.023 | 0.984 | 1.022 | 1.027 |
+| LRG3_ELG1 | 0.960 | 0.932 | 1.009 | 0.998 |
+| ELG2 | 0.891 | 0.848 | 0.903 | 0.984 |
+| QSO | 0.852 | 0.829 | 0.834 | 0.863 |
+
+ρ shifts are larger than the σ ones and systematic in sign across all six
+tracers: ρ(f_sigmar,m) −0.15…−0.25, ρ(qiso,m) −0.01…−0.19, ρ(qiso,qap)
+−0.09…−0.14, ρ(qiso,f_sigmar) +0.00…+0.06.
+
+These are the *cumulative* effect of §14 (damping), §18 (area) and §20 (A_s),
+and this comparison does not separate them — the old dump predates all three
+and no intermediate baselines were kept. It is recorded as a magnitude check,
+not an attribution.
+
+`z_eff` also moved, which is correct and not a bug: the FKP band weight runs
+through P_g(k), so a change in A_s shifts the weighting and hence the
+Fisher-weighted z_eff.
+
+### Two caveats on this baseline
+
+1. **It is a Kaiser baseline.** `build_shapefit_likelihood` still defaults to
+   `KaiserTracerPowerSpectrumMultipoles` (core.py:391) and the harness does not
+   override it, so none of §15/§16's REPT work is exercised here. Promoting
+   REPT to the production default invalidates this file and requires another
+   regeneration.
+2. It is not evidence that any of §14/§18/§20 is *right* — only that the
+   pipeline is now self-consistent and reproducible. Correctness against DESI
+   is §16/§19/§20's business.
