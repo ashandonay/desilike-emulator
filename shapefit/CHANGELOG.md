@@ -2217,7 +2217,18 @@ recorded. With the properly-corrected bin the trend is *restored*:
 
 §16's "agreement degrades with redshift" stands, with QSO the exception.
 
-### Follow-ups
+### Follow-ups — both done
 
-- The `v1` `LRG3_ELG1_*.npz` training files are orphaned — regenerate as `LRG3`.
-- The REPT golden baseline is invalid again (its grid names LRG3_ELG1).
+- **Training data.** Regenerated `LRG3` for both quantities into `v1` (512
+  accepted each, 409/103 split) and deleted the four orphaned
+  `LRG3_ELG1_{train,test}.npz`. Only that bin was touched — the driver takes
+  `--tracers`, so the other 20 files are the originals. Validated: finite, σ>0,
+  ρ inside (−1,1), correct target counts. The N_tracers box confirms the sample
+  really changed — [4.31e5, 1.29e6] against the old [9.41e5, 2.81e6], i.e.
+  0.5–1.5 × 859,822 rather than × 1,876,187.
+- **Golden baseline.** Regenerated; its grid now enumerates `LRG3`. 1158 arrays,
+  and **two independent dumps compare bit-identical**, same as the previous two
+  baselines. (It was briefly installed *before* that check was run — the check
+  is the harness's only purpose, so skipping it would have left every later
+  dataset's reproducibility assumed rather than established.)
+- **Comparison plots** regenerated on the corrected pipeline.
