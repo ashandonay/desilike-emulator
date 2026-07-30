@@ -1951,8 +1951,12 @@ s = 1 is 9083 for BGS (Table 1: 9200), 3018 for ELG2 (2900) and 5081 for QSO
 
 ### The corrected picture
 
-Both DESI probes agree, once P₀ is consistent, that **our LRG2 n̄ is ~1.42×
-too high**. A plain normalisation error, not a weighting subtlety — which is a
+Both DESI probes agree, once P₀ is consistent, that **our LRG2 n̄ is too
+high** — by **1.454×** (P_shot = 5229.5 / (V/N) = 3595.47; direct and
+P₀-independent) and **1.408×** (V_eff at P₀ = 10⁴; P₀-dependent). They agree to
+3%. *(An earlier draft quoted "~1.42×", which is neither figure — it was a gloss
+splitting the two and should not be cited as a result.)* A plain normalisation
+error, not a weighting subtlety — which is a
 better problem to have, being checkable rather than requiring a fibre-assignment
 model.
 
