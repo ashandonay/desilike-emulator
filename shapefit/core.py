@@ -54,6 +54,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import numpy as np
 from scipy.optimize import brentq
 
+# numpy 2.0 renamed trapz -> trapezoid; this env is pinned at 1.26.4 for the
+# frozen desilike/cosmoprimo SHAs. bao/core.py:27 installs the same shim (for
+# velocileptors), and importing it below would supply this one as a side effect
+# -- but module-level np.trapezoid calls here would then depend on import order.
+# Guard locally instead.
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz
+
 # Suppress desilike import-time warnings (e.g. missing interpax/jax) before importing
 warnings.filterwarnings("ignore")
 

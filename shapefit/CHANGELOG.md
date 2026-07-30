@@ -587,3 +587,29 @@ config-space sits at 0.66–0.88 against DESI's covariance
 So part of the deficit is the known Gaussian-vs-non-Gaussian shortfall shared
 with the validated pipeline, and only the excess beyond ~0.7 needs its own
 explanation.
+
+## 11. 2026-07-29 — Correction: velocileptors is NOT blocked
+
+§5 reported the REPT swap as blocked because velocileptors 2.3 calls
+`np.trapezoid` (numpy 2.0's rename of `np.trapz`) against a numpy-1.26.4 pin.
+That is wrong. `bao/core.py:27-29` already installs the shim, with a comment
+naming velocileptors as the reason:
+
+    # velocileptors uses np.trapezoid (numpy >= 2.0); shim for numpy 1.x.
+    if not hasattr(np, 'trapezoid'):
+        np.trapezoid = np.trapz
+
+The §5 probe failed only because it was a standalone script that never imported
+`bao_core`. Re-run inside the pipeline's own import context, REPT builds and
+evaluates with no manual shim, returning a positive high-k quadrupole
+(P₂ = 4196, 3629 at k = 0.16, 0.195).
+
+So REPT is available now. The real cost is the measured one: **0.267 s/call vs
+Kaiser's 0.001 s** with 11 varied nuisances instead of 6, which is a generation
+-budget question, not an environment blocker.
+
+Separately, this surfaced a latent fragility: `shapefit/core.py` calls
+`np.trapezoid` at module level (line 273) and only worked because importing
+`bao_core` above it patched numpy globally. Any reordering or deferral of that
+import would have broken shapefit at import time. It now guards locally instead
+of relying on another module's side effect.
