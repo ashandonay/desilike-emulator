@@ -267,6 +267,46 @@ def _to_mean_extractor_params(sample: Dict[str, float]) -> Dict[str, float]:
 
 
 # ===========================================================================
+# Theory-dependent fiducial nuisances.
+#
+# Kaiser and REPT expose completely different parameter sets, so the fiducial
+# `params` dict cannot be hardcoded. Dispatch is on the theory class rather
+# than on an instance because params must exist before the observable is
+# built. Unknown theories raise instead of silently under-parameterising --
+# a missing nuisance would not error downstream, it would just produce a
+# forecast that marginalises over less than it should, i.e. sigmas that are
+# too tight in exactly the way that matters for experimental design.
+# ===========================================================================
+_REPT_TRACER_PRESET = {
+    "BGS": "LRG", "LRG1": "LRG", "LRG2": "LRG", "LRG3_ELG1": "LRG",
+    "ELG2": "ELG", "QSO": "QSO",
+}
+
+
+def theory_fiducial_params(theory_cls, *, b1, sigma_fog, sigma8_z):
+    """Fiducial nuisance values for the chosen theory.
+
+    Kaiser : {b1, sn0, sigmaper, sigmapar} -- sigmapar carries the FoG
+             dispersion alone and sigmaper is 0 (CHANGELOG S6).
+    REPT   : the 'physical' prior basis, b1p = (1 + b1_L) * sigma8(z) = b1_E *
+             sigma8(z). Every other counterterm/stochastic parameter is left at
+             its desilike prior centre, which is where DESI centres them too;
+             they are floated and marginalised, which is the entire point of
+             using REPT for a forecast.
+    """
+    name = theory_cls.__name__
+    if "Kaiser" in name:
+        return {"b1": float(b1), "sn0": 0.0,
+                "sigmaper": 0.0, "sigmapar": float(sigma_fog)}
+    if "Velocileptors" in name:
+        return {"b1p": float(b1) * float(sigma8_z)}
+    raise ValueError(
+        f"No fiducial nuisance mapping for theory {name!r}. Add one rather "
+        f"than falling back: an under-parameterised forecast produces sigmas "
+        f"that are too tight, and nothing downstream will flag it.")
+
+
+# ===========================================================================
 # Full-shape Fisher band kernel.
 #
 # The BAO pipeline weights the FKP V_eff band integral with the BAO Fisher
@@ -571,12 +611,8 @@ def build_shapefit_likelihood(
     # and this template hands Kaiser the full linear pk_dd with no wiggle-only
     # damping available. sigma(qiso) is therefore somewhat optimistic in the
     # Kaiser path, since the BAO feature is sharper than reality.
-    params = {
-        "b1": float(b1),
-        "sn0": 0.0,
-        "sigmaper": 0.0,
-        "sigmapar": float(sigma_fog),
-    }
+    params = theory_fiducial_params(
+        theory_cls, b1=b1, sigma_fog=sigma_fog, sigma8_z=sigma8_delta)
 
     # ------------------------------------------------------------------
     # Final footprint with the V_eff-matched effective density injected
@@ -706,7 +742,7 @@ def build_shapefit_likelihood(
     # stays FIXED at 0: it is not an uncertain quantity but an absent one
     # (FoG is line-of-sight only), and floating a physically-zero parameter
     # would open a marginalization direction that removes real information.
-    if float_sigma_damp:
+    if float_sigma_damp and "sigmapar" in params:
         likelihood.all_params["sigmapar"].update(
             fixed=False,
             prior={"dist": "norm", "loc": float(params["sigmapar"]), "scale": 2.0},

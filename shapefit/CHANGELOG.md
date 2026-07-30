@@ -729,3 +729,58 @@ should NOT close. A Fisher forecast at the truth is optimistic relative to an
 MCMC posterior with prior volume effects, and the BAO pipeline already
 established that Fisher under-predicts MCMC for a simpler likelihood. Do not
 tune nuisance choices to close the ratio — the §33r error-cancellation lesson.
+
+## 14. 2026-07-29 — REPT costs 1.6×, not 270×, and it closes the σ gap
+
+Measured end to end on LRG2 at the fiducial, DR1 counts (`theory_fiducial_params`
+added to `core.py` so fiducial nuisances dispatch on the theory class):
+
+| | build | Fisher | total | varied |
+|---|---|---|---|---|
+| Kaiser | 3.62 s | 3.75 s | **7.37 s** | 7 |
+| REPT | 5.34 s | 6.22 s | **11.55 s** | 11 |
+
+**1.57× per sample.** The 270× in §5/§11 was the per-theory-call ratio (0.267 s
+vs 0.001 s) and was badly misleading as a budget number: a sample is dominated
+by CLASS and the covariance build, not by theory calls. Generation cost is not a
+constraint on this decision.
+
+The σ move much further than the runtime:
+
+| | Kaiser | REPT | ratio |
+|---|---|---|---|
+| σ(qiso) | 0.00787 | 0.01363 | 1.73 |
+| σ(qap) | 0.02370 | 0.04504 | 1.90 |
+| σ(f_sigmar) | 0.02854 | 0.04641 | 1.63 |
+| σ(m) | 0.02836 | 0.06025 | 2.12 |
+| σ(fsr)/fsr | 6.17% | 10.03% | 1.63 |
+
+Against the §13 anchor (Lai et al., rescaled to our volume):
+
+| | Kaiser vs Lai | REPT vs Lai |
+|---|---|---|
+| σ(qiso) | 0.58 | **1.00** |
+| σ(qap) | 0.72 | 1.36 |
+| σ(f_sigmar)/fsr | 0.76 | 1.22 |
+| σ(m) | 0.58 | 1.23 |
+
+σ(qiso) lands on 0.01363 against Lai's rescaled 0.0136. **This confirms §13: the
+nuisance count, not the covariance, was the dominant cause of the σ deficit.**
+Kaiser under-reports the errors by 1.6–2.1×. For a pipeline whose whole output
+is σ feeding an experimental-design likelihood, that is the largest error this
+validation has found — bigger than the damping bug (§5) and bigger than the
+footprint bug (§8).
+
+Coming out 1.2–1.4× *looser* than Lai on three of four is unexplained and left
+untuned. Candidates: §13's crude α⊥/α∥ → qiso/qap conversion ignores their
+correlation; their LRG is z = 0.8 at a cubic-box density, not DR1 LRG2's; and
+every counterterm sits at its desilike prior centre rather than an HOD-informed
+value.
+
+`theory_fiducial_params` raises for an unrecognised theory instead of falling
+back. Deliberate: an under-parameterised forecast does not error, it silently
+marginalises over too little and returns σ that are too tight — exactly the
+failure this section documents.
+
+Kaiser is behaviour-preserved by the refactor: σ = 0.00787 / 0.02370 / 0.02854 /
+0.02836 reproduces §8 exactly.
