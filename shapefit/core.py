@@ -283,12 +283,6 @@ def _to_mean_extractor_params(sample: Dict[str, float]) -> Dict[str, float]:
 # forecast that marginalises over less than it should, i.e. sigmas that are
 # too tight in exactly the way that matters for experimental design.
 # ===========================================================================
-_REPT_TRACER_PRESET = {
-    "BGS": "LRG", "LRG1": "LRG", "LRG2": "LRG", "LRG3_ELG1": "LRG",
-    "ELG2": "ELG", "QSO": "QSO",
-}
-
-
 # desilike's REPT `tracer` preset selects (fsat, sigv), which set the width of
 # the SN2 prior -- DESI's f_sat sigma_v^2 / nbar normalisation (Table 4). It
 # accepts BGS/LRG/ELG/QSO only, so our MIX bin has to choose: LRG3_ELG1 maps to

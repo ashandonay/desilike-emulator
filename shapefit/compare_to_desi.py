@@ -261,16 +261,21 @@ def our_forecast(tracer: str, cov_override: Optional[np.ndarray] = None,
     theta = sf_core._to_shapefit_cosmo_params(
         {**FID_SAMPLE, "N_tracers": ntracers(tracer, "dr1")}
     )
-    kw = {}
-    if theory == "rept":
-        from desilike.theories.galaxy_clustering import (
-            REPTVelocileptorsTracerPowerSpectrumMultipoles as _REPT)
-        import desi_reference as _dr  # noqa: F401  (tracer preset lives in core)
-        kw = dict(theory_cls=_REPT,
-                  theory_kwargs=dict(prior_basis="physical",
-                                     tracer=sf_core._REPT_TRACER_PRESET[tracer]))
-    elif theory != "kaiser":
+    from desilike.theories.galaxy_clustering import (
+        KaiserTracerPowerSpectrumMultipoles as _Kaiser,
+        REPTVelocileptorsTracerPowerSpectrumMultipoles as _REPT)
+    _cls = {"kaiser": _Kaiser, "rept": _REPT}.get(theory)
+    if _cls is None:
         raise ValueError(f"theory must be 'kaiser' or 'rept', got {theory!r}")
+    # ALWAYS pass theory_cls explicitly, for BOTH theories. Leaving the Kaiser
+    # branch implicit made it inherit build_shapefit_likelihood's default, and
+    # S22 flipped that default to REPT -- so "kaiser" silently became REPT and
+    # every comparison plot showed two identical curves.
+    # Route theory_kwargs through core's resolver too: the preset dict is keyed
+    # by tracer TYPE (tracers.yaml), not by tracer BIN, and duplicating that
+    # lookup here is what broke this for every bin but LRG2.
+    kw = dict(theory_cls=_cls,
+              theory_kwargs=sf_core.default_theory_kwargs(_cls, tracer))
     info = sf_core.build_shapefit_likelihood(
         N_tracers=float(ntracers(tracer, "dr1")),
         theta_cosmo=theta,

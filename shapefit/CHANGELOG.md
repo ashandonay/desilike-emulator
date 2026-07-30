@@ -2045,3 +2045,50 @@ ELG2/QSO" conclusion is withdrawn.
 **What does not survive:** any statement about how much of the documented BAO
 23% under-prediction, or the 0.66–0.88 ξ-cov deficit, this accounts for. That
 needs the *cause* identified, not a ratio applied.
+
+## §30 — Two §22 fallout bugs: changing a default broke callers of the old one
+
+Both found while regenerating the comparison plots, both the same failure mode —
+§22 changed a shared name and a default without checking who depended on the old
+behaviour.
+
+**1. Duplicate `_REPT_TRACER_PRESET` (loud).** §22 added a second dict of that
+name keyed by tracer TYPE, shadowing a pre-existing one keyed by tracer BIN.
+`compare_to_desi.py` indexed it directly with bin names → `KeyError: 'LRG1'` for
+every tracer but LRG2. Fixed by deleting the stale bin-keyed duplicate and
+routing the call site through `default_theory_kwargs`, so there is one source of
+truth. **Production unaffected** — the generators always went through
+`default_theory_kwargs`, so `v1` training data and the REPT golden baseline are
+correct.
+
+**2. `theory="kaiser"` silently meant REPT (SILENT).** `our_forecast` set
+`kw = {}` for Kaiser and let `build_shapefit_likelihood` supply the default —
+which §22 flipped to REPT. So **both series in every comparison plot were REPT**,
+which is exactly what they looked like: two identical curves. Caught only
+because the plots were eyeballed and the overlap looked wrong.
+
+Fixed by passing `theory_cls` explicitly for **both** theories. Verified: LRG2
+σ(qiso) = 0.00787 (Kaiser) vs 0.01359 (REPT), a factor 1.73, consistent with
+§15's documented 1.6–2.1× Kaiser under-reporting.
+
+### Sweep of the other implicit call sites
+
+19 call sites build a likelihood without an explicit `theory_cls`. All the rest
+are *intended* to follow the production default (generators, `run_fisher`, the
+regress harness, `validate_forecast`, `util.get_pipeline`) — that is the design,
+and it is why §22 was a one-line switch. `compare_to_desi` was the only place
+that needed a *specific* theory and relied on the default to get it.
+
+### Left as a cleanup item
+
+Stale text, not stale behaviour: `README.md:127–130` ("Fiducial anchor
+(2026-07-27, Kaiser…)", "un-windowed Kaiser Gaussian-cov Fisher is expected to
+sit on the tight side") and `validate_forecast.py:91` still describe the
+forecast as Kaiser in printed output. They compute the right thing and say the
+wrong one.
+
+### Lesson
+
+A loud failure (`KeyError`) announced itself; a silent one produced a plausible
+plot and survived until a human looked at it. When flipping a default, grep the
+callers — the ones that break are less dangerous than the ones that don't.
