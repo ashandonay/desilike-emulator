@@ -1676,3 +1676,51 @@ Whether a survey-design forecast *should* carry that is a separate question —
 it is a property of the observing strategy, and folding in a measured weight
 variance would be exactly the kind of data-derived calibration this project
 rejects. Computing it from an assumed completeness model would not be.
+
+### §26b — The interface should carry N_eff, not N_success
+
+bedcosmo already applies completeness upstream: its `N_tracers` is the number
+of **successful observations**, not targets. That is the right convention, and
+it matches — our `ntracers('LRG2','dr1')` = 771,894 against DESI Table 1's
+N_tracer = 771,875. It also retires a concern raised earlier in this session
+that a perfect-completeness forecast would bias the design optimum toward too
+many tracers: it does not, because the fibres are charged for upstream.
+
+**But the shot noise responds to a different count.** Completeness weights
+restore the *target* density, so Σw ≈ N_target, while the estimator
+normalisation goes as (Σw)² and the shot-noise term as Σw². Hence
+
+    P_shot ∝ V·Σw² / (Σw)² = V / N_eff,     N_eff ≡ (Σw)² / Σw²
+
+and by Cauchy–Schwarz **N_eff ≤ N_success**, with equality only if every weight
+is identical. Neither targets nor successes: the shot noise sees the effective
+number of *independent* observations, which depends on how completeness varies
+across the footprint, not on its mean.
+
+LRG2:
+
+| | |
+|---|---|
+| N_success | 771,894 |
+| V/N_success | 3595.5 |
+| DESI measured P_shot | 5229.5 |
+| implied N_eff | 530,705 |
+| N_eff/N_success | 0.6875 |
+| implied 1 + Var(w)/⟨w⟩² | 1.4545 |
+| implied σ_w/⟨w⟩ | 0.674 |
+
+Feeding N_eff reproduces DESI's measured shot noise exactly, and it is coherent
+throughout: n_eff flows into the FKP weights and V_eff as well, and the
+sample-variance term (P²/N_modes) has no n̄ dependence, so nothing
+double-counts. **No pipeline change is required — this is a definitional change
+to what the design variable means.**
+
+Open question for bedcosmo: does its completeness model produce the weight
+*distribution* (→ N_eff is computable) or only the mean (→ only N_success is)?
+Pass-coverage inhomogeneity is what drives the dispersion.
+
+**Caveat.** The whole 1.45× was *assumed* to be weight dispersion and then
+solved for; σ_w/⟨w⟩ = 0.674 is what would be required, not what has been
+observed. Part of the gap could be our shell volume, the n(z) shape, the
+α·randoms term, or a convention in DESI's `norm`. Checking it means looking at
+the actual DR1 LRG weight distribution — not done.
