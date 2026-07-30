@@ -1451,3 +1451,63 @@ theory-dependent bookkeeping. The extractor's −0.5775 (per-tracer values in
 `f_sigmar_fid` moves by the same mechanism, but there the attached template's
 value is the *correct* one — `df` is defined relative to it, so using it is
 required for self-consistency — and at +0.031% it is negligible either way.
+
+---
+
+## §25 — The other three mean targets, validated
+
+§23 validated `f_sigmar` against DESI's Table 11 fiducial. The other three need
+a different approach, because **at the fiducial cosmology qiso and qap are
+exactly 1 and m is exactly m_fid, by construction** — the template's fiducial
+*is* the input cosmology, so those panels test nothing there. They are only
+testable off-fiducial.
+
+### qiso, qap — against independently computed distances
+
+Ours vs `D_V/r_d` and `D_H/D_M` built straight from cosmoprimo, both ratioed to
+the fiducial, LRG2 z_eff:
+
+| case | qiso ours/indep | qap ours/indep |
+|---|---|---|
+| fiducial | 1.00000 | 1.00000 |
+| ω_cdm 0.09 | 0.99993 | 0.99995 |
+| ω_cdm 0.16 | 1.00007 | 1.00004 |
+| h 0.75 | 0.99994 | 0.99996 |
+| h 0.60 | 1.00007 | 1.00004 |
+
+**7e−5 across ±30% cosmology swings.** The AP mapping is right.
+
+### m — against a reimplementation of the slope formula
+
+Agreement to **6e−5** in dm and 5e−5 in the absolute value (−0.57758 vs
+−0.57753), for ω_cdm, n_s and h perturbations.
+
+Getting a *fair* reference took three attempts, and the two failures are worth
+recording because both are easy to repeat:
+
+1. **Dividing out the primordial spectrum.** `_set_base` does
+   `if self.n_varied: pk_prim = ... else: pk_prim = np.ones_like(k)`. Our `dn`
+   is fixed, so `n_varied=False` and m is the slope of the no-wiggle P
+   **itself**, not of P/P_prim. The n_s rows exposed this exactly: ours tracks
+   Δn_s (−0.04452 for n_s 0.9649→0.92, i.e. Δn_s = −0.0449) while the bad
+   reference returned 0.000.
+2. **Using the full linear spectrum.** kp = 0.03 sits below the first BAO peak
+   at phase k·r_d ≈ 3, and perturbing ω_cdm moves r_d and hence the wiggle
+   contribution to the slope. That left a spurious 0.08–0.11 gap on the Ω_m
+   rows only — large enough to look like a real pipeline error. Applying
+   `PowerSpectrumBAOFilter(engine='wallish2018')` to the reference collapsed it
+   to 6e−5.
+
+**Caveat on what this proves.** The reference shares the underlying wallish2018
+engine — it is an independent *code path* (cosmoprimo's filter on a 1-d P(k,z)
+vs desilike's template internals), so it validates the formula and the plumbing
+but **cannot catch a flaw in the de-wiggling algorithm itself**. The known
+~0.15% Ω_m-locked sawtooth would pass this test unnoticed.
+
+### Status of the mean pipeline
+
+| target | reference | agreement |
+|---|---|---|
+| qiso, qap | cosmoprimo distances, independent | 7e−5 |
+| f_sigmar | DESI Table 11 fiducial (§23) | ≤0.4%, 4 tracers |
+| m | wallish2018 slope, independent code path | 6e−5 |
