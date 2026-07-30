@@ -21,6 +21,13 @@ Checks (select with --check, default all):
   cov  : our analytic Gaussian+SSC covariance vs DESI's EZmock covariance,
          element by element on the identical (ell, k) grid. Available for all
          tracers with a covariance file.
+         *** NOT apples-to-apples. *** DESI's covariance -- plain or rotated --
+         is the covariance of a WINDOW-CONVOLVED estimator, and ours is not
+         convolved. On LRG2 the window moves the ratio 2.046 -> 0.512, a factor
+         of 4, so the absolute level here is meaningless and the spread ACROSS
+         tracers is not a density-response signal either (the window differs per
+         footprint). Use `--check window`, which needs a bundle. This check is
+         only good for k-SHAPE trends at fixed tracer.
   sigma: rebuild the Fisher with DESI's covariance substituted for ours
          (core.build_shapefit_likelihood(cov_override=...)) and report how far
          the four sigmas move. Attributes any sigma gap to the covariance vs
@@ -370,10 +377,14 @@ def check_cov(tracers: List[str], rotated: bool, thetacut: bool,
     for tracer, why in _SAMPLE_MISMATCH.items():
         if tracer in results:
             print(f"  * {tracer}: {why} -- densities differ, not apples-to-apples.")
-    print("  ratio < 1 means our covariance is TIGHTER than DESI's (expected:")
-    print("  ours is Gaussian+SSC, theirs is EZmock with the full non-Gaussian")
-    print("  term, the window and the theta-cut). k-trend != 1 means a")
-    print("  scale-dependent discrepancy, which a pure n_eff error cannot make.")
+    print("  *** These ratios are NOT apples-to-apples: DESI's covariance is of a")
+    print("  window-convolved estimator and ours is unwindowed. On LRG2 the window")
+    print("  moves the ratio 2.046 -> 0.512. Neither the absolute level nor the")
+    print("  spread across tracers is interpretable -- the window differs per")
+    print("  footprint, so the comparison error does too. Use --check window.")
+    print("  What IS usable here: the k-trend at fixed tracer (1.0 = our shape")
+    print("  matches DESI's), since the window is a milder function of k than of")
+    print("  overall normalization.")
 
     if plot and results:
         _plot_cov(results, label)
