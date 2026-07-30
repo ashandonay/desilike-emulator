@@ -676,3 +676,56 @@ emulators are combined in a likelihood.
 **Verdict: the mean pipeline is sound.** The mapping is exact, the background
 compression is exact, and the shape compression reproduces to 1e-4. Nothing here
 blocks training the mean emulator.
+
+## 13. 2026-07-29 — External anchor: Lai et al. (arXiv:2404.07283)
+
+The DESI KP5 ShapeFit-vs-Full-Modelling paper (Lai et al., PyBird) gives the
+first external reference for our σ that does not require the DR1 VAC. It is a
+better match to our setup than the DR1 data paper in three ways: **cubic boxes,
+so no window** (we have none either); **kmax = 0.20**, our fit range; and the
+template cosmology set to the truth, so α⊥ = α∥ = rA = 1 — *the same convention
+as our covar pipeline* (`fiducial=theta_cosmo`).
+
+Reported at kmax = 0.20, single-box covariance 8 (Gpc/h)³:
+
+| tracer | σ(α⊥) | σ(α∥) | σ(rA) | σ(m) |
+|---|---|---|---|---|
+| LRG z=0.8 | ~0.86% | ~1.75% | ~4.8% | ~0.029 |
+| ELG z=1.1 | ~0.79% | ~1.6% | ~3.2% | ~0.033 |
+| QSO z=1.4 | ~1.6% | ~2.6% | ~6.4% | ~0.037 |
+
+Our LRG2 has V = 2.775 (Gpc/h)³, so σ ∝ 1/√V gives √(8/2.775) = 1.70. Converting
+their basis approximately (qiso = α∥^⅓ α⊥^⅔, qap = α∥/α⊥):
+
+| | ours | Lai, rescaled | ratio |
+|---|---|---|---|
+| σ(qiso) | 0.0079 | ~0.0136 | 0.58 |
+| σ(qap) | 0.0237 | ~0.033 | 0.72 |
+| σ(f_sigmar)/f_sigmar | 6.2% | ~8.2% | 0.76 |
+| σ(m) | 0.0284 | ~0.049 | 0.58 |
+
+**0.58–0.76×**, the same direction and rough size as the BAO pipeline's 0.72–0.80
+against DESI. Qualitative only: their LRG is z = 0.8 at a cubic-box number
+density rather than DR1 LRG2's, the intervals are asymmetric MCMC quantiles
+symmetrised here, and volume rescaling wrongly assumes the shot-noise term scales
+with V.
+
+**This reframes REPT, and the reframing is the point.** PyBird marginalizes a
+full EFT counterterm and stochastic set. Our Kaiser varies **6** parameters
+(qiso, qap, dm, df, b1, sn0); REPT varies **11** (+b2p, bsp, alpha0p, alpha2p,
+sn2p). Marginalizing more nuisances loosens σ, and that is plausibly most of the
+0.58–0.76 gap — more than the covariance normalization is worth.
+
+So the theory choice is not a cosmetic repair of the high-k quadrupole (§5, §6).
+**The nuisance count is a first-order effect on σ itself**, which is precisely
+the quantity the emulator exists to deliver for experimental design. A Kaiser
+forecast will systematically under-report errors regardless of how well the
+covariance is fixed. Combined with §11 (REPT is not blocked — the shim already
+exists) and its measured 0.267 s/call, this is arguably now the highest-leverage
+remaining item, ahead of the covariance normalization.
+
+Caveat in the other direction, for honesty: some of the gap is real physics we
+should NOT close. A Fisher forecast at the truth is optimistic relative to an
+MCMC posterior with prior volume effects, and the BAO pipeline already
+established that Fisher under-predicts MCMC for a simpler likelihood. Do not
+tune nuisance choices to close the ratio — the §33r error-cancellation lesson.
