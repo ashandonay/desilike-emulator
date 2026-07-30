@@ -2092,3 +2092,62 @@ wrong one.
 A loud failure (`KeyError`) announced itself; a silent one produced a plausible
 plot and survived until a human looked at it. When flipping a default, grep the
 callers — the ones that break are less dangerous than the ones that don't.
+
+## §31 — ELG1 must be EXCLUDED from the full-shape 0.8–1.1 bin (defect, not caveat)
+
+DESI 2024 V §2 is explicit:
+
+> for the Full-Shape type of analyses presented in this paper, the ELG bin
+> between 0.8 < z < 1.1 (ELG1) **was not included as it failed to pass the
+> required tests before unblinding** … ELG1 showed uncorrected systematic
+> effects related to fibre collisions … **However, the impact … on the BAO
+> measurements was negligible, and for this reason, this bin was included in the
+> BAO analysis** … in combination with the high-z LRG bin.
+
+**ELG1 is IN for BAO and OUT for full-shape.** The bin definition is
+analysis-dependent, and `tracers.yaml` has only one entry.
+
+### What the pipeline does
+
+`ntracers('LRG3_ELG1','dr1')` = **1,876,187** = LRG3 (859,822) + ELG1
+(1,016,365), against DESI full-shape's 859,824 — a factor **2.18**. The n(z)
+slices combine both too (`source_file` lists all four ELG and LRG `nz.txt`).
+
+### It fully explains the LRG3_ELG1 scorecard outlier
+
+| N used | σ(qiso)/DESI | σ(qap)/DESI | σ(m)/DESI |
+|---|---|---|---|
+| combined 1,876,187 | 0.69 | 0.66 | 0.95 |
+| **LRG3-only 859,822** | **0.86** | **0.80** | **0.98** |
+
+√(2.18) = 1.477 predicts a naive σ ratio of 0.677 — against the observed
+0.69/0.66. Essentially exact. Corrected, the bin sits with LRG1 (0.99/1.01) and
+LRG2 (0.81/0.85) instead of being an outlier.
+
+**Knock-on for §16:** "agreement degrades with redshift" rested partly on
+LRG3_ELG1 being anomalous. It is not. That leaves ELG2 (0.65/0.58) as the
+genuine high-z problem, with QSO middling — a weaker and less monotonic trend
+than recorded.
+
+### This was flagged and then reasoned around
+
+`desi_reference.SAMPLE_MISMATCH` and `compare_to_desi._SAMPLE_MISMATCH` both
+carried the warning, and §27a excluded the bin from the V_eff fit on those
+grounds. Flagging it was not enough: the forecast is still generated, and the
+mismatch is a factor 2.18 in N, not a footnote.
+
+### Consequences
+
+1. **`v1` LRG3_ELG1 training data is wrong for full-shape.** It forecasts a
+   combined sample DESI cannot measure. If bedcosmo consumes it, the design
+   credits ELG1 with growth-rate constraining power DESI explicitly found it
+   does not have.
+2. **The fix cannot be a `tracers.yaml` edit.** That file is shared with `bao/`,
+   which is frozen and where the combined bin is *correct*. The bin definition
+   has to become analysis-aware.
+3. **A full fix needs CFS.** LRG-only n(z) slices for 0.8–1.1 require re-running
+   `parse_desi_nz.py` with `DEFAULT_TARGETS_BY_BIN['LRG3_ELG1'] = ['LRG']`
+   (one line) against the raw `*_nz.txt`. Blocked with everything else.
+
+Not fixed here — the design decision (how to express an analysis-dependent bin
+without touching frozen `bao/`) is the user's.
