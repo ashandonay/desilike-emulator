@@ -11,13 +11,18 @@ Design decisions (see shapefit/README.md and shapefit/CHANGELOG.md):
   default ``'peakaverage'`` mislabels sigma ~2x and crashes chaotically across
   wide emulator priors (see the long comment at bao/core.py:1641). ``dn``
   stays fixed (un-fixing it changes the definition of ``m``).
-- Theory: ``KaiserTracerPowerSpectrumMultipoles`` by default, pluggable via
-  ``theory_cls`` (velocileptors LPT is the planned upgrade). Kaiser exposes
-  ``b1``, ``sn0`` and the Gaussian damping scales ``sigmapar``/``sigmaper``.
-- Broadband: none. Kaiser has no broadband basis and DESI full-shape has no
-  polynomial broadband either (EFT counterterms/stochastic terms arrive with
-  the velocileptors theory). ``sn0`` is the only stochastic freedom. Do not
-  graft the BAO 'pcs' basis onto full shape.
+- Theory: ``REPTVelocileptorsTracerPowerSpectrumMultipoles`` by default,
+  pluggable via ``theory_cls``. This is DESI's own baseline -- 2024 V S4.7
+  item 2, "We select velocileptors with its EPT option as our baseline choice"
+  -- and with ``prior_basis='physical'`` it varies exactly DESI's Table 4 set
+  (b1p, b2p, bsp, alpha0p, alpha2p, sn0p, sn2p) at their prior widths, all
+  marginalised by the Schur reduction. Kaiser remains available and is a
+  different model, not an approximation to this one: it under-reports sigma by
+  1.6-2.1x and inverts two correlation signs on every tracer (CHANGELOG S15,
+  S16, S22).
+- Broadband: none, in the polynomial sense -- DESI full-shape has no broadband
+  basis either. The EFT counterterms and stochastic terms above ARE the
+  small-scale freedom. Do not graft the BAO 'pcs' basis onto full shape.
 - Pre-recon everywhere: no reconstruction template, no Sigma_post, no
   smoothing_scale/bias_recon modelling, no shifted-random shot-noise boost.
   Damping fiducials are the pre-recon (linear + 1-loop) Sigma_perp/Sigma_par
@@ -73,6 +78,7 @@ from desilike.observables.galaxy_clustering import (
 )
 from desilike.theories.galaxy_clustering import (
     KaiserTracerPowerSpectrumMultipoles,
+    REPTVelocileptorsTracerPowerSpectrumMultipoles,
     ShapeFitPowerSpectrumTemplate,
 )
 from desilike.theories.primordial_cosmology import get_cosmo
@@ -283,6 +289,35 @@ _REPT_TRACER_PRESET = {
 }
 
 
+# desilike's REPT `tracer` preset selects (fsat, sigv), which set the width of
+# the SN2 prior -- DESI's f_sat sigma_v^2 / nbar normalisation (Table 4). It
+# accepts BGS/LRG/ELG/QSO only, so our MIX bin has to choose: LRG3_ELG1 maps to
+# LRG because DESI's own 0.8-1.1 full-shape bin is LRG-only, which is the
+# sample their prior was tuned against.
+_REPT_TRACER_PRESET = {"BGS": "BGS", "LRG": "LRG", "ELG": "ELG",
+                       "QSO": "QSO", "MIX": "LRG"}
+
+
+def default_theory_kwargs(theory_cls, tracer_bin: str) -> Dict:
+    """Theory kwargs when the caller passes none.
+
+    Kaiser takes none. REPT needs prior_basis='physical' (so its nuisances are
+    in DESI's units -- SN0 in 1/nbar, SN2 in f_sat sigma_v^2/nbar) and the
+    per-tracer preset behind those units. Getting this from the tracer config
+    rather than a caller argument keeps the generators, the regression harness
+    and the validators on one definition.
+    """
+    if "Velocileptors" not in theory_cls.__name__:
+        return {}
+    ttype = str(get_tracer_config(tracer_bin).get("tracer_type", "")).strip().upper()
+    if ttype not in _REPT_TRACER_PRESET:
+        raise ValueError(
+            f"No REPT tracer preset for tracer_type {ttype!r} (bin "
+            f"{tracer_bin!r}). Add one rather than defaulting: the preset sets "
+            f"fsat/sigv, which set the SN2 prior width.")
+    return {"prior_basis": "physical", "tracer": _REPT_TRACER_PRESET[ttype]}
+
+
 def theory_fiducial_params(theory_cls, *, b1, sigma_fog, sigma8_z):
     """Fiducial nuisance values for the chosen theory.
 
@@ -388,7 +423,7 @@ def build_shapefit_likelihood(
     tracer_config: Dict[str, float] | None = None,
     klim_spec: Tuple[float, float, float] = _KLIM,
     ells: Tuple[int, ...] = _ELLS,
-    theory_cls=KaiserTracerPowerSpectrumMultipoles,
+    theory_cls=REPTVelocileptorsTracerPowerSpectrumMultipoles,
     theory_kwargs: Dict | None = None,
     float_sigma_damp: bool = True,
     cov_override: np.ndarray | None = None,
@@ -665,7 +700,9 @@ def build_shapefit_likelihood(
         with_now="wallish2018",
     )
 
-    theory = theory_cls(template=template, **(theory_kwargs or {}))
+    theory = theory_cls(template=template,
+                        **(theory_kwargs if theory_kwargs is not None
+                           else default_theory_kwargs(theory_cls, tracer_bin)))
 
     klim = {int(ell): [kmin_eff, float(klim_spec[1]), float(klim_spec[2])]
             for ell in ells}

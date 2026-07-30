@@ -1242,3 +1242,60 @@ Fisher-weighted z_eff.
 2. It is not evidence that any of §14/§18/§20 is *right* — only that the
    pipeline is now self-consistent and reproducible. Correctness against DESI
    is §16/§19/§20's business.
+
+---
+
+## §22 — REPT promoted to the production theory
+
+The open question was never whether REPT models better — §15/§16 settled that,
+and §20 confirmed it *is* DESI's baseline. It was robustness: Kaiser is
+analytic and cannot fail, REPT is a loop integrator, and the `base` box runs to
+ω_cdm ∈ [0.01, 0.99], h ∈ [0.2, 1.0]. The ≥95% acceptance target had only ever
+been measured against Kaiser.
+
+Audit: 64 Latin-hypercube draws over the real `base` box, LRG2, both theories,
+same draw, single process.
+
+**REPT and Kaiser fail on exactly the same samples.** Identical failure lists,
+and every failure is `unphysical Omega_m outside [0.01, 0.99]` — the prior box
+rejecting itself before any theory is evaluated. REPT adds **zero** failures.
+That is the whole robustness question, answered.
+
+Two things the audit turned up that are worth recording:
+
+- **Acceptance is 42.2%, and that is the prior box, not the theory.** Ω_m =
+  (ω_cdm + ω_b)/h² exceeds 0.99 over most of the box. Consistent with the known
+  "Ω_m box keeps ~38% and skews high". Costs attempts, not samples: the
+  generator loops until `n_samples` accepted rows exist.
+- **Cost is ~3.2×, not the 1.57× carried since §15.** 27 accepted samples took
+  1.5 min under Kaiser and 4.8 min under REPT (≈3.3 s vs ≈10.7 s each). The
+  audit script's "1.02× median" line is meaningless and should be ignored —
+  more than half the draws fail instantly, so the median is 0.00 s for both.
+  Total time is the honest metric here.
+
+Over the 27 shared samples REPT/Kaiser σ ratios are 1.56 (qiso), 1.29 (qap),
+1.48 (fσ_r), 1.61 (m) — Kaiser under-reports across the box, not just at the
+fiducial.
+
+### What changed
+
+`build_shapefit_likelihood(theory_cls=...)` now defaults to
+`REPTVelocileptorsTracerPowerSpectrumMultipoles`. There is no `--theory` flag
+anywhere, by design: the generators, the regression harness and the validators
+all read this one default, so the switch is a single line and cannot drift
+between them.
+
+New `default_theory_kwargs(theory_cls, tracer_bin)` supplies
+`prior_basis='physical'` plus the per-tracer preset, resolved from
+`tracers.yaml` rather than passed in. The preset picks (fsat, sigv), which set
+the SN2 prior width — DESI's f_sat σ_v²/n̄ normalisation. desilike accepts only
+BGS/LRG/ELG/QSO, so our MIX bin maps to **LRG**, since DESI's own 0.8–1.1
+full-shape bin is LRG-only and that is the sample the prior was tuned against.
+Unknown tracer types raise rather than defaulting; a silently wrong preset
+would be an invisibly wrong prior.
+
+Verified end-to-end: `run_fisher` on LRG2 with no theory arguments returns
+0.81 / 0.85 / 0.91 / 0.87 of DESI, matching the §19 REPT scorecard.
+
+**§21's golden baseline is now invalid** — it was dumped under the Kaiser
+default. Regenerate.
