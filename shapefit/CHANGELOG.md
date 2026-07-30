@@ -1567,3 +1567,64 @@ n_s does not move T(k), so this says nothing about **m's Ω_m response** — and
 non-circular check on it: any reference must reproduce the de-wiggling, which
 is the k-range-sensitive component (§24) and the source of the known ~0.15%
 Ω_m-locked sawtooth. Recorded as open, not solved.
+
+---
+
+## §26 — The 0.815 covariance ratio is mostly the shot-noise floor, not non-Gaussianity
+
+Prompted by asking which of this session's checks are circular. The LRG2 checks
+are the least circular work here — they compare against DESI **data products**
+(EZmock covariance, measured spectra, randoms-derived window, measured shot
+noise, published MCMC constraints), not against reimplementations of our own
+code. Running the most model-independent of them turned up a problem.
+
+### `--check shot` fails at 30%
+
+| | n_eff | P_shot |
+|---|---|---|
+| ours (FKP V_eff → n_eff) | 2.7342e−04 | 3657.3 |
+| DESI measured (`num_shotnoise/norm`) | 1.9122e−04 | 5229.5 |
+| ratio | 1.430 | **0.699** |
+
+### It explains the covariance deficit
+
+If the shot-noise floor were the only error, the Gaussian covariance ratio would
+be ((P0 + P_shot_ours)/(P0 + P_shot_DESI))². On our band:
+
+| k | P0 | predicted cov ratio |
+|---|---|---|
+| 0.022 | 67094 | 0.957 |
+| 0.063 | 30562 | 0.914 |
+| 0.108 | 15521 | 0.854 |
+| 0.153 | 10593 | 0.811 |
+| 0.198 | 7925 | 0.775 |
+
+**Band-median 0.852, against the measured 0.815.** So the shot-noise floor
+accounts for most of the 18.5% deficit, leaving ~4% for genuine non-Gaussian
+effects.
+
+**This corrects §19**, which called 0.815 "the same modest non-Gaussian deficit
+the BAO side documents (config/bundle 0.66–0.88)". That attribution is not
+supported. The k-dependence is the giveaway: the predicted ratio steepens from
+0.957 to 0.775 exactly as P0 falls toward the shot-noise floor, and a
+non-Gaussian deficit has no reason to take that shape. (Caveat: the prediction
+uses windowless P0 while 0.815 is the rotated comparison — fine for the
+argument, not for a precise budget.)
+
+### What is NOT established
+
+That our n_eff is *wrong*. The two numbers are different definitions: ours is
+the single effective density reproducing the FKP V_eff, DESI's is I₁₂/I₂₂, the
+estimator's actual shot noise. With a varying n(z) these need not agree, which
+is why an earlier lead here was retracted on the grounds that
+`bao/config_space.py` carries the identical offset. But that establishes
+common-mode, not correctness — and the quantitative link to the covariance is a
+much sharper handle than existed then.
+
+This also plausibly feeds the σ scorecard: a covariance low by ~0.85 is ~0.92
+in σ, and we sit at 0.81–0.85 against DESI. Between this and Fisher-vs-MCMC the
+residual is accounted for without invoking a non-Gaussian deficit at all.
+
+**Open, and now the top item**: decide whether the V_eff-matched n_eff is the
+right quantity to set the covariance shot-noise floor, or whether the floor
+should be set from I₁₂/I₂₂ directly. It affects every σ in both pipelines.
