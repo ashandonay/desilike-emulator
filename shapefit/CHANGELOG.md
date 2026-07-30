@@ -1845,3 +1845,50 @@ required inflation factor either tracks the completeness pattern or it does not.
 files store `num_shotnoise = 0, norm = 1` placeholders, and data.desi.lbl.gov is
 still serving the NERSC-outage page (`server: GitHub.com` on every path). The
 other five bundles are the unblocking item.
+
+### §27a — Half the cross-tracer test needs no bundles: it is NOT completeness
+
+§27 called the cross-tracer test blocked. Half of it is not: **Table 1 publishes
+V_eff for all six tracers**, and only P_shot is bundle-gated. Solving for the n̄
+scale `s` that reconciles our V_eff with theirs:
+
+| tracer | s | comp |
+|---|---|---|
+| BGS | 0.987 | 0.636 |
+| LRG1 | 0.792 | 0.693 |
+| LRG2 | 0.798 | 0.693 |
+| LRG3_ELG1 | 0.392 | 0.693 (sample mismatch — excluded) |
+| ELG2 | **1.041** | **0.352** |
+| QSO | 1.016 | 0.874 |
+
+**`s` does not track completeness.** `comp` spans a factor 2.5; `s` spans
+0.79–1.04. ELG2 decides it: worst completeness by far, yet needs no n̄
+correction at all — the reverse of what a completeness-driven deficit requires.
+(The correlation, −0.283 on five points, is consistent with zero and should not
+be leaned on; the **range mismatch** is the argument.)
+
+Third independent strike against completeness, after §26c's Cauchy–Schwarz
+(N_eff = N_success under uniform weights) and §27's derivation (mean
+completeness cancels from S and A alike).
+
+#### What LRG2 + Table 1 establish, and what still needs the bundles
+
+Established:
+1. The survey window is a no-op for the compressed parameters (§19).
+2. The analytic Gaussian covariance machinery is validated against 1000 EZmocks
+   — 0.815 with the right correlation structure. Two methodologically disjoint
+   calculations at 18%.
+3. That 18% is the shot-noise floor, not non-Gaussianity (§26).
+4. The n̄ deficit is **LRG-specific and ~20%** (all three LRG bins low; BGS,
+   ELG2, QSO within 4%). A tracer-specific signal, not a global calibration.
+5. It is not mean completeness — three ways.
+
+Still open: for LRG2, V_eff implies s = 0.792 but P_shot implies 0.6875. Real
+inconsistency, in the direction dispersion predicts. But **V_eff is the weak
+probe** — it saturates where n̄P ≫ 1, so it is blind to the sparse tail that
+sets shot noise. A null result there cannot refute dispersion, only fail to
+confirm it.
+
+The bundles now answer a sharper question than "is it completeness" (answered,
+no): **why is LRG specifically ~20% off, and does the P_shot deficit track that
+pattern or a different one?**
