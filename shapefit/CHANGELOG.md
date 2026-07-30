@@ -956,3 +956,48 @@ with redshift. Only the numbers shift, by up to 5%.
 
 Correlations are unaffected — a ratio to a constant leaves ρ invariant, which is
 why the ρ comparison needed no fiducial in the first place.
+
+## 18. 2026-07-29 — Comparison plots (`comparison_plots.py`)
+
+Modelled on `bao/comparison_plots.py`: positional subcommand, default `sigma`,
+plus `rho`, `mean` and `all`. Reference throughout is `desi_reference.py`
+(ShapeFit-alone). Outputs `shapefit_{sigma,rho,mean}_vs_desi.png`.
+
+**`sigma`** — four stacked panels, σ(qiso), σ(qap), σ(fσ_r)/fσ_r, σ(m), with
+Kaiser and REPT markers against DESI and the ours/DESI ratio annotated. The
+Kaiser–REPT separation is the visual headline: Kaiser sits roughly half of DESI
+on every panel and every tracer, REPT sits on top of it for LRG1 and within
+10–20% for LRG2/QSO.
+
+**`rho`** — the six correlations, which had no external check before this. Two
+Kaiser failures are now visible as systematic, not incidental:
+
+- ρ(qiso,qap): Kaiser is **negative for every tracer**, DESI positive for four
+  of six. A sign error across the board, not a per-tracer fluctuation.
+- ρ(f_sigmar,m): Kaiser sits at −0.25…−0.35 throughout, DESI at +0.2…+0.37.
+  Same story.
+
+REPT fixes both in sign. Residual REPT issues, also systematic:
+
+- ρ(f_sigmar,m) is right in sign but **too weak** — near 0 against DESI's +0.24
+- ρ(qiso,qap) and ρ(qiso,f_sigmar) go wrong for **ELG2 and QSO specifically**
+  (ρ(qiso,qap) dips negative where DESI is positive; ρ(qiso,f_sigmar) reaches
+  +0.41 against DESI's +0.08/+0.15)
+
+ρ(qap,f_sigmar), the dominant AP–RSD degeneracy, is the best-behaved panel:
+both theories track DESI's −0.53…−0.63, REPT slightly over-strong.
+
+That ELG2 and QSO are the offenders in ρ matches §16's finding that σ agreement
+degrades with redshift. Two independent symptoms pointing at the same place is
+worth more than either alone, and makes the high-z tracers the next thing to
+chase.
+
+**`mean`** — carries a caveat that is the point of the panel rather than a
+footnote. At the DESI fiducial cosmology our mean pipeline returns qiso = 1,
+qap = 1 and dm = 0 **by construction**, so three of the four panels test whether
+DESI's *data* is consistent with the fiducial, not whether our pipeline is
+right. Only f_sigmar is predictive: f(z)·σ_r is an absolute number we compute
+from the input cosmology. Both z_eff are annotated there, since fσ8 evolves fast
+and ours are Fisher-weighted against DESI's volume-weighted. m is plotted as a
+deviation on both sides — DESI's is already one, ours is absolute, and plotting
+them raw would show a spurious ~0.58 offset (§17).
