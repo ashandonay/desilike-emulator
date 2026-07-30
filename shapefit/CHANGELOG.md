@@ -1103,8 +1103,27 @@ what survives makes the fit *slightly tighter*, not looser.
   *Kaiser* path, retired in §15. `float_sigma_damp` is a no-op under REPT,
   since `theory_fiducial_params` hands it only `b1p`.
 
-  Two model differences do remain, unquantified and pushing opposite ways: we
-  fit ℓ=(0,2) where DESI includes the hexadecapole (more information), and
-  DESI's basis may carry a b3/α4/SN4 tail the physical basis does not expose
-  (less). Check against the paper before the next scorecard; this is a
-  correction on an explained gap, not a new suspect.
+  **And there are no model differences left either** — checked line by line
+  against arXiv:2411.12021 §4.7 and Table 4:
+
+  | DESI baseline | ours |
+  |---|---|
+  | ℓ = 0, 2 — hexadecapole explicitly dropped (§4.7 item 3: "it causes stronger prior weight effects") | ℓ = (0, 2) ✓ |
+  | 0.02 < k < 0.20, Δk = 0.005 | `_KLIM = (0.02, 0.2, 0.005)` ✓ |
+  | velocileptors **EPT** (§4.7 item 2; Fig. 10 legend "velocileptors EPT (baseline)") | `REPTVelocileptors...` ✓ |
+  | b3 **fixed null** ("quite degenerate with the counterterms") | not varied ✓ |
+  | α4, SN4 — absent, follow ℓ=4 | absent ✓ |
+  | α_iso, α_AP U[0.8,1.2]; f/f_fid U[0,2] | qiso, qap, df ✓ |
+  | (1+b1)σ8 U[0,3]; b2σ8², bsσ8² N[0,5²] | b1p, b2p, bsp ✓ |
+  | α0, α2 N[0,12.5²] | alpha0p, alpha2p ✓ |
+  | SN0 N[0,2²]×1/n̄; SN2 N[0,5²]×f_sat σ_v²/n̄ | sn0p, sn2p ✓ (that normalisation *is* `prior_basis='physical'`) |
+  | m U[−0.8, 0.8] | dm U[−3, 3] — **the only difference, and inert** |
+
+  The `dm` width does not matter: a uniform prior contributes nothing to a
+  Fisher matrix, and DESI's own σ(m) ≈ 0.069 is nowhere near ±0.8, so it is not
+  truncating their posterior either. Table 4's caption calling the biases
+  "Lagrangian basis" is the parameterisation, not the code — the baseline is
+  Eulerian EPT.
+
+  So the modelling side is settled and should not be reopened as an explanation
+  for the residual.
