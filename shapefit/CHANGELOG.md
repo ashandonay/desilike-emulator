@@ -1299,3 +1299,86 @@ Verified end-to-end: `run_fisher` on LRG2 with no theory arguments returns
 
 **§21's golden baseline is now invalid** — it was dumped under the Kaiser
 default. Regenerate.
+
+---
+
+## §23 — First REPT training set, and the mean pipeline validated against Table 11
+
+Generated `dr1/base/{covar,mean}/v101`, all six tracers, 512 accepted samples
+each (409 train / 103 test), on the §22 REPT default.
+
+**Correction to an earlier claim in this session.** It was stated that nothing
+had been generated since the July rebuild. Wrong — a `find -maxdepth 4` missed
+the tree, which sits at depth 6 under `bedcosmo/num_tracers/emulator/shapefit/`.
+What was already there:
+
+| path | n | date | what |
+|---|---|---|---|
+| `base/covar/v3` | 20000 | 2026-03-19 | legacy toy pipeline, pre-dataset-segment layout, has `Lya_QSO` |
+| `dr1/base/{covar,mean}/v99` | 204 / 409 | 2026-07-27 | rebuilt pipeline, smoke test |
+| `dr1/base/{covar,mean}/v100` | 800 / 1600 | 2026-07-29 | rebuilt pipeline, smoke test |
+
+All superseded regardless (v3 predates even the de-wiggling fix), but the claim
+was wrong as stated. Note the auto-versioner therefore landed production at
+**v101**, next to two smoke tests — a naming wart, not a correctness one.
+
+### Validation
+
+*covar*: all six clean — finite throughout, every ρ strictly inside (−1, 1),
+every σ positive, target/param ordering identical across all 12 files. Median
+σ(qiso) orders by effective volume (LRG3_ELG1 0.040 tightest → BGS 0.089).
+
+Confirmed the REPT switch reached the **data**, not just a one-off call, by
+comparing LRG2 v100 (Kaiser) against v101 (REPT) medians: σ(qiso) ×1.50,
+σ(fσ_r) ×1.63, σ(m) ×1.90, and ρ(f_sigmar,m) −0.21 → −0.55, the §15 sign-
+strength change. σ(qap) went ×0.90 against the audit's ×1.29 — different seeds,
+409 vs 800 samples, medians over a box dominated by extreme cosmologies. Worth
+a matched-cosmology look, not a red flag.
+
+*mean*: **f_sigmar reproduces DESI's Table 11 fiducial.** This is the only
+predictive panel — qiso and qap are 1 by construction at the fiducial — and it
+lands:
+
+| | ours | DESI T11 | ratio |
+|---|---|---|---|
+| BGS | 0.47206 | 0.4723 | 0.9995 |
+| LRG1 | 0.47331 | 0.4733 | 1.0000 |
+| LRG2 | 0.46084 | 0.4608 | 1.0001 |
+| LRG3_ELG1 | 0.43684 | 0.4398 | 0.9933 |
+| ELG2 | 0.39600 | 0.3944 | 1.0041 |
+| QSO | 0.39146 | 0.3750 | 1.0439 |
+
+Four tracers to ≤0.4%. The two that miss are the two with known offsets:
+LRG3_ELG1 is a different galaxy sample (LRG+ELG1 vs DESI's LRG-only) at
+z_eff 0.945 vs 0.919, and QSO's z_eff is 1.343 vs DESI's 1.491 by design
+(ours Fisher-weighted, theirs volume-weighted). fσ8 falls with z, so a lower
+z_eff must give a higher fσ8 — both deviate in the right direction and by
+about the right size.
+
+### The m convention, settled for bedcosmo
+
+At the fiducial input cosmology our mean pipeline returns **m = −0.5776**
+(LRG2), i.e. the **absolute** slope. DESI's Eq. (4.9) m is a **deviation** —
+their measured LRG2 value is +0.0467, ~0 at the fiducial. The conversion is
+`dm = m − m_fid`, and m_fid is near-constant across tracers because m is a
+*shape* parameter and linear shape does not evolve with z:
+
+    BGS −0.577872  LRG1 −0.577702  LRG2 −0.577576
+    LRG3_ELG1 −0.577402  ELG2 −0.577211  QSO −0.577194
+
+That near-constancy also explains the flat median m (≈ −0.125) across tracers
+in the generated data — expected, not a bug.
+
+### Bug fixed: DR2 area in the mean eval path
+
+`util.py:411` passed a hardcoded `14000.0` to `_fiducial_z_eff` while
+`generate_mean_data.py` resolves `dataset_area(dataset)` = 7500 for DR1 — the
+same footprint bug §18 fixed in `core.py`, surviving at another call site. Had
+it mattered, eval would have scored the emulator against a z_eff it was never
+trained on.
+
+**It does not matter numerically: the area cancels exactly.** z_eff is a
+volume-weighted average over redshift slices and the area multiplies every
+slice identically, so it drops out of the normalised weight — all six tracers
+agree to 5 decimal places between 7500 and 14000. Fixed anyway, since the
+constant was wrong and inconsistent with the generator.

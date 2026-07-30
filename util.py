@@ -408,7 +408,14 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             else list(sf_core.COSMO_MODELS["base"])
         priors = {p: dict(sf_core.DEFAULT_PRIORS[p])
                   for p in varied if p != "N_tracers"}
-        z_eff = gen_mean._fiducial_z_eff(tracer_bin, 14000.0)
+        # The area must match the one generate_mean_data.py used, or eval scores
+        # the emulator against a z_eff it was never trained on. This read 14000
+        # -- the DR2 footprint -- while the generator resolves
+        # dataset_area(args.dataset) = 7500 for DR1: the same footprint bug
+        # shapefit CHANGELOG S18 fixed in core.py, surviving at this call site.
+        # shapefit is DR1-only (generate_covar_data.py restricts --dataset), so
+        # pin DR1 rather than thread a dataset argument through get_pipeline.
+        z_eff = gen_mean._fiducial_z_eff(tracer_bin, sf_core.dataset_area("dr1"))
 
         def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _z=z_eff):
             _s, vals, tb = sf_fs._worker_run_mean_targets((sample, _tracer, _z, None))
