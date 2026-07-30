@@ -913,3 +913,46 @@ bedcosmo assembles the 4×4 from them.
 
 BGS remains a special case — DESI flags its α_AP as prior-dominated, so its
 σ(qap) is a prior width and the 0.93 ratio there is not a physics result.
+
+## 17. 2026-07-29 — Correction: σ(qiso)/σ(qap) denominators must be the fiducial
+
+§15–§16 divided DESI's σ(D_V/r_d) and σ(D_H/D_M) by the **measured** central
+value to get σ(qiso) and σ(qap), justified as a "~1% approximation". That
+justification was asserted, not measured, and it is wrong.
+
+qiso ≡ (D_V/r_d)/(D_V/r_d)_fid is a ratio to the FIDUCIAL, so
+σ(qiso) = σ(D_V/r_d)/(D_V/r_d)_fid exactly. Measured/fiducial actually runs:
+
+| tracer | D_V/r_d meas/fid | D_H/D_M meas/fid |
+|---|---|---|
+| BGS | 0.952 | 0.996 |
+| LRG1 | 0.975 | 0.972 |
+| LRG2 | 0.948 | 1.030 |
+| LRG3 | 0.996 | 1.037 |
+| ELG2 | 0.976 | 0.939 |
+| QSO | 0.988 | 1.008 |
+
+Up to 5–6%, not 1%. These are genuine DR1 deviations, not an error in the
+fiducial: checked against `desi_data.csv`, our fiducial reproduces DESI's
+published BAO to 1–2% for most quantities, with LRG1 D_H/r_d at 0.923 being
+DR1's documented low point.
+
+Using the measurement inflated DESI's σ and so deflated every ratio.
+`desi_reference.fiducial_dv_dhdm(z)` now computes the fiducial from cosmoprimo
+at DESI's z_eff, with desilike's BAOExtractor conventions.
+
+Corrected ratios (ours REPT / DESI):
+
+| tracer | qiso | qap | fsr/fsr | m |
+|---|---|---|---|---|
+| BGS | 0.62 | 0.94 | 0.67 | 0.68 |
+| LRG1 | 0.99 | 1.01 | 1.03 | 1.07 |
+| LRG2 | 0.82 | 0.85 | 0.91 | 0.87 |
+| LRG3_ELG1 | 0.69 | 0.66 | 0.48 | 0.96 * |
+| ELG2 | 0.65 | 0.58 | 0.54 | 0.87 |
+
+Conclusions from §16 are unchanged: LRG1 essentially exact, agreement degrading
+with redshift. Only the numbers shift, by up to 5%.
+
+Correlations are unaffected — a ratio to a constant leaves ρ invariant, which is
+why the ρ comparison needed no fiducial in the first place.

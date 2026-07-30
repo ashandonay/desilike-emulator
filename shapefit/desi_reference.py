@@ -38,10 +38,13 @@ the ABSOLUTE slope m = m_fid + dm, which is -0.5775 at the fiducial for LRG2.
 The two differ by m_fid. Anything comparing mean m values -- bedcosmo included
 -- has to account for that offset.
 
-Dividing sigma by the MEASURED central value rather than the fiducial is a ~1%
-approximation (DR1 is consistent with the fiducial at that level) and is the
-reason `sigma_targets` returns fractional errors rather than pretending to a
-precision it does not have.
+The denominator is the FIDUCIAL value, computed from cosmoprimo at DESI's
+z_eff, not the measured central value. An earlier version divided by the
+measurement on the assumption that DR1 sits within ~1% of the fiducial. It does
+not: measured/fiducial runs to 0.948 for LRG2 D_V/r_d and 0.923 for LRG1
+D_H/r_d (the latter being DR1's well-known low point). Those are real data
+deviations, so using the measurement inflated DESI's sigma(qiso) and sigma(qap)
+by up to 5% and correspondingly deflated every ratio computed against them.
 
 Two fit variants are published and both are recorded here:
 
@@ -69,6 +72,29 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 import numpy as np
+
+_FID_CACHE: Dict[float, Tuple[float, float]] = {}
+
+
+def fiducial_dv_dhdm(z: float) -> Tuple[float, float]:
+    """(D_V/r_d, D_H/D_M) at the DESI fiducial cosmology.
+
+    Conventions match desilike's BAOExtractor._set_base:
+        D_H = (c/1e3) / (100 * efunc(z)),  D_M = comoving_angular_distance(z),
+        D_V = D_H^(1/3) * D_M^(2/3) * z^(1/3),  all already Mpc/h.
+    Validated against DESI's published BAO in desi_data.csv: most quantities
+    agree to 1-2%, the expected data-vs-fiducial scatter.
+    """
+    key = round(float(z), 6)
+    if key not in _FID_CACHE:
+        from desilike.theories.primordial_cosmology import get_cosmo
+        c = get_cosmo(("DESI", {}))
+        dm = float(c.comoving_angular_distance(z))
+        dh = 299792.458 / (100.0 * float(c.efunc(z)))
+        rd = float(c.rs_drag)
+        dv = dh ** (1.0 / 3.0) * dm ** (2.0 / 3.0) * float(z) ** (1.0 / 3.0)
+        _FID_CACHE[key] = (dv / rd, dh / dm)
+    return _FID_CACHE[key]
 
 # Order of the DESI 4-vector, and the emulator target each entry maps to.
 DESI_ORDER = ("DV_over_rd", "DH_over_DM", "f_sigma_s8", "m_plus_n")
@@ -149,17 +175,18 @@ def datavector(tracer_bin: str, variant: str = "sf") -> Tuple[float, np.ndarray,
 def sigma_targets(tracer_bin: str, variant: str = "sf") -> Dict[str, float]:
     """DESI's constraints expressed as our emulator targets.
 
-    sigma_qiso and sigma_qap are fractional (sigma divided by the measured
-    central value -- see the module docstring on why that is a ~1%
-    approximation). sigma_f_sigmar is returned as a FRACTION of f sigma_s8,
+    sigma_qiso and sigma_qap are divided by the FIDUCIAL D_V/r_d and D_H/D_M
+    (see fiducial_dv_dhdm), which is what the definitions of qiso and qap
+    require. sigma_f_sigmar is returned as a FRACTION of f sigma_s8,
     since our f_sigmar and DESI's f sigma_s8 share a definition but are
     evaluated at slightly different z_eff. sigma_m is absolute.
     """
-    _z, vec, C = datavector(tracer_bin, variant)
+    z, vec, C = datavector(tracer_bin, variant)
     sig = np.sqrt(np.diag(C))
+    fid_dv, fid_dhdm = fiducial_dv_dhdm(z)
     out = {
-        "sigma_qiso": float(sig[0] / vec[0]),
-        "sigma_qap": float(sig[1] / vec[1]),
+        "sigma_qiso": float(sig[0] / fid_dv),
+        "sigma_qap": float(sig[1] / fid_dhdm),
         "sigma_f_sigmar_frac": float(sig[2] / vec[2]),
         "sigma_m": float(sig[3]),
     }
