@@ -1962,3 +1962,47 @@ in **V** — the shell volume or the 7500 deg² area. Noted for the chase:
 7,500 the pipeline uses. That is a factor 2.5, not 1.42, so it is not a direct
 explanation, but the area bookkeeping clearly needs understanding before this
 closes.
+
+## §29 — The same n̄ excess is in the BAO pipeline, and it is larger there
+
+`bao/config_space.py` builds n̄ identically — `config_space.py:656` says so
+outright ("n̄ is exactly linear in N_design … nbar = N·frac/V_shell at the fixed
+frame") — and `XiSigmaGenerator('LRG2').slices.nbar` returns exactly the
+shapefit values (2.8571e−4, 2.8297e−4, 2.7663e−4 …) at the same N_fid = 771894.
+So the §26/§28 shot-noise excess is **not a shapefit bug**; it is shared.
+
+Because n̄ is linear in N, feeding `N/1.4545` *is* the corrected n̄. Effect on
+the BAO σ triplet:
+
+| tracer | σ(D_H) | σ(D_M) | σ(D_V) |
+|---|---|---|---|
+| BGS | ×1.112 | ×1.112 | ×1.112 |
+| LRG1 | ×1.089 | ×1.107 | ×1.101 |
+| LRG2 | ×1.096 | ×1.113 | ×1.108 |
+| LRG3_ELG1 | ×1.141 | ×1.169 | ×1.162 |
+| ELG2 | ×1.241 | ×1.241 | ×1.241 |
+| QSO | ×1.264 | ×1.264 | ×1.264 |
+
+Sparse tracers are most sensitive, as expected for a shot-noise-dominated
+regime.
+
+### Consequences for two recorded BAO conclusions
+
+- Production under-predicts DESI by a **uniform ~23%** (P/D ≈ 0.72–0.80).
+  Applying these factors: LRG 0.76 → ~0.84, ELG2/QSO 0.76 → ~0.95. Roughly half
+  the gap on LRG, nearly all of it on the sparse tracers.
+- The ξ-covariance deficit (config/bundle 0.66–0.88) is attributed to physical
+  non-Gaussian / α_SN effects. As in §26 on the shapefit side, that attribution
+  would then be substantially wrong.
+
+### Caveats — do not act on this yet
+
+1. **1.4545 is measured on LRG2 alone.** It is the only tracer with a bundle
+   carrying `num_shotnoise`/`norm`. Extending it to all six is an assumption,
+   and the sparse tracers — where the effect is largest — are the least
+   constrained. This is precisely what the five missing bundles would settle.
+2. It would **destroy the uniformity** of the 23% under-prediction, currently
+   one of the more striking features of that comparison. Either a clue that the
+   real factor is tracer-dependent, or a warning against the assumption.
+3. `bao/` is regression-frozen and was **not modified** — this is a read-only
+   measurement through the public `XiSigmaGenerator` API.
