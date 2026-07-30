@@ -1775,3 +1775,73 @@ invoking a non-Gaussian deficit (§26, correcting §19).
 This is a **stated limitation**, not something to patch with a constant: a
 hardcoded 1.45 does not vary with the design variable, which is the one thing a
 design forecast needs it to do.
+
+## §27 — Verifying the shot-noise attribution (option 3)
+
+Before building any dispersion model, check that dispersion is actually the
+cause. Three results.
+
+### 1. The 1/comp numerology is dead, analytically
+
+§26c flagged that 1/comp(LRG) = 1.443 sits 0.8% from the required 1.4545.
+Worked through: completeness weights restore the target density, so
+Σ_gal w_comp·X → ∫ n̄_target X dV, giving
+
+    P_shot = ∫ n̄_t w_comp w_F² dV / ∫ n̄_t² w_F² dV  →  1/(C n̄_target) = 1/n̄_obs
+
+The mean completeness **cancels identically**. Under uniform completeness
+P_shot = V/N_success exactly, whatever C is. Coincidence, confirmed by
+derivation rather than by inspection. This also rules out any mean-completeness
+scalar as the fix — consistent with §26c's Cauchy–Schwarz argument
+(N_eff = N_success under uniform weights).
+
+### 2. Our volume and n̄ are right — the cross-check is DESI's own V_eff
+
+Table 1 publishes V_eff per tracer. Ours against theirs (converted to (Gpc/h)³
+with h = 0.6736):
+
+| tracer | ours | Table 1 | ratio |
+|---|---|---|---|
+| BGS | 0.523 | 0.520 | **1.007** |
+| LRG1 | 0.918 | 0.795 | 1.155 |
+| LRG2 | 1.407 | 1.223 | 1.151 |
+| LRG3_ELG1 | 3.043 | 1.528 | 1.991 |
+| ELG2 | 0.778 | 0.825 | **0.943** |
+| QSO | 0.446 | 0.458 | **0.972** |
+
+BGS, ELG2 and QSO land within 6%; LRG is 15% high; LRG3_ELG1's factor 2 is the
+known sample mismatch (ours is LRG+ELG1, DESI's LRG-only). **Nothing is wrong
+by 1.45×** — the volume/n̄ construction is sound, so the shot-noise gap is not a
+volume error.
+
+### 3. DESI's own two numbers are mutually inconsistent under a uniform n̄ — which is the evidence
+
+For LRG2, solving for the n̄ scaling each DESI quantity implies:
+
+| from | implied n̄ / ours |
+|---|---|
+| their V_eff | 0.80 |
+| their P_shot | 0.6875 |
+
+A **uniform** survey admits one n̄ satisfying both V_eff = V(n̄P/(1+n̄P))² and
+P_shot = 1/n̄. These differ by 16%, and in the direction dispersion predicts:
+V_eff is information-weighted and favours dense regions, P_shot is a w²-weighted
+mean of 1/n̄ and favours sparse ones, so n̄(V_eff) > n̄(P_shot) necessarily.
+
+That ordering is a **signature of spatial dispersion**, obtained from two
+independent published DESI quantities with no per-galaxy weights required.
+
+### Verdict, and what is still open
+
+Dispersion is **supported, not proven**. Supported: the ordering above, and the
+elimination of mean-completeness and volume as causes. Not proven: the size.
+Something must also account for why V_eff and P_shot imply 0.80 and 0.6875
+rather than a single number — and 15% of the LRG V_eff gap is unexplained on
+its own.
+
+The decisive test is the cross-tracer one: `comp` spans 0.352–0.874, so the
+required inflation factor either tracks the completeness pattern or it does not.
+**Blocked** — only the LRG2 full-shape bundle is local, the plain covariance
+files store `num_shotnoise = 0, norm = 1` placeholders, and data.desi.lbl.gov is
+still serving the NERSC-outage page (`server: GitHub.com` on every path). The
+other five bundles are the unblocking item.
