@@ -1724,3 +1724,54 @@ solved for; σ_w/⟨w⟩ = 0.674 is what would be required, not what has been
 observed. Part of the gap could be our shell volume, the n(z) shape, the
 α·randoms term, or a convention in DESI's `norm`. Checking it means looking at
 the actual DR1 LRG weight distribution — not done.
+
+### §26c — bedcosmo's completeness model is mean-only, so N_eff is not available
+
+Read `~/bedcosmo/src/bedcosmo/num_tracers/experiment.py` and
+`data/desi/bao_dr1/desi_tracers.csv`. Completeness is two **per-tracer scalars**:
+
+    N_tracers = targets x comp x efficiency
+
+`comp` is mean fibre-assignment completeness (LRG 0.693, ELG 0.352, QSO 0.874,
+BGS 0.636), `efficiency` the mean redshift success rate (LRG 0.991, ELG/QSO
+0.727/0.668). The chain reproduces DESI Table 1's N_tracer essentially exactly:
+
+| | bedcosmo | Table 1 |
+|---|---|---|
+| BGS | 300,017 | 300,017 |
+| LRG1 | 506,911 | 506,905 |
+| LRG2 | 771,894 | 771,875 |
+| LRG3 | 859,822 | 859,824 |
+| ELG2 | 1,415,707 | 1,415,687 |
+| QSO | 856,652 | 856,652 |
+
+**The interface convention is confirmed correct.** `N_tracers` is the
+redshift-confirmed count and that is what this pipeline wants.
+
+**But N_eff cannot come from this model**, and no refinement of a scalar would
+help. Under uniform completeness C every weight is 1/C, so Σw = N_target,
+Σw² = N_success/C², and
+
+    N_eff = (Σw)²/Σw² = N_success   exactly.
+
+Mean completeness cancels out of the shot-noise inflation entirely. Only the
+**spatial dispersion** of completeness contributes, and nothing in the model
+represents it. Carrying §26b's N_eff would require a pass-coverage /
+fibre-assignment dispersion model that does not currently exist on either side.
+
+**Numerology to check, not an explanation:** 1/comp(LRG) = 1.443 sits 0.8% from
+the 1.4545 the shot noise requires. Suggestive, but working through the FKP
+normalisation the mean completeness cancels (both S and A carry it), so there is
+no derivation behind it. Recorded so it is not mistaken for a result.
+
+### Interim position
+
+The forecast assumes every redshift-confirmed object is an independent Poisson
+sample. Real weighted galaxies are not, so our shot-noise floor is ~1.45× low on
+LRG2, the Gaussian covariance ~0.85× low, and σ correspondingly tight — which
+together with Fisher-vs-MCMC accounts for the 0.81–0.85 scorecard without
+invoking a non-Gaussian deficit (§26, correcting §19).
+
+This is a **stated limitation**, not something to patch with a constant: a
+hardcoded 1.45 does not vary with the design variable, which is the one thing a
+design forecast needs it to do.
