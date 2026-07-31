@@ -1314,9 +1314,13 @@ def build_bao_likelihood(
     fo = cosmo.get_fourier()
 
     if z_eff is None:
-        # Cosmology-clean: derive z_eff from the (data-only) n(z) slices and
-        # the BAO-Fisher-info weight V × (nP/(1+nP))² per slice. Falls back to
+        # Cosmology-clean: derive z_eff from the (data-only) n(z) slices with
+        # DESI's FKP-weighted definition, n̄V/(1+n̄P₀) per slice. Falls back to
         # the yaml cfg value only if the slices file is missing/empty.
+        #
+        # Reached only when the caller leaves z_eff unset — the Fourier path.
+        # config_space always passes it explicitly, because there z_eff is
+        # pinned by the DESI bundle's window and covariance (§36).
         try:
             z_eff = _compute_z_eff_from_nz(
                 tracer_bin=tracer_bin,
