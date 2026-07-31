@@ -4,7 +4,8 @@ against DESI DR1's published compressed constraints.
 Three plots, selected by a positional subcommand (default: sigma):
 
   comparison_plots.py [sigma]   our sigma(qiso, qap, f_sigmar/f_sigmar, m) vs
-                                DESI, 4 stacked panels, Kaiser and REPT markers.
+                                DESI, 4 stacked panels. REPT only by default;
+                                --theory kaiser rept to overlay Kaiser.
   comparison_plots.py rho       the 6 pairwise correlations vs DESI, 6 panels.
                                 These are 6 of the 10 emulator targets and had
                                 no external check at all before desi_reference.
@@ -79,8 +80,8 @@ _SIGMA_PANELS = [
 _RHO_NAMES = [n for n in sf_core.TARGET_NAMES if n.startswith("rho_")]
 
 _THEORY_STYLE = {
-    "kaiser": dict(marker="v", color="tab:orange", label="ours (Kaiser)"),
-    "rept": dict(marker="o", color="tab:blue", label="ours (REPT)"),
+    "kaiser": dict(marker="v", color="tab:orange", label="generator (Kaiser)"),
+    "rept": dict(marker="o", color="tab:blue", label="generator"),
 }
 
 _CACHE: dict = {}
@@ -142,7 +143,7 @@ def plot_sigma(data, tracers, out_path):
     axes[0].legend(fontsize=8, ncol=3)
     _xticks(axes[-1], tracers)
     axes[0].set_title("ShapeFit forecast $\\sigma$ vs DESI DR1 (2411.12021 App. A, "
-                      "ShapeFit-alone)\nnumbers = ours/DESI for REPT",
+                      "ShapeFit-alone)\nnumbers = generator/DESI",
                       fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -260,8 +261,8 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
             ax.set_yticklabels(_RHO_LABELS, fontsize=8)
             ax.set_xlim(-0.5, 3.5); ax.set_ylim(3.5, -0.5)
             if col == 0:
-                ax.set_ylabel(("ours (%s)" % th.upper(), "DESI DR1",
-                               "ours - DESI  /  ratio")[row], fontsize=10)
+                ax.set_ylabel(("generator", "DESI DR1",
+                               "generator - DESI  /  ratio")[row], fontsize=10)
             else:
                 ax.set_yticklabels([])
             if row == 0:
@@ -271,13 +272,13 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
 
     fig.suptitle("ShapeFit vs DESI DR1 (2411.12021 App. A, ShapeFit-alone)\n"
                  "diagonal = $\\sigma$ (bold; $f\\sigma_r$ fractional), "
-                 "below = $\\rho$; bottom row: diagonal = ours/DESI, "
+                 "below = $\\rho$; bottom row: diagonal = generator/DESI, "
                  "below = $\\Delta\\rho$", fontsize=11)
     fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.88)
     c1 = fig.add_axes([0.895, 0.50, 0.013, 0.36]); fig.colorbar(im_rho, cax=c1).set_label(r"$\rho$", fontsize=10)
     c2 = fig.add_axes([0.895, 0.28, 0.013, 0.17]); fig.colorbar(im_drho, cax=c2).set_label(r"$\Delta\rho$", fontsize=10)
     if im_rat is not None:
-        c3 = fig.add_axes([0.895, 0.06, 0.013, 0.17]); fig.colorbar(im_rat, cax=c3).set_label(r"$\sigma$ ours/DESI", fontsize=10)
+        c3 = fig.add_axes([0.895, 0.06, 0.013, 0.17]); fig.colorbar(im_rat, cax=c3).set_label(r"$\sigma$ generator/DESI", fontsize=10)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
@@ -325,7 +326,7 @@ def plot_mean(data, tracers, out_path, theory="rept"):
         err = [data[t]["desi"][key] for t in tracers]
         ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                     capsize=3, label="DESI DR1")
-        ax.axhline(1.0, color="tab:blue", lw=1.6, label="ours (= 1 by constr.)")
+        ax.axhline(1.0, color="tab:blue", lw=1.6, label="generator (= 1 by constr.)")
         ax.set_ylabel(ylabel)
         ax.set_title(ylabel + "  — tests DESI vs fiducial,\nnot our pipeline",
                      fontsize=9)
@@ -338,14 +339,14 @@ def plot_mean(data, tracers, out_path, theory="rept"):
             for t in tracers]
     ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                 capsize=3, label="DESI DR1")
-    ax.plot(x, ours, "o", ms=7, color="tab:blue", label="ours (predicted)")
+    ax.plot(x, ours, "o", ms=7, color="tab:blue", label="generator (predicted)")
     for i, t in enumerate(tracers):
         ax.annotate(f"z {data[t]['theories'][theory]['z']:.2f}/"
                     f"{data[t]['z_desi']:.2f}", (i, ours[i]),
                     textcoords="offset points", xytext=(0, -15),
                     ha="center", fontsize=6)
     ax.set_ylabel(r"$f\sigma_r$")
-    ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n" r"z ours/DESI annotated",
+    ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n" r"z generator/DESI annotated",
                  fontsize=9)
 
     # m: deviation on both sides.
@@ -354,7 +355,7 @@ def plot_mean(data, tracers, out_path, theory="rept"):
     err = [data[t]["desi"]["sigma_m"] for t in tracers]
     ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                 capsize=3, label="DESI DR1")
-    ax.axhline(0.0, color="tab:blue", lw=1.6, label="ours (dm = 0 by constr.)")
+    ax.axhline(0.0, color="tab:blue", lw=1.6, label="generator (dm = 0 by constr.)")
     ax.set_ylabel(r"$m - m_{\rm fid}$")
     ax.set_title("m as a DEVIATION both sides\n(ours is absolute, offset by "
                  r"$m_{\rm fid}$)", fontsize=9)
@@ -378,7 +379,7 @@ def main() -> int:
     p.add_argument("plot", nargs="?", default="sigma",
                    choices=["sigma", "rho", "rhomat", "mean", "all"])
     p.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
-    p.add_argument("--theory", nargs="+", default=["kaiser", "rept"],
+    p.add_argument("--theory", nargs="+", default=["rept"],
                    choices=["kaiser", "rept"])
     args = p.parse_args()
 
