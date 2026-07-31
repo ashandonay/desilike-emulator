@@ -3730,10 +3730,55 @@ On the mean side it is decisive: at DESI's z_eff the shapefit mean pipeline
 reproduces Table 11's fσ_s8 to **0.02% on all six tracers**, so the entire
 residual there was z_eff and the compression itself is exact.
 
+### The two pipelines want DIFFERENT behaviour, and that is correct
+
+Measured after the fact: the config-space path — the production σ-triplet
+driver — was never affected by any of this, because it never derives z_eff.
+All three `build_bao_likelihood` call sites in `config_space.py` (:489, :709,
+:762) pass `z_eff=float(cfg["z_eff"])` explicitly.
+
+That pinning is deliberate and must stay. Config space loads a DESI
+correlation-recon-poles bundle whose measured window matrix and covariance
+belong to one sample; they are only self-consistent with a theory evaluated at
+that sample's z_eff. The Fourier path has no such constraint — it builds its
+own analytic covariance — so there z_eff should be derived and should track
+cosmology and N_tracers (measured spread: ±0.9% for QSO over Ω_m ∈ [0.20,
+0.45], +0.10% over the N box; ELG2 +0.68% over N).
+
+So: **config space pins, Fourier derives.** What they must not do is silently
+disagree, and they were:
+
+| | yaml (was) | DESI bundle |
+|---|---|---|
+| LRG3+ELG1 | 0.934 | 0.930 |
+| ELG2      | 1.321 | 1.317 |
+| QSO       | 1.484 | 1.491 |
+
+Config space was evaluating the theory at one redshift against a window
+measured at another. The DR1 yaml correction closed that; `_assert_bundle_zeff`
+in `load_bundle` now makes it impossible to reopen.
+
+### Measured impact on production σ
+
+Re-running the config-space pipeline at all three conventions
+(`emulator_vs_desi.py --z-eff-variants`):
+
+| tracer | σ @ DR1 vs DR2 | σ @ derived-FKP vs DR2 |
+|---|---|---|
+| BGS / LRG1 / LRG2 | 0.00% | ≤0.39% |
+| LRG3+ELG1 | ±0.31% | −1.65% / +1.63% |
+| ELG2 | ±0.24% | −1.38% / +0.98% |
+| QSO | +0.16% | +0.22% |
+
+All under 1.7%; ρ moves ≤0.03%. **Production BAO training data does not need
+regenerating for this** — a claim made earlier in the opposite direction, from
+benchmarking the Fourier path that bedcosmo does not consume.
+
 ### Not yet done
 
-Regression baselines (`golden_*.npz`, bao and shapefit) and all training data
-predate this and must be regenerated before anything downstream is trusted.
+Regression baselines (`golden_*.npz`) and the Fourier-quantity (`covar`) and
+shapefit training data predate this. Config-space (`config`) training data is
+affected only at the ≤0.31% level via the yaml correction.
 
 ## Constraints respected throughout
 

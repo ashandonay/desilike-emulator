@@ -112,7 +112,31 @@ def _emulator_predict(model_path, tracer):
     return {_TGT_TO_Q[t]: float(v) for t, v in zip(ckpt["target_names"], y_pred)}
 
 
-def _gather(models_dir):
+# z_eff variants (--z-eff-variants). config_space pins z_eff from tracers.yaml
+# at every call site rather than deriving it, so the only way to see what the
+# convention change does to the PRODUCTION σ is to re-run with each value.
+#   zeff_dr2   the DR2 values the yaml used to carry, i.e. what the deployed
+#              emulator was trained on
+#   zeff_dr1   the DR1 correction on this branch (what cfg["z_eff"] is now)
+#   zeff_fkp   the FKP-weighted value _compute_z_eff_from_nz now derives, i.e.
+#              what config_space would use if it stopped pinning the yaml
+_ZEFF_DR2 = {"LRG3_ELG1": 0.934, "ELG2": 1.321, "QSO": 1.484}
+
+
+def _zeff_variant_values(tracer):
+    """{variant: z_eff} for one tracer; identical values collapse to one run."""
+    import core as bc
+    from desilike.theories.primordial_cosmology import get_cosmo
+    cfg = cc.TRACER_CONFIGS[tracer]
+    cosmo = get_cosmo(("DESI", {}))
+    return {
+        "zeff_dr2": float(_ZEFF_DR2.get(tracer, cfg["z_eff"])),
+        "zeff_dr1": float(cfg["z_eff"]),
+        "zeff_fkp": float(bc._desi_z_eff_from_nz(tracer, cosmo, cc._AREA)),
+    }
+
+
+def _gather(models_dir, z_eff_variants=False):
     out = {}
     for t in _TRACERS:
         print(f"== {t} ==", flush=True)
@@ -123,6 +147,19 @@ def _gather(models_dir):
         recon = rs._recon_sigmas(t, pipeline)
         recon["rho_DH_DM"] = rs._recon_rho(t)
 
+        variants = {}
+        if z_eff_variants:
+            z_by_var = _zeff_variant_values(t)
+            cache = {}
+            for name, z in z_by_var.items():
+                key = round(z, 6)
+                if key not in cache:
+                    gen.cfg["z_eff"] = z          # config_space reads cfg per call
+                    cache[key] = gen.sigma_triplet(N_tracers=cc._get_ntracers(t))
+                variants[name] = dict(cache[key])
+                variants[name]["_z"] = z
+            gen.cfg["z_eff"] = float(cc.TRACER_CONFIGS[t]["z_eff"])
+
         mp = Path(models_dir) / f"{t}.pt"
         emu = _emulator_predict(mp, t) if mp.exists() else {q: float("nan") for q, _ in _QUANTITIES}
         if not mp.exists():
@@ -131,12 +168,15 @@ def _gather(models_dir):
         # Display mask: sparse tracers carry only DV (no DH/DM, no ρ); anisotropic
         # carry DH+DM+ρ (no standalone DV emulator output).
         mask = ["DH_over_rs", "DM_over_rs", "rho_DH_DM"] if _is_sparse(t) else ["DV_over_rs"]
-        for src in (recon, pipeline, emu):
+        for src in (recon, pipeline, emu, *variants.values()):
             for q in mask:
                 src[q] = float("nan")
             src.setdefault("rho_DH_DM", float("nan"))
 
-        out[t] = {"recon": recon, "pipeline": pipeline, "emu": emu}
+        out[t] = {"recon": recon, "pipeline": pipeline, "emu": emu, **variants}
+        for nm, s in variants.items():
+            print(f"  {nm:<9} z={s['_z']:.4f}  DH={s['DH_over_rs']:.4f}  "
+                  f"DM={s['DM_over_rs']:.4f}  DV={s['DV_over_rs']:.4f}")
         for nm in ("recon", "pipeline", "emu"):
             s = out[t][nm]
             print(f"  {nm:<9} DH={s['DH_over_rs']:.4f}  DM={s['DM_over_rs']:.4f}  "
@@ -165,7 +205,34 @@ def _print_table(data):
                   f"{r(sP, sD):>6.3f} {r(sE, sD):>6.3f} {r(sE, sP):>6.3f}")
 
 
-def _plot(data, out_path):
+_ZEFF_STYLE = [
+    ("zeff_dr2", "tab:gray", "s", r"pipeline @ $z_{\rm eff}$ DR2 (as trained)"),
+    ("zeff_dr1", "tab:green", "^", r"pipeline @ $z_{\rm eff}$ DR1 (this branch)"),
+    ("zeff_fkp", "tab:purple", "v", r"pipeline @ $z_{\rm eff}$ derived (FKP)"),
+]
+
+
+def _print_zeff_table(data):
+    """σ under each z_eff convention, as a percentage of the as-trained (DR2) run."""
+    print("\n=== z_eff convention sensitivity (config-space σ, % vs DR2 baseline) ===")
+    header = (f"  {'tracer':<11} {'quantity':<7} {'z DR2':>7} {'z DR1':>7} {'z FKP':>7} "
+              f"{'σ DR2':>9} {'DR1':>8} {'FKP':>8}")
+    print(header); print("  " + "-" * (len(header) - 2))
+    for t in _TRACERS:
+        d = data[t]
+        if "zeff_dr2" not in d:
+            continue
+        zs = [d[k]["_z"] for k, *_ in _ZEFF_STYLE]
+        for q in ("DH_over_rs", "DM_over_rs", "DV_over_rs", "rho_DH_DM"):
+            base = d["zeff_dr2"][q]
+            if not np.isfinite(base):
+                continue
+            pct = [100.0 * (d[k][q] / base - 1.0) for k, *_ in _ZEFF_STYLE[1:]]
+            print(f"  {t:<11} {_QUANT_SHORT[q]:<7} {zs[0]:>7.4f} {zs[1]:>7.4f} "
+                  f"{zs[2]:>7.4f} {base:>9.4f} {pct[0]:>+7.2f}% {pct[1]:>+7.2f}%")
+
+
+def _plot(data, out_path, z_eff_variants=False):
     tracers = list(_TRACERS)
     display = [_DISPLAY.get(t, t) for t in tracers]
     x = np.arange(len(tracers), dtype=float)
@@ -193,6 +260,13 @@ def _plot(data, out_path):
                    edgecolor=c_pipe, linewidths=1.6, zorder=3)
         ax.scatter(*_xy("emu"), marker="o", s=22, color=c_emu,
                    linewidth=0, zorder=4)
+        # z_eff variants dodged sideways: they differ from each other by <1% on
+        # most tracers and would otherwise be one marker.
+        if z_eff_variants:
+            for j, (key, col, mk, _lab) in enumerate(_ZEFF_STYLE):
+                xs, ys = _xy(key)
+                ax.scatter([xi + 0.16 * (j - 1) for xi in xs], ys, marker=mk, s=30,
+                           facecolor="none", edgecolor=col, linewidths=1.3, zorder=6)
 
         ax.set_ylabel(ylabel)
         if not is_corr:
@@ -209,13 +283,22 @@ def _plot(data, out_path):
         Line2D([0], [0], marker="o", linestyle="", markersize=6,
                markerfacecolor=c_emu, markeredgecolor="none", label="Emulator (NN)"),
     ]
+    if z_eff_variants:
+        handles += [
+            Line2D([0], [0], marker=mk, linestyle="", markersize=7,
+                   markerfacecolor="none", markeredgecolor=col, markeredgewidth=1.3,
+                   label=lab)
+            for key, col, mk, lab in _ZEFF_STYLE]
     axes[0].legend(handles=handles, loc="upper left", bbox_to_anchor=(1.01, 1.0),
                    title="Source (config-space)", fontsize=9, title_fontsize=10)
     axes[-1].set_xticks(x); axes[-1].set_xticklabels(display, rotation=20)
     axes[-1].set_xlabel("Tracer bin")
+    sub = ("\nopen markers: same pipeline re-run at three $z_{\\rm eff}$ "
+           "conventions (dodged; BGS/LRG1/LRG2 unchanged by construction)"
+           if z_eff_variants else "")
     axes[0].set_title(
         "Config-space BAO σ — emulator vs re-computed analytic-cov pipeline "
-        "vs DESI bao-recon  |  DR1", fontsize=12)
+        "vs DESI bao-recon  |  DR1" + sub, fontsize=12)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"\nSaved plot to: {out_path}")
@@ -227,11 +310,16 @@ def main():
     ap.add_argument("--models-dir", default=str(_DEFAULT_MODELS),
                     help="directory of per-tracer .pt checkpoints (default: dr1/base)")
     ap.add_argument("--out", default=str(_HERE / "emulator_vs_desi_dr1.png"))
+    ap.add_argument("--z-eff-variants", action="store_true",
+                    help="overlay the pipeline re-run at the DR2/DR1/derived-FKP "
+                         "z_eff conventions (see _ZEFF_STYLE)")
     args = ap.parse_args()
 
-    data = _gather(args.models_dir)
+    data = _gather(args.models_dir, z_eff_variants=args.z_eff_variants)
     _print_table(data)
-    _plot(data, args.out)
+    if args.z_eff_variants:
+        _print_zeff_table(data)
+    _plot(data, args.out, z_eff_variants=args.z_eff_variants)
 
 
 if __name__ == "__main__":
