@@ -2232,3 +2232,53 @@ recorded. With the properly-corrected bin the trend is *restored*:
   is the harness's only purpose, so skipping it would have left every later
   dataset's reproducibility assumed rather than established.)
 - **Comparison plots** regenerated on the corrected pipeline.
+
+## §33 — RETRACTION: there is no redshift trend, and never was
+
+§16 recorded "agreement degrades with redshift", and §31/§32 argued about
+whether the ELG1 fix weakened or sharpened it. **The trend does not exist.**
+
+All six tracers, current pipeline (REPT, LRG3, corrected fiducials):
+
+| tracer | z_eff | n̄P₀ | σ(qiso)/DESI |
+|---|---|---|---|
+| **BGS** | **0.292** | 2.92 | **0.61** |
+| LRG1 | 0.508 | 2.52 | 0.99 |
+| LRG2 | 0.704 | 2.48 | 0.81 |
+| LRG3 | 0.912 | 1.26 | 0.68 |
+| ELG2 | 1.303 | 0.33 | 0.65 |
+| QSO | 1.343 | 0.13 | 0.80 |
+
+    corr(ratio, z_eff)   = -0.128
+    corr(ratio, nbar*P0) = +0.199
+
+Both consistent with zero. **BGS is a direct counterexample** — the worst
+agreement of all six, at the lowest redshift.
+
+### How it survived
+
+§32's table listed LRG1 / LRG2 / LRG3 / ELG2 / QSO — five tracers, omitting the
+one that breaks the pattern. Read that way the numbers do fall monotonically
+(0.99 → 0.81 → 0.68 → 0.65) and it looks convincing. It is a cherry-pick.
+
+And it was never supported: §16's own scorecard had BGS at 0.62, already the
+lowest. The counterexample was in the data from the first time the claim was
+made, and it was then repeated through §31 and §32 — including an argument about
+whether fixing ELG1 *strengthened* a trend that was not there.
+
+### What is actually true
+
+The ratios scatter 0.61–0.99 with no monotonic dependence on redshift or on
+density. Whatever drives the spread is tracer-specific. LRG1 (0.99) and BGS
+(0.61) are the extremes and sit adjacent in redshift with similar n̄P₀, so no
+smooth function of either variable can separate them.
+
+This does not touch §26–§28: the ~1.45× shot-noise discrepancy is measured on
+LRG2 against a DESI data product and stands on its own. What is withdrawn is the
+claim that the *residual scatter across tracers* has a redshift explanation.
+
+### Note to self
+
+Four asserted mechanisms failed checks today (V_eff-vs-I₁₂/I₂₂, 1/comp
+numerology, weight dispersion, this). Each time the arithmetic was right and the
+pattern was imposed. A five-of-six table is a warning sign, not a result.
