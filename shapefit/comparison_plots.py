@@ -174,12 +174,13 @@ def _rho_matrix(targets):
 
 
 def _sigma_diag(targets, desi=False):
-    """The 4 sigmas in matrix-diagonal order (qiso, qap, f_sigmar, m).
+    """The 4 sigmas in matrix order (qiso, qap, f_sigmar, m).
 
     f_sigmar is FRACTIONAL on both sides -- ours divided by f_sigmar_fid, DESI's
     by its own f sigma_s8 -- because the two are evaluated at slightly different
     z_eff and f*sigma8 evolves fast (desi_reference docstring). The other three
-    are absolute and directly comparable.
+    are absolute. This common basis is what makes the two covariances
+    comparable element by element.
     """
     if desi:
         return np.array([targets["sigma_qiso"], targets["sigma_qap"],
@@ -188,81 +189,82 @@ def _sigma_diag(targets, desi=False):
                      targets["fsr_frac"], targets["sigma_m"]])
 
 
-def plot_rho_matrix(data, tracers, out_path, theory="rept"):
-    """One 4x4 per tracer: sigma on the diagonal, correlations below it.
+def _cov_matrix(targets, desi=False):
+    """Full 4x4 COVARIANCE C = D R D, D = diag(sigma), R the correlation matrix.
 
-    Rows are ours / DESI / comparison. Off-diagonal cells carry rho (rows 1-2)
-    and Delta-rho (row 3); diagonal cells carry sigma (rows 1-2) and the ratio
-    ours/DESI (row 3).
+    Built rather than read off because the two sides arrive in different forms:
+    DESI publishes a covariance in (D_V/r_d, D_H/D_M, f sigma_s8, m) units while
+    the generator emits sigmas and correlations. Rebuilding both from
+    (sigma, rho) in the SAME normalised basis (see _sigma_diag) is what makes
+    them comparable -- DESI's raw covariance is in different units per entry and
+    cannot be differenced against ours directly.
 
-    The diagonal and off-diagonal are on SEPARATE colour scales and separate
-    colourbars, deliberately: sigma and rho are different quantities and a shared
-    scale would invite reading a sigma cell against a rho cell. Only the ratio
-    row's diagonal is coloured (centred on 1.0, which is agreement); the absolute
-    sigma diagonals are left neutral since their magnitudes differ by tracer and
-    the colour would carry no meaning.
+    Exact, not an approximation: C = D R D is the definition of the correlation
+    matrix, so no information is lost either way.
     """
+    names = ["qiso", "qap", "f_sigmar", "m"]
+    R = np.eye(4)
+    for i in range(4):
+        for j in range(i):
+            key = f"rho_{names[j]}_{names[i]}"
+            if key in targets:
+                R[i, j] = R[j, i] = float(targets[key])
+    D = np.diag(_sigma_diag(targets, desi=desi))
+    return D @ R @ D
+
+
+def plot_rho_matrix(data, tracers, out_path, theory="rept"):
+    """One 4x4 COVARIANCE per tracer: generator / DESI / difference.
+
+    Covariance rather than correlation so the diagonal is meaningful -- it is
+    sigma^2, a genuine matrix element, instead of a 1 by definition with the
+    sigmas bolted on beside it.
+
+    Each tracer is normalised by max(diag(C_DESI)) for that tracer, so the six
+    panels are on a common dimensionless footing despite spanning very different
+    absolute precisions. Colour is symlog because a covariance spans orders of
+    magnitude (a correlation does not, which is why the earlier correlation
+    version was linear).
+
+    Lower triangle + diagonal only; the upper triangle is the mirror.
+    """
+    from matplotlib.colors import SymLogNorm
     n = len(tracers)
     fig, axes = plt.subplots(3, n, figsize=(2.55 * n + 1.9, 8.4), squeeze=False)
-    rho_cmap = plt.get_cmap("RdBu_r").copy(); rho_cmap.set_bad("white")
-    d_cmap = plt.get_cmap("PuOr_r").copy(); d_cmap.set_bad("white")
-    rat_cmap = plt.get_cmap("BrBG").copy(); rat_cmap.set_bad("white")
-    tri_lo = np.tril(np.ones((4, 4), bool), -1)
-    diag = np.eye(4, dtype=bool)
+    cmap = plt.get_cmap("RdBu_r").copy(); cmap.set_bad("white")
+    dcmap = plt.get_cmap("PuOr_r").copy(); dcmap.set_bad("white")
+    keep = np.tril(np.ones((4, 4), bool))          # lower triangle + diagonal
+    lt = 1e-3
+    norm_c = SymLogNorm(linthresh=lt, vmin=-1.0, vmax=1.0, base=10)
+    norm_d = SymLogNorm(linthresh=lt, vmin=-1.0, vmax=1.0, base=10)
 
-    im_rho = im_drho = im_rat = None
+    im_c = im_d = None
     for col, t in enumerate(tracers):
         th = theory if theory in data[t]["theories"] else next(iter(data[t]["theories"]))
-        ot = data[t]["theories"][th]["targets"]
-        dt = data[t]["desi"]
-        Ro, Rd = _rho_matrix(ot), _rho_matrix(dt)
-        So, Sd = _sigma_diag(ot), _sigma_diag(dt, desi=True)
-        rows = [(Ro, So, "abs"), (Rd, Sd, "abs"), (Ro - Rd, So / Sd, "ratio")]
-
-        for row, (R, D, dmode) in enumerate(rows):
+        Co = _cov_matrix(data[t]["theories"][th]["targets"])
+        Cd = _cov_matrix(data[t]["desi"], desi=True)
+        scale = float(np.max(np.diag(Cd)))
+        Co, Cd = Co / scale, Cd / scale
+        for row, (M, cm, nm) in enumerate(((Co, cmap, norm_c), (Cd, cmap, norm_c),
+                                           (Co - Cd, dcmap, norm_d))):
             ax = axes[row][col]
-            cm, vlim = (rho_cmap, 1.0) if row < 2 else (d_cmap, 0.6)
-            im = ax.imshow(np.ma.masked_where(~tri_lo, np.nan_to_num(R)),
-                           cmap=cm, vmin=-vlim, vmax=vlim)
-            if row < 2: im_rho = im
-            else: im_drho = im
-
-            # Diagonal on its own scale: neutral for absolute sigma, a
-            # ratio-centred map for the comparison row.
-            Dm = np.full((4, 4), np.nan)
-            Dm[diag] = D
-            if dmode == "ratio":
-                imd = ax.imshow(np.ma.masked_invalid(Dm), cmap=rat_cmap,
-                                vmin=0.5, vmax=1.5)
-                im_rat = imd
-            else:
-                ax.imshow(np.ma.masked_invalid(Dm),
-                          cmap=plt.get_cmap("Greys").copy(), vmin=0, vmax=1,
-                          alpha=0.18)
-
+            im = ax.imshow(np.ma.masked_where(~keep, M), cmap=cm, norm=nm)
+            if row < 2: im_c = im
+            else: im_d = im
             for i in range(4):
                 for j in range(i + 1):
-                    if i == j:
-                        v = D[i]
-                        txt = f"{v:.2f}" if dmode == "ratio" else f"{v:.3f}"
-                        col_ = "black"
-                        if dmode == "ratio" and abs(v - 1.0) > 0.35:
-                            col_ = "white"
-                        ax.text(j, i, txt, ha="center", va="center",
-                                fontsize=7.5, fontweight="bold", color=col_)
-                    else:
-                        v = R[i, j]
-                        if np.isfinite(v):
-                            ax.text(j, i, f"{v:+.2f}", ha="center", va="center",
-                                    fontsize=7.5,
-                                    color="white" if abs(v) > 0.55 * vlim else "black")
+                    v = M[i, j]
+                    a = abs(v)
+                    txt = "0" if a < 1e-4 else (f"{v:+.3f}" if a >= 1e-3 else f"{v:+.0e}")
+                    ax.text(j, i, txt, ha="center", va="center", fontsize=6.8,
+                            color="white" if a > 0.15 else "black")
             ax.set_xticks(range(4)); ax.set_yticks(range(4))
             ax.set_xticklabels(_RHO_LABELS, fontsize=8)
             ax.set_yticklabels(_RHO_LABELS, fontsize=8)
             ax.set_xlim(-0.5, 3.5); ax.set_ylim(3.5, -0.5)
             if col == 0:
                 ax.set_ylabel(("generator", "DESI DR1",
-                               "generator - DESI  /  ratio")[row], fontsize=10)
+                               "generator - DESI")[row], fontsize=10)
             else:
                 ax.set_yticklabels([])
             if row == 0:
@@ -270,15 +272,18 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
             if row < 2:
                 ax.set_xticklabels([])
 
-    fig.suptitle("ShapeFit vs DESI DR1 (2411.12021 App. A, ShapeFit-alone)\n"
-                 "diagonal = $\\sigma$ (bold; $f\\sigma_r$ fractional), "
-                 "below = $\\rho$; bottom row: diagonal = generator/DESI, "
-                 "below = $\\Delta\\rho$", fontsize=11)
-    fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.88)
-    c1 = fig.add_axes([0.895, 0.50, 0.013, 0.36]); fig.colorbar(im_rho, cax=c1).set_label(r"$\rho$", fontsize=10)
-    c2 = fig.add_axes([0.895, 0.28, 0.013, 0.17]); fig.colorbar(im_drho, cax=c2).set_label(r"$\Delta\rho$", fontsize=10)
-    if im_rat is not None:
-        c3 = fig.add_axes([0.895, 0.06, 0.013, 0.17]); fig.colorbar(im_rat, cax=c3).set_label(r"$\sigma$ generator/DESI", fontsize=10)
+    fig.suptitle("ShapeFit compressed-parameter COVARIANCE vs DESI DR1 "
+                 "(2411.12021 App. A, ShapeFit-alone)\n"
+                 "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$; "
+                 "each tracer normalised by $\\max\\,\\mathrm{diag}\\,C_{\\rm DESI}$; "
+                 "lower triangle", fontsize=11)
+    fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.87)
+    c1 = fig.add_axes([0.895, 0.45, 0.013, 0.40])
+    fig.colorbar(im_c, cax=c1).set_label(
+        r"$C/\max\,\mathrm{diag}\,C_{\rm DESI}$  (symlog)", fontsize=9)
+    c2 = fig.add_axes([0.895, 0.08, 0.013, 0.26])
+    fig.colorbar(im_d, cax=c2).set_label(
+        r"$\Delta\,(C/\max\,\mathrm{diag}\,C_{\rm DESI})$", fontsize=9)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
