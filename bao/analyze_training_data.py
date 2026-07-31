@@ -31,7 +31,7 @@ sys.path.insert(0, str(_BAO.parent))
 
 import config_space as cc          # noqa: E402
 import desi_reference as desi_ref      # noqa: E402
-from util import TRACER_CONFIGS    # noqa: E402
+from util import TRACER_CONFIGS, plots_dir    # noqa: E402
 
 _DEFAULT_DIR = "/home/ashandonay/scratch/bedcosmo/num_tracers/emulator/bao/training_data/dr1/base/config/v1"
 TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -188,7 +188,7 @@ def plot(rows, out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default=_DEFAULT_DIR)
-    ap.add_argument("--out", default=str(_BAO / "training_data_diagnostics.png"))
+    ap.add_argument("--out", default=str(plots_dir() / "bao_training_data_diagnostics.png"))
     args = ap.parse_args()
     print(f"Data: {args.data_dir}")
     rows = analyze(args.data_dir)
