@@ -2315,3 +2315,47 @@ average or correlate over them without dropping BGS and QSO.
 
 DV is the only column where all six are genuine, and it is also the correct
 pairing for qiso (both are the isotropic dilation).
+
+## §35 — The mean emulator emits DESI's `m` (the deviation), not the absolute slope
+
+`MEAN_TARGET_NAMES` keeps the name `m`, but the value is now DESI's Eq. (4.9)
+shape parameter:
+
+    P'_lin(k) = P^fid_lin(k) exp[ (m/a) tanh(a ln(k/kp)) + n ln(k/kp) ]
+
+which multiplies the **fiducial** template, so m = 0 is no shape change. The
+generator returns m = −4.5e−05 at the DESI fiducial cosmology, as it must.
+
+### Why
+
+- **It is what DESI publishes.** Their Appendix A central values are in this
+  convention, so the mean comparison needs no offset. (Their "m + n" label is
+  an interpretive relabel of a single varied parameter — §4.9, *"we will vary m
+  keeping n fixed. Later, in the interpretation step m can be seen as if it
+  were m + n"* — and our `dn` is fixed at 0, verified.)
+- **It removes §24 from the interface.** The theory-dependent `m_fid` (REPT's
+  attached template reports −0.6699 where the extractor says −0.5775) only
+  mattered because something downstream had to subtract a fiducial. Nothing
+  does now.
+- **It is what desilike varies.** `dm` is the free template parameter.
+- **Zero cost to covar.** σ is offset-invariant: σ(m) = σ(dm) exactly.
+
+### The naming trap
+
+An intermediate version renamed the target to `dm`. **That was wrong** —
+"dm" appears nowhere in DESI 2024 V, and it collided with our own `sigma_m` /
+`rho_*_m`. The confusion is that desilike and DESI use the symbol `m` for
+different things:
+
+| | `m` means | value at fiducial |
+|---|---|---|
+| DESI 2024 V | Eq. (4.9) shape parameter (a deviation) | 0 |
+| desilike | absolute log-slope of P_nw at k_p | −0.5775 |
+
+DESI's m **==** desilike's `dm`. So the mean worker reads `extractor.dm` into a
+target named `m`, which is documented at both ends rather than left as a trap.
+
+Mean training data regenerated for all six tracers into `dr1/base/mean/v1`.
+Note the box now spans m ∈ [−10.4, +3.7] (median +0.45) because the Ω_m prior
+reaches shapes far from the fiducial — DESI's measured values are ~0.05, so the
+emulator is trained well outside where any real measurement lands.

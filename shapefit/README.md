@@ -76,13 +76,21 @@ nearest-PSD projection (follow-up).
 `f_sigmar = df · f_sigmar_fid` and `m = m_fid + dm`, so the Jacobian is
 `diag(1, 1, f_sigmar_fid, 1)`.
 
-⚠ **`m` conventions differ between the two pipelines and against DESI.**
-The mean emulator emits the **absolute** slope (−0.5776 at the fiducial); DESI's
-Eq. (4.9) `m` is a **deviation** centred on 0. Convert with `dm = m − m_fid`.
-Do **not** use the covar path's recorded `m_fid` as that zero-point — REPT
-requests k down to 2.5e−4 where Kaiser stops at 1e−3, which shifts the
-de-wiggled slope and makes it theory-dependent (§24). σ(m) is unaffected
-(offset-invariant).
+**`m` follows DESI's convention — no conversion needed.** The mean emulator
+emits DESI's Eq. (4.9) shape parameter, which multiplies the fiducial template
+so `m = 0` means no shape change. Verified: the generator returns
+m = −4.5e−05 at the DESI fiducial cosmology.
+
+⚠ Watch the naming collision: **desilike's `m` is a different quantity** — the
+absolute log-slope of the de-wiggled spectrum at k_p, ≈ −0.5775 — and desilike's
+`dm = m − m_fid` is what equals DESI's m. The mean worker therefore reads
+`extractor.dm` into a target named `m`. Emitting the deviation also keeps §24's
+theory-dependent `m_fid` out of the interface entirely (REPT's attached template
+reports −0.6699 where the extractor says −0.5775). σ is offset-invariant, so the
+covar targets `sigma_m` / `rho_*_m` are unaffected and consistently named.
+
+Note the training box reaches m ∈ [−10.4, +3.7] because the Ω_m prior spans
+shapes far from the fiducial; DESI's measured values are ~0.05.
 
 ---
 
@@ -195,8 +203,9 @@ emulator training labels. Baseline: `golden_4cfd6bec.npz` (gitignored).
 - Resolve the shot-noise / effective-area discrepancy (above). Not a fudge
   factor — a constant would not vary with the design variable.
 - bedcosmo integration: `models.yaml` `shapefit:` block, extend
-  `_build_emulator_input` to the omega basis, 4×4 assembly with a PSD guard,
-  and the `dm = m − m_fid` conversion.
+  `_build_emulator_input` to the omega basis, and 4×4 assembly with a PSD
+  guard. No `m` conversion is needed — the emulator already emits DESI's
+  convention.
 - Ω_k cosmology models; DR2 anchoring (the `tracers.yaml` `overrides`
   mechanism is wired but unpopulated); a DESI FS systematic-error layer.
 - MCMC cross-check of the Fisher σ before trusting labels tracer-by-tracer.

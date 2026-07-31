@@ -31,10 +31,11 @@ measured f sigma_s8. Even there, our z_eff and DESI's differ (Fisher- vs
 volume-weighted; bao CHANGELOG S18), and f*sigma8 evolves fast, so the panel
 annotates both redshifts.
 
-m is plotted as a DEVIATION on both sides. DESI's Eq. (4.9) m is already a
-deviation (m = 0 means no shape change); ours is an absolute slope, so we plot
-m - m_fid. Plotting the raw values against each other would show a spurious
-~0.58 offset.
+m needs no conversion: the mean emulator now emits DESI's m -- the Eq. (4.9)
+shape parameter, which multiplies the fiducial template so m = 0 is no shape
+change (desilike calls that quantity `dm`; its own `m` is the absolute slope).
+Before that change ours was the absolute slope and had to be offset by m_fid,
+which is also why CHANGELOG S24's theory-dependent m_fid was a hazard.
 
 Usage (from shapefit/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
@@ -364,9 +365,9 @@ def plot_mean(data, tracers, out_path, theory="rept"):
     ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                 capsize=3, label="DESI DR1")
     ax.axhline(0.0, color="tab:blue", lw=1.6, label="generator (dm = 0 by constr.)")
-    ax.set_ylabel(r"$m - m_{\rm fid}$")
-    ax.set_title("m as a DEVIATION both sides\n(ours is absolute, offset by "
-                 r"$m_{\rm fid}$)", fontsize=9)
+    ax.set_ylabel(r"$m$")
+    ax.set_title("m (DESI Eq. 4.9 convention)\nsame on both sides — no offset",
+                 fontsize=9)
 
     for ax in axes:
         ax.grid(alpha=0.3)

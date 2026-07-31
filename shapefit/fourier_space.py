@@ -239,7 +239,8 @@ def _worker_run_mean_targets(args_tuple):
             float(extractor.qiso),
             float(extractor.qap),
             float(extractor.f_sigmar),
-            float(extractor.m),
+            # DESI's m (Eq. 4.9) == desilike's dm. See core.MEAN_TARGET_NAMES.
+            float(extractor.dm),
         ]
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"

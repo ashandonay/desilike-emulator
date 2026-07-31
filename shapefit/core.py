@@ -154,6 +154,25 @@ _TRIU_I, _TRIU_J = np.triu_indices(4, k=1)
 TARGET_NAMES = [f"sigma_{name}" for name in _PHYS_NAMES] + [
     f"rho_{_PHYS_NAMES[i]}_{_PHYS_NAMES[j]}" for i, j in zip(_TRIU_I, _TRIU_J)
 ]
+# The MEAN emulator's `m` is DESI's m: the ShapeFit shape parameter of their
+# Eq. (4.9),
+#     P'_lin(k) = P^fid_lin(k) exp[ (m/a) tanh(a ln(k/kp)) + n ln(k/kp) ],
+# which multiplies the FIDUCIAL template, so m = 0 means no shape change. It is
+# a deviation by construction and the paper calls it plain `m` -- "dm" appears
+# nowhere in DESI 2024 V.
+#
+# desilike names things differently: ITS `m` is the absolute log-slope of the
+# de-wiggled spectrum at kp (about -0.5775 at the DESI fiducial) and its `dm` is
+# `m - m_fid`. So DESI's m == desilike's dm, and the mean worker reads
+# `extractor.dm` while this target stays named `m`.
+#
+# Emitting the deviation rather than the absolute slope also removes the
+# CHANGELOG S24 hazard from the interface: nothing downstream has to subtract a
+# fiducial that turned out to be theory-dependent (REPT's attached template
+# reports -0.6699 where the extractor says -0.5775).
+#
+# The COVAR side is untouched either way: sigma is offset-invariant, so
+# sigma(m) = sigma(dm) exactly.
 MEAN_TARGET_NAMES = list(_PHYS_NAMES)
 
 # DESI KP4.5 full-shape reference fit range and multipoles.
