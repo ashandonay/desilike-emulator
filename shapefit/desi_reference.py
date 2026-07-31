@@ -25,6 +25,18 @@ with covariance in units of 1e-4. Our emulator targets map onto it as
 Ratios of a quantity to its fiducial leave correlations unchanged, so the six
 rho_* targets compare directly with no conversion at all.
 
+On m and its zero point. DESI never states "m_fid = 0" -- the claim rests on
+Eq. (4.9) being a definition: m multiplies P^fid_lin, so m = 0 recovers the
+template exactly. m is a deviation FROM WHATEVER TEMPLATE WAS USED. For the DR1
+data fits transcribed here the template IS the fiducial cosmology, so these
+published values are directly comparable to our deviation, and they sit near
+zero (-0.031 to +0.065) against a Table 4 prior of U[-0.8, 0.8].
+
+⚠ m_fid is NOT always zero in DESI's own usage. Figure 6 plots `m - m_fid` for
+Abacus-2 mock fits, where m_fid is the m expected for the mock's known true
+cosmology -- generally non-zero. Anything comparing against mock-based results
+rather than Appendix A has to carry that reference explicitly.
+
 On m vs (m + n). DESI varies m with n FIXED, exactly as we do (our `dn` is
 fixed): section 4.9, "we will only consider varying one of the two shape
 variables: we will vary m keeping n fixed. Later, in the interpretation step m
