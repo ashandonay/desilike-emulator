@@ -37,7 +37,7 @@ from desilike.theories.primordial_cosmology import get_cosmo
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 
 from bao import prep_covar as bao_prep_covar
-from util import TRACER_CONFIGS, ntracers_range
+from util import TRACER_CONFIGS, ntracers_range, plots_dir
 from scale_data import (
     eval_scale_expression,
     scale_expression_latex,
@@ -429,10 +429,8 @@ def main():
     scale_suffix = (
         "_".join(scale_expression_suffix(v) for v in scale_vars) or "none"
     )
-    out_dir = Path(__file__).resolve().parent / analysis
-    out_dir.mkdir(parents=True, exist_ok=True)
-    savename = out_dir / (
-        f"cov_scaling_{cosmo_model}_{tracer_bin}_"
+    savename = plots_dir() / (
+        f"{analysis}_cov_scaling_{cosmo_model}_{tracer_bin}_"
         f"scale_{scale_suffix}_vary_{vary_param}.png"
     )
     plt.savefig(savename, dpi=150, bbox_inches="tight")
