@@ -6,6 +6,9 @@ Three plots, selected by a positional subcommand (default: sigma):
   comparison_plots.py [sigma]   our sigma(qiso, qap, f_sigmar/f_sigmar, m) vs
                                 DESI, 4 stacked panels. REPT only by default;
                                 --theory kaiser rept to overlay Kaiser.
+  comparison_plots.py covmat    4x4 covariance matrices per tracer, upper
+                                triangular, generator / DESI / difference.
+  comparison_plots.py corrmat   the same as correlation matrices.
   comparison_plots.py rho       the 6 pairwise correlations vs DESI, 6 panels.
                                 These are 6 of the 10 emulator targets and had
                                 no external check at all before desi_reference.
@@ -156,22 +159,21 @@ _RHO_PAIRS = [("qiso", "qap"), ("qiso", "f_sigmar"), ("qiso", "m"),
 _RHO_LABELS = [r"$q_{\rm iso}$", r"$q_{\rm ap}$", r"$f\sigma_r$", r"$m$"]
 
 
-def _rho_matrix(targets):
-    """Strict lower triangle of the 4x4 correlation matrix, from the 6 rho_ targets.
+def _corr_matrix(targets):
+    """Full symmetric 4x4 CORRELATION matrix from the 6 rho_ targets.
 
-    Diagonal and upper triangle left NaN. The 6 rho values ARE the whole matrix
-    (diagonal is 1 by definition, upper is the mirror), so this is a relabelling
-    of the pairwise numbers, not new information -- it just makes the sign and
-    strength structure legible at a glance.
+    Diagonal is 1 by definition. The 6 rho values are the whole matrix, so this
+    is a relabelling of the pairwise numbers rather than new information -- it
+    just makes the sign and strength structure legible at a glance.
     """
     names = ["qiso", "qap", "f_sigmar", "m"]
-    M = np.full((4, 4), np.nan)
+    R = np.eye(4)
     for i in range(4):
         for j in range(i):
             key = f"rho_{names[j]}_{names[i]}"
             if key in targets:
-                M[i, j] = float(targets[key])
-    return M
+                R[i, j] = R[j, i] = float(targets[key])
+    return R
 
 
 def _sigma_diag(targets, desi=False):
@@ -180,8 +182,8 @@ def _sigma_diag(targets, desi=False):
     f_sigmar is FRACTIONAL on both sides -- ours divided by f_sigmar_fid, DESI's
     by its own f sigma_s8 -- because the two are evaluated at slightly different
     z_eff and f*sigma8 evolves fast (desi_reference docstring). The other three
-    are absolute. This common basis is what makes the two covariances
-    comparable element by element.
+    are absolute. This common basis is what makes the two covariances comparable
+    element by element.
     """
     if desi:
         return np.array([targets["sigma_qiso"], targets["sigma_qap"],
@@ -191,7 +193,7 @@ def _sigma_diag(targets, desi=False):
 
 
 def _cov_matrix(targets, desi=False):
-    """Full 4x4 COVARIANCE C = D R D, D = diag(sigma), R the correlation matrix.
+    """Full 4x4 COVARIANCE C = D R D, D = diag(sigma).
 
     Built rather than read off because the two sides arrive in different forms:
     DESI publishes a covariance in (D_V/r_d, D_H/D_M, f sigma_s8, m) units while
@@ -203,67 +205,73 @@ def _cov_matrix(targets, desi=False):
     Exact, not an approximation: C = D R D is the definition of the correlation
     matrix, so no information is lost either way.
     """
-    names = ["qiso", "qap", "f_sigmar", "m"]
-    R = np.eye(4)
-    for i in range(4):
-        for j in range(i):
-            key = f"rho_{names[j]}_{names[i]}"
-            if key in targets:
-                R[i, j] = R[j, i] = float(targets[key])
     D = np.diag(_sigma_diag(targets, desi=desi))
-    return D @ R @ D
+    return D @ _corr_matrix(targets) @ D
 
 
-def plot_rho_matrix(data, tracers, out_path, theory="rept"):
-    """One 4x4 COVARIANCE per tracer: generator / DESI / difference.
+# Presentation differs between the two kinds because the quantities do:
+# a covariance spans orders of magnitude and needs symlog, a correlation is
+# bounded on [-1, 1] and does not (symlog would compress exactly the region
+# where all the structure sits).
+_MATRIX_KINDS = {
+    "cov": dict(
+        build=_cov_matrix, symlog=True, vmax=7e-2, dmax=7e-2, linthresh=1e-5,
+        fmt=lambda v: "0" if abs(v) < 1e-6 else f"{v:+.1e}".replace("e-0", "e-"),
+        textlim=8e-3, fontsize=6.4,
+        label=r"$C$", dlabel=r"$\Delta C$",
+        title="COVARIANCE", note="raw $C$ (diagonal = $\\sigma^2$)"),
+    "corr": dict(
+        build=lambda t, desi=False: _corr_matrix(t), symlog=False,
+        vmax=1.0, dmax=0.4, linthresh=None,
+        fmt=lambda v: f"{v:+.2f}", textlim=0.55, fontsize=7.5,
+        label=r"$\rho$", dlabel=r"$\Delta\rho$",
+        title="CORRELATION", note="diagonal = 1 by definition"),
+}
 
-    Covariance rather than correlation so the diagonal is meaningful -- it is
-    sigma^2, a genuine matrix element, instead of a 1 by definition with the
-    sigmas bolted on beside it.
 
-    Each tracer is normalised by max(diag(C_DESI)) for that tracer, so the six
-    panels are on a common dimensionless footing despite spanning very different
-    absolute precisions. Colour is symlog because a covariance spans orders of
-    magnitude (a correlation does not, which is why the earlier correlation
-    version was linear).
+def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
+    """One 4x4 per tracer -- generator / DESI / difference -- upper triangular.
 
-    Upper triangle + diagonal only; the lower triangle is the mirror.
+    ``kind='cov'``  covariance, so the diagonal is a real matrix element
+                    (sigma^2) rather than a 1 by definition.
+    ``kind='corr'`` correlation, when the sign/strength structure matters more
+                    than the absolute scale.
+
+    Values are identical either way (C = D R D); only the presentation differs.
     """
-    from matplotlib.colors import SymLogNorm
+    from matplotlib.colors import SymLogNorm, Normalize
+    K = _MATRIX_KINDS[kind]
     n = len(tracers)
     fig, axes = plt.subplots(3, n, figsize=(2.55 * n + 1.9, 8.4), squeeze=False)
     cmap = plt.get_cmap("RdBu_r").copy(); cmap.set_bad("white")
     dcmap = plt.get_cmap("PuOr_r").copy(); dcmap.set_bad("white")
     keep = np.triu(np.ones((4, 4), bool))          # upper triangle + diagonal
-    # Raw covariance, NOT normalised. An earlier version divided each tracer by
-    # max(diag(C_DESI)); that made the DESI (f_sigma_r, f_sigma_r) cell read
-    # exactly 1.000 for every tracer, which looks like a measured value and is
-    # not -- it is the normalisation constant. Raw keeps every printed number a
-    # real quantity. symlog spans the ~3 decades from the smallest off-diagonal
-    # (~2e-5) to BGS's sigma^2(f_sigma_r) (~6e-2).
-    lt = 1e-5
-    vmax = 7e-2
-    norm_c = SymLogNorm(linthresh=lt, vmin=-vmax, vmax=vmax, base=10)
-    norm_d = SymLogNorm(linthresh=lt, vmin=-vmax, vmax=vmax, base=10)
 
+    def _norm(vmax):
+        if K["symlog"]:
+            return SymLogNorm(linthresh=K["linthresh"], vmin=-vmax, vmax=vmax,
+                              base=10)
+        return Normalize(vmin=-vmax, vmax=vmax)
+
+    nm_c, nm_d = _norm(K["vmax"]), _norm(K["dmax"])
     im_c = im_d = None
     for col, t in enumerate(tracers):
         th = theory if theory in data[t]["theories"] else next(iter(data[t]["theories"]))
-        Co = _cov_matrix(data[t]["theories"][th]["targets"])
-        Cd = _cov_matrix(data[t]["desi"], desi=True)
-        for row, (M, cm, nm) in enumerate(((Co, cmap, norm_c), (Cd, cmap, norm_c),
-                                           (Co - Cd, dcmap, norm_d))):
+        Mo = K["build"](data[t]["theories"][th]["targets"])
+        Md = K["build"](data[t]["desi"], desi=True)
+        for row, (M, cm, nm) in enumerate(((Mo, cmap, nm_c), (Md, cmap, nm_c),
+                                           (Mo - Md, dcmap, nm_d))):
             ax = axes[row][col]
             im = ax.imshow(np.ma.masked_where(~keep, M), cmap=cm, norm=nm)
             if row < 2: im_c = im
             else: im_d = im
+            lim = K["textlim"] if row < 2 else K["textlim"] * K["dmax"] / K["vmax"]
             for i in range(4):
                 for j in range(i, 4):
                     v = M[i, j]
-                    a = abs(v)
-                    txt = "0" if a < 1e-6 else f"{v:+.1e}".replace("e-0", "e-")
-                    ax.text(j, i, txt, ha="center", va="center", fontsize=6.4,
-                            color="white" if a > 8e-3 else "black")
+                    ax.text(j, i, K["fmt"](v), ha="center", va="center",
+                            fontsize=K["fontsize"],
+                            color="white" if abs(v) > lim else "black")
             ax.set_xticks(range(4)); ax.set_yticks(range(4))
             ax.set_xticklabels(_RHO_LABELS, fontsize=8)
             ax.set_yticklabels(_RHO_LABELS, fontsize=8)
@@ -278,16 +286,17 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
             if row < 2:
                 ax.set_xticklabels([])
 
-    fig.suptitle("ShapeFit compressed-parameter COVARIANCE vs DESI DR1 "
+    fig.suptitle(f"ShapeFit compressed-parameter {K['title']} vs DESI DR1 "
                  "(2411.12021 App. A, ShapeFit-alone)\n"
                  "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$ "
-                 "-- first three fractional, $m$ absolute; raw $C$, upper triangle",
-                 fontsize=11)
+                 f"-- first three fractional, $m$ absolute; {K['note']}; "
+                 "upper triangle", fontsize=11)
     fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.87)
+    sfx = "  (symlog)" if K["symlog"] else ""
     c1 = fig.add_axes([0.895, 0.45, 0.013, 0.40])
-    fig.colorbar(im_c, cax=c1).set_label(r"$C$  (symlog)", fontsize=9)
+    fig.colorbar(im_c, cax=c1).set_label(K["label"] + sfx, fontsize=9)
     c2 = fig.add_axes([0.895, 0.08, 0.013, 0.26])
-    fig.colorbar(im_d, cax=c2).set_label(r"$\Delta C$  (symlog)", fontsize=9)
+    fig.colorbar(im_d, cax=c2).set_label(K["dlabel"] + sfx, fontsize=9)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
@@ -386,7 +395,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("plot", nargs="?", default="sigma",
-                   choices=["sigma", "rho", "rhomat", "mean", "all"])
+                   choices=["sigma", "rho", "covmat", "corrmat", "mean", "all"])
     p.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
     p.add_argument("--theory", nargs="+", default=["rept"],
                    choices=["kaiser", "rept"])
@@ -401,10 +410,16 @@ def main() -> int:
         plot_sigma(data, tracers, _HERE / "shapefit_sigma_vs_desi.png")
     if args.plot in ("rho", "all"):
         plot_rho(data, tracers, _HERE / "shapefit_rho_vs_desi.png")
-    if args.plot in ("rhomat", "all"):
+    if args.plot in ("covmat", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
-        plot_rho_matrix(data, tracers, _HERE / "shapefit_rho_matrix_vs_desi.png",
-                        theory=th)
+        plot_covar_matrix(data, tracers,
+                          _HERE / "shapefit_covar_matrix_vs_desi.png",
+                          kind="cov", theory=th)
+    if args.plot in ("corrmat", "all"):
+        th = "rept" if "rept" in args.theory else args.theory[0]
+        plot_covar_matrix(data, tracers,
+                          _HERE / "shapefit_corr_matrix_vs_desi.png",
+                          kind="corr", theory=th)
     if args.plot in ("mean", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
         plot_mean(data, tracers, _HERE / "shapefit_mean_vs_desi.png", theory=th)
