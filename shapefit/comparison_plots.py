@@ -226,14 +226,14 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
     magnitude (a correlation does not, which is why the earlier correlation
     version was linear).
 
-    Lower triangle + diagonal only; the upper triangle is the mirror.
+    Upper triangle + diagonal only; the lower triangle is the mirror.
     """
     from matplotlib.colors import SymLogNorm
     n = len(tracers)
     fig, axes = plt.subplots(3, n, figsize=(2.55 * n + 1.9, 8.4), squeeze=False)
     cmap = plt.get_cmap("RdBu_r").copy(); cmap.set_bad("white")
     dcmap = plt.get_cmap("PuOr_r").copy(); dcmap.set_bad("white")
-    keep = np.tril(np.ones((4, 4), bool))          # lower triangle + diagonal
+    keep = np.triu(np.ones((4, 4), bool))          # upper triangle + diagonal
     # Raw covariance, NOT normalised. An earlier version divided each tracer by
     # max(diag(C_DESI)); that made the DESI (f_sigma_r, f_sigma_r) cell read
     # exactly 1.000 for every tracer, which looks like a measured value and is
@@ -257,7 +257,7 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
             if row < 2: im_c = im
             else: im_d = im
             for i in range(4):
-                for j in range(i + 1):
+                for j in range(i, 4):
                     v = M[i, j]
                     a = abs(v)
                     txt = "0" if a < 1e-6 else f"{v:+.1e}".replace("e-0", "e-")
@@ -280,7 +280,7 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
     fig.suptitle("ShapeFit compressed-parameter COVARIANCE vs DESI DR1 "
                  "(2411.12021 App. A, ShapeFit-alone)\n"
                  "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$ "
-                 "-- first three fractional, $m$ absolute; raw $C$, lower triangle",
+                 "-- first three fractional, $m$ absolute; raw $C$, upper triangle",
                  fontsize=11)
     fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.87)
     c1 = fig.add_axes([0.895, 0.45, 0.013, 0.40])
