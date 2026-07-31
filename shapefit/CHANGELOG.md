@@ -2359,3 +2359,114 @@ Mean training data regenerated for all six tracers into `dr1/base/mean/v1`.
 Note the box now spans m ∈ [−10.4, +3.7] (median +0.45) because the Ω_m prior
 reaches shapes far from the fiducial — DESI's measured values are ~0.05, so the
 emulator is trained well outside where any real measurement lands.
+
+---
+
+## §36 — The matrix plot's bottom row is a percentage of DESI, not a difference
+
+`plot_covar_matrix`'s third row was `generator − DESI` in raw units. That row is
+hard to read for two reasons: the covariance entries span three orders of
+magnitude across tracers, so a shared color scale is set by whichever tracer has
+the largest σ and everything else washes out; and an absolute ΔC of 3e−3 means
+something completely different on the `fσ_r` diagonal (~1e−2) than on a
+`q_iso`–`q_ap` off-diagonal (~2e−4).
+
+Now:
+
+    P_ij = 100 * (ours_ij − DESI_ij) / |DESI_ij|
+
+`|DESI|` rather than `DESI` in the denominator, so the sign always reads
+"generator above/below DESI" instead of flipping with the sign of the reference
+entry. Linear norm ±100% (cov) / ±60% (corr), PuOr, `extend="both"`.
+
+### Where the percentage is undefined
+
+An off-diagonal entry of *either* matrix is proportional to ρ_DESI, so one cut —
+`|ρ_DESI| < 0.05` — masks the ill-conditioned cells for both kinds. Those cells
+render as a grey box with `--`; the empty lower triangle stays white, which is
+a distinction the first attempt lost by setting the colormap's bad color to
+grey (masked-outside-triangle and masked-undefined both route through
+`set_bad`). Fixed by drawing the grey explicitly as a patch and keeping
+`set_bad("white")`.
+
+Only five cells are actually masked in DR1 — `q_iso`–`fσ_r` for LRG1/LRG2/LRG3,
+`q_iso`–`q_ap` for QSO, and `fσ_r`–`m` for BGS — where DESI's ρ is 0.01–0.03.
+
+### What it shows
+
+The residual structure is not uniform, which the absolute version hid:
+
+- **Diagonal** (cov): −63% to −3% on σ²(q_iso), i.e. the known σ deficit.
+- **`fσ_r`–`m`**: −70% to −103% on all five tracers where it is defined (BGS is
+  masked). Our correlation is ≈ 0 (−0.01 to +0.07) where DESI measures +0.23 to
+  +0.37. This is the single most consistent
+  disagreement in the matrix and it is a *shape* disagreement, not a level one,
+  so the shot-noise discrepancy (§26) does not explain it.
+- **`q_ap`–`m`**: +36% to +90%, same sign everywhere.
+- **`q_ap`–`fσ_r`**: −9% to −30%; ours is the stronger anticorrelation
+  (−0.65..−0.73 vs DESI's −0.53..−0.63).
+
+The `q_iso` row percentages on BGS/ELG2/QSO are large (+282%, −148%, +175%) but
+that is a sign flip on a small ρ, not a large absolute miss — read those off the
+top two rows, not the percentage.
+
+Diagonal cells of the **correlation** percentage are +0% by construction
+(1 vs 1); they carry no information and are left in only so the triangle reads
+as a matrix.
+
+---
+
+## §37 — The mean plot's AP panels compare against the FIDUCIAL, not the data
+
+`q_iso` and `q_ap` are 1 on our side by construction at the fiducial cosmology
+(§35, and the module docstring), so the old panels drew a flat blue line at 1
+with DESI's measurement scattered around it. That plots the *ratio* while hiding
+both numbers that go into it.
+
+An intermediate version plotted `D_V/r_d` and `D_H/D_M` in absolute units with
+three series — DESI measured, Table 11 fiducial, ours. **DESI's measurement does
+not belong on this axis.** It is data; whether the universe matches the fiducial
+is a statement about DESI, and drawing it beside our prediction invites reading
+a cosmological result as a code error. The AP panels now show the generator
+against DESI's published fiducial and nothing else. (`fσ_r` and `m` still carry
+the DR1 measurement — there the comparison is meaningful, see the docstring.)
+
+The y-axis is therefore the residual `generator / Table 11 − 1` in percent, with
+the Table 11 value annotated along the top so the physical number is still
+visible (it spans 3–7× across tracers, which is why it cannot be the axis).
+Two generator markers separate the two things that can move us off the table:
+
+| marker | evaluated at | isolates |
+|---|---|---|
+| open circle | DESI's z_eff | distance / r_d convention only |
+| filled circle | our own z_eff | that, plus our Fisher-weighted z_eff |
+
+### What the markers do and do not test
+
+Our distances come from the same cosmoprimo `"DESI"` cosmology the pipeline
+uses, so this is NOT an independent check of the distance calculation — same
+code path. The open markers land on 0 (≤0.13%), which confirms the convention
+(D_H, D_M, D_V, r_d definitions) rather than the arithmetic.
+
+The filled-vs-open gap is entirely our **z_eff**, which is Fisher-weighted where
+DESI's is volume-weighted:
+
+| | ours | DESI | Δ |
+|---|---|---|---|
+| BGS | 0.29 | 0.295 | ~0 |
+| LRG1 | 0.51 | 0.510 | ~0 |
+| LRG2 | 0.70 | 0.706 | −0.9% |
+| LRG3 | 0.91 | 0.919 | −1.0% |
+| ELG2 | 1.30 | 1.317 | −1.3% |
+| QSO | 1.34 | 1.491 | **−10%** |
+
+QSO is the outlier, and the AP panels put a number on what that costs:
+**−5.2% in D_V/r_d and +15.9% in D_H/D_M**. `D_H/D_M` falls steeply with z, so a
+10% shift in z_eff is amplified. Every other tracer is under 1.6% in both.
+
+This is a real difference in where the bin's constraining power sits — the QSO
+n(z) is broad and flat, so Fisher weighting pulls low where n̄P is best while
+volume weighting pushes high — not a plotting artifact. It means any QSO
+comparison against DESI is being made at a different effective redshift, which
+is worth remembering when reading QSO in the σ and covariance plots. Flagged
+here; not chased.

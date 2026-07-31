@@ -7,7 +7,7 @@ Three plots, selected by a positional subcommand (default: sigma):
                                 DESI, 4 stacked panels. REPT only by default;
                                 --theory kaiser rept to overlay Kaiser.
   comparison_plots.py covmat    4x4 covariance matrices per tracer, upper
-                                triangular, generator / DESI / difference.
+                                triangular: generator / DESI / % residual.
   comparison_plots.py corrmat   the same as correlation matrices.
   comparison_plots.py rho       the 6 pairwise correlations vs DESI, 6 panels.
                                 These are 6 of the 10 emulator targets and had
@@ -27,6 +27,11 @@ qap = 1 and dm = 0 **by construction** -- the fiducial is its own reference. So
 for those three, the plot shows whether DESI's DATA is consistent with the
 fiducial cosmology. That is a real and interesting question, but it is a
 statement about DESI, not about us.
+
+Because of that, the two AP panels plot D_V/r_d and D_H/D_M rather than qiso and
+qap: the ratio is a flat line at 1, but its numerator (DESI's measurement) and
+denominator (Table 11) are both real numbers worth seeing, and our own value at
+our z_eff can be put on the same axis. See `plot_mean`.
 
 The one genuinely predictive entry is f_sigmar: f(z) * sigma_r is an absolute
 number our pipeline computes from the input cosmology, comparable to DESI's
@@ -209,28 +214,49 @@ def _cov_matrix(targets, desi=False):
     return D @ _corr_matrix(targets) @ D
 
 
+# Percentage residuals are undefined where DESI's entry passes through zero, and
+# an off-diagonal entry of either matrix is proportional to DESI's rho -- so a
+# single cut on |rho_DESI| masks the ill-conditioned cells for BOTH kinds. The
+# diagonal (rho = 1) is never masked.
+_PCT_RHO_FLOOR = 0.05
+
+
+def _pct_matrix(Mo, Md, Rd, floor=_PCT_RHO_FLOOR):
+    """100 * (generator - DESI) / |DESI|, elementwise.
+
+    |DESI| in the denominator rather than DESI, so the sign always reads
+    "generator above/below DESI" instead of flipping with the sign of the
+    reference entry.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        P = 100.0 * (Mo - Md) / np.abs(Md)
+    P[np.abs(Rd) < floor] = np.nan
+    return P
+
+
 # Presentation differs between the two kinds because the quantities do:
 # a covariance spans orders of magnitude and needs symlog, a correlation is
 # bounded on [-1, 1] and does not (symlog would compress exactly the region
-# where all the structure sits).
+# where all the structure sits). The percentage row is linear for both.
 _MATRIX_KINDS = {
     "cov": dict(
-        build=_cov_matrix, symlog=True, vmax=7e-2, dmax=7e-2, linthresh=1e-5,
+        build=_cov_matrix, symlog=True, vmax=7e-2, linthresh=1e-5,
         fmt=lambda v: "0" if abs(v) < 1e-6 else f"{v:+.1e}".replace("e-0", "e-"),
-        textlim=8e-3, fontsize=6.4,
-        label=r"$C$", dlabel=r"$\Delta C$",
-        title="COVARIANCE", note="raw $C$ (diagonal = $\\sigma^2$)"),
+        textlim=8e-3, fontsize=6.4, pmax=100.0,
+        label=r"$C$", title="COVARIANCE",
+        note="raw $C$ (diagonal = $\\sigma^2$)"),
     "corr": dict(
         build=lambda t, desi=False: _corr_matrix(t), symlog=False,
-        vmax=1.0, dmax=0.4, linthresh=None,
-        fmt=lambda v: f"{v:+.2f}", textlim=0.55, fontsize=7.5,
-        label=r"$\rho$", dlabel=r"$\Delta\rho$",
-        title="CORRELATION", note="diagonal = 1 by definition"),
+        vmax=1.0, linthresh=None,
+        fmt=lambda v: f"{v:+.2f}", textlim=0.55, fontsize=7.5, pmax=60.0,
+        label=r"$\rho$", title="CORRELATION",
+        note="diagonal = 1 by definition"),
 }
 
 
 def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
-    """One 4x4 per tracer -- generator / DESI / difference -- upper triangular.
+    """One 4x4 per tracer -- generator / DESI / percentage residual -- upper
+    triangular.
 
     ``kind='cov'``  covariance, so the diagonal is a real matrix element
                     (sigma^2) rather than a 1 by definition.
@@ -238,6 +264,9 @@ def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
                     than the absolute scale.
 
     Values are identical either way (C = D R D); only the presentation differs.
+    The bottom row is a percentage of DESI rather than an absolute difference,
+    so cells are comparable across tracers and across the two kinds -- an
+    absolute Delta C is dominated by whichever tracer has the largest sigma.
     """
     from matplotlib.colors import SymLogNorm, Normalize
     K = _MATRIX_KINDS[kind]
@@ -253,23 +282,35 @@ def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
                               base=10)
         return Normalize(vmin=-vmax, vmax=vmax)
 
-    nm_c, nm_d = _norm(K["vmax"]), _norm(K["dmax"])
-    im_c = im_d = None
+    nm_c, nm_p = _norm(K["vmax"]), Normalize(vmin=-K["pmax"], vmax=K["pmax"])
+    im_c = im_p = None
     for col, t in enumerate(tracers):
         th = theory if theory in data[t]["theories"] else next(iter(data[t]["theories"]))
         Mo = K["build"](data[t]["theories"][th]["targets"])
         Md = K["build"](data[t]["desi"], desi=True)
+        Mp = _pct_matrix(Mo, Md, _corr_matrix(data[t]["desi"]))
         for row, (M, cm, nm) in enumerate(((Mo, cmap, nm_c), (Md, cmap, nm_c),
-                                           (Mo - Md, dcmap, nm_d))):
+                                           (Mp, dcmap, nm_p))):
             ax = axes[row][col]
-            im = ax.imshow(np.ma.masked_where(~keep, M), cmap=cm, norm=nm)
+            bad = ~keep | ~np.isfinite(M)
+            im = ax.imshow(np.ma.masked_where(bad, M), cmap=cm, norm=nm)
             if row < 2: im_c = im
-            else: im_d = im
-            lim = K["textlim"] if row < 2 else K["textlim"] * K["dmax"] / K["vmax"]
+            else: im_p = im
+            fmt = K["fmt"] if row < 2 else (lambda v: f"{v:+.0f}%")
+            lim = K["textlim"] if row < 2 else 0.55 * K["pmax"]
             for i in range(4):
                 for j in range(i, 4):
                     v = M[i, j]
-                    ax.text(j, i, K["fmt"](v), ha="center", va="center",
+                    if not np.isfinite(v):
+                        # grey only INSIDE the triangle: distinguishes "DESI is
+                        # ~0 here" from the empty lower half, which stays white.
+                        ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1,
+                                                   facecolor="0.87",
+                                                   edgecolor="none"))
+                        ax.text(j, i, "--", ha="center", va="center",
+                                fontsize=K["fontsize"] + 1, color="0.35")
+                        continue
+                    ax.text(j, i, fmt(v), ha="center", va="center",
                             fontsize=K["fontsize"],
                             color="white" if abs(v) > lim else "black")
             ax.set_xticks(range(4)); ax.set_yticks(range(4))
@@ -278,7 +319,7 @@ def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
             ax.set_xlim(-0.5, 3.5); ax.set_ylim(3.5, -0.5)
             if col == 0:
                 ax.set_ylabel(("generator", "DESI DR1",
-                               "generator - DESI")[row], fontsize=10)
+                               "(generator - DESI) / |DESI|")[row], fontsize=10)
             else:
                 ax.set_yticklabels([])
             if row == 0:
@@ -290,13 +331,16 @@ def plot_covar_matrix(data, tracers, out_path, kind="cov", theory="rept"):
                  "(2411.12021 App. A, ShapeFit-alone)\n"
                  "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$ "
                  f"-- first three fractional, $m$ absolute; {K['note']}; "
-                 "upper triangle", fontsize=11)
-    fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.87)
+                 "upper triangle\nbottom row is a percentage of DESI; "
+                 f"'--' = undefined ($|\\rho_{{\\rm DESI}}| < {_PCT_RHO_FLOOR:g}$)",
+                 fontsize=11)
+    fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.85)
     sfx = "  (symlog)" if K["symlog"] else ""
     c1 = fig.add_axes([0.895, 0.45, 0.013, 0.40])
     fig.colorbar(im_c, cax=c1).set_label(K["label"] + sfx, fontsize=9)
     c2 = fig.add_axes([0.895, 0.08, 0.013, 0.26])
-    fig.colorbar(im_d, cax=c2).set_label(K["dlabel"] + sfx, fontsize=9)
+    fig.colorbar(im_p, cax=c2, extend="both").set_label(
+        r"$(X_{\rm gen} - X_{\rm DESI})\,/\,|X_{\rm DESI}|$  [%]", fontsize=9)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
@@ -326,27 +370,69 @@ def plot_rho(data, tracers, out_path):
     print(f"  wrote {out_path}")
 
 
+# The two AP panels, as the physical distances rather than the ratios.
+# (index into the DESI 4-vector, sigma key, y label, Table 11 key, q label,
+#  legend corner -- residuals run one-signed in each panel, D_V/r_d negative and
+#  D_H/D_M positive, so the free corner is opposite in each)
+_DIST_PANELS = [
+    (0, "sigma_qiso", r"$D_V/r_d$", "DV_over_rd", r"$q_{\rm iso}$", "lower left"),
+    (1, "sigma_qap", r"$D_H/D_M$", "DH_over_DM", r"$q_{\rm ap}$", "center left"),
+]
+
+
 def plot_mean(data, tracers, out_path, theory="rept"):
     """DESI's measured compressed values against our mean-pipeline prediction.
 
-    See the module docstring: only the f_sigmar panel actually tests us.
+    The AP panels compare the generator against DESI's PUBLISHED FIDUCIAL, not
+    against DESI's DR1 measurement. Two reasons:
+
+      - q = value/fiducial is 1 by construction on our side at the fiducial
+        cosmology, so plotting q draws a flat line at 1 and hides the numbers.
+      - The DR1 measurement is data. Whether the universe matches the fiducial
+        is a statement about DESI, not about this pipeline, and putting it on
+        the same axis invites reading a cosmological result as a code error.
+
+    So the y-axis is the residual against Table 11 in percent, with the Table 11
+    value itself annotated. Two generator markers separate the two effects: at
+    DESI's z_eff the only difference is the distance/r_d convention (cosmoprimo
+    vs the published table, <=0.13%); at our own z_eff the Fisher-weighted
+    z_eff enters on top of that.
+
+    Caveat: our distances come from the same cosmoprimo "DESI" cosmology the
+    pipeline uses, so the open marker is a consistency check on conventions
+    rather than an independent implementation.
     """
     fig, axes = plt.subplots(1, 4, figsize=(16, 4.2))
     x = np.arange(len(tracers))
     labels = [_DISPLAY.get(t, t) for t in tracers]
 
-    # qiso, qap: ours is 1 by construction at the fiducial.
-    for ax, (idx, key, ylabel) in zip(
-            axes[:2], [(0, "sigma_qiso", r"$q_{\rm iso}$"),
-                       (1, "sigma_qap", r"$q_{\rm ap}$")]):
-        fid = [desi_ref.fiducial_dv_dhdm(data[t]["z_desi"])[idx] for t in tracers]
-        meas = [data[t]["desi_vec"][idx] / f for t, f in zip(tracers, fid)]
-        err = [data[t]["desi"][key] for t in tracers]
-        ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
-                    capsize=3, label="DESI DR1")
-        ax.axhline(1.0, color="tab:blue", lw=1.6, label="generator (= 1 by constr.)")
-        ax.set_ylabel(ylabel)
-        ax.set_title(ylabel + "  — tests DESI vs fiducial,\nnot our pipeline",
+    for ax, (idx, key, ylabel, t11, qlab, loc) in zip(axes[:2], _DIST_PANELS):
+        fid = np.array([desi_ref.published_fiducial(t)[t11] for t in tracers])
+        zf = np.array([data[t]["z_desi"] for t in tracers])
+        zo = np.array([data[t]["theories"][theory]["z"] for t in tracers])
+        # Two generator evaluations, which separates the two things that can
+        # move us off the published fiducial:
+        #   at DESI's z_eff  -> distance/r_d convention only (cosmoprimo vs T11)
+        #   at our z_eff     -> that, plus our Fisher-weighted z_eff
+        at_z_desi = np.array([desi_ref.fiducial_dv_dhdm(z)[idx] for z in zf])
+        at_z_ours = np.array([desi_ref.fiducial_dv_dhdm(z)[idx] for z in zo])
+        ax.axhline(0.0, color="0.45", lw=1.6, label="DESI fiducial (Table 11)")
+        ax.plot(x, 100 * (at_z_desi / fid - 1), "o", ms=8, mfc="none", mew=1.4,
+                color="tab:blue", label="generator @ DESI $z_{\\rm eff}$")
+        ax.plot(x, 100 * (at_z_ours / fid - 1), "o", ms=6, color="tab:blue",
+                label="generator @ own $z_{\\rm eff}$")
+        # Table 11 values along the top, in axes coords -- anchoring them to the
+        # y=0 line puts them straight through the markers.
+        for i in range(len(tracers)):
+            ax.text(i, 0.955, f"{fid[i]:.3g}", transform=ax.get_xaxis_transform(),
+                    ha="center", va="top", fontsize=6.0, color="0.35")
+        r = np.concatenate([at_z_desi / fid - 1, at_z_ours / fid - 1, [0.0]]) * 100
+        pad = max(r.ptp(), 1.0)
+        ax.set_ylim(r.min() - 0.15 * pad, r.max() + 0.30 * pad)
+        ax.set_ylabel(f"{ylabel}: generator / Table 11 $-1$  [%]")
+        ax.legend(fontsize=7, loc=loc)
+        ax.set_title(f"{ylabel} — the quantity behind {qlab}, against the "
+                     "fiducial\nit is divided by (labels: Table 11 value)",
                      fontsize=9)
 
     # f_sigmar: the one genuinely predictive panel.
@@ -359,10 +445,11 @@ def plot_mean(data, tracers, out_path, theory="rept"):
                 capsize=3, label="DESI DR1")
     ax.plot(x, ours, "o", ms=7, color="tab:blue", label="generator (predicted)")
     for i, t in enumerate(tracers):
+        side = -1 if i == len(tracers) - 1 else 1     # last one points inward
         ax.annotate(f"z {data[t]['theories'][theory]['z']:.2f}/"
                     f"{data[t]['z_desi']:.2f}", (i, ours[i]),
-                    textcoords="offset points", xytext=(0, -15),
-                    ha="center", fontsize=6)
+                    textcoords="offset points", xytext=(8 * side, -3),
+                    ha="left" if side > 0 else "right", fontsize=6, color="0.3")
     ax.set_ylabel(r"$f\sigma_r$")
     ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n" r"z generator/DESI annotated",
                  fontsize=9)
@@ -378,14 +465,15 @@ def plot_mean(data, tracers, out_path, theory="rept"):
     ax.set_title("m (DESI Eq. 4.9 convention)\nsame on both sides — no offset",
                  fontsize=9)
 
-    for ax in axes:
+    for i, ax in enumerate(axes):
         ax.grid(alpha=0.3)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=25, fontsize=8)
-        ax.legend(fontsize=7)
-    fig.suptitle("ShapeFit mean values vs DESI DR1 — three of four panels test "
-                 "whether DESI's data matches the fiducial, not our pipeline",
-                 fontsize=11)
+        if i >= 2:                 # AP panels place their own legend (_DIST_PANELS)
+            ax.legend(fontsize=7)
+    fig.suptitle("ShapeFit mean values — AP panels: generator vs DESI's Table 11 "
+                 "FIDUCIAL (no DR1 data; the ratio to it is 1 by construction).  "
+                 "$f\\sigma_r$ and $m$: vs the DR1 measurement", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"  wrote {out_path}")
