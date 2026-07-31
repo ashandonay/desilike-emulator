@@ -2282,3 +2282,36 @@ claim that the *residual scatter across tracers* has a redshift explanation.
 Four asserted mechanisms failed checks today (V_eff-vs-I₁₂/I₂₂, 1/comp
 numerology, weight dispersion, this). Each time the arithmetic was right and the
 pattern was imposed. A five-of-six table is a warning sign, not a result.
+
+## §34 — BAO vs shapefit: shared level, unshared scatter (shelved)
+
+Prompted by the observation that the shapefit σ ratios look like the BAO ones.
+Recorded and shelved, not pursued.
+
+**Supported — the level is shared.** Mean P/D (our σ ÷ DESI's published σ):
+
+| | mean P/D | range |
+|---|---|---|
+| BAO σ(D_H/r_s) | 0.803 | 0.722–1.001 |
+| BAO σ(D_M/r_s) | 0.756 | 0.678–0.788 |
+| BAO σ(D_V/r_s) | 0.781 | 0.708–0.884 |
+| shapefit σ(qiso) | 0.757 | 0.610–0.990 |
+
+Two analyses with different estimators, data products and theory landing within
+~3% on how much they under-predict DESI. They share n̄, V, the n(z) slices and
+the HOD, and little else — so this points upstream, and it is roughly what a
+1.45× n̄ error predicts (§26–§28). That lead now has to explain two pipelines.
+
+**Not supported — the per-tracer pattern.** corr(BAO P/D, shapefit qiso P/D) is
++0.727 / +0.063 / +0.562 depending purely on whether DH, DM or DV is paired
+against qiso. On n=6 that is noise; the +0.562 quoted earlier carries no weight.
+BGS and LRG2 actively disagree between pipelines.
+
+**Caveat that matters for any retry: BGS and QSO are isotropic-only** in DR1
+BAO. `_triplet_from_recon_cov` fills a 1×1 covariance by scaling DH/DM/DV
+identically ("σ scales DH/DM/DV identically"), which is why both read 0.779
+three times. So the DH and DM columns are effectively n=4, not 6 — do not
+average or correlate over them without dropping BGS and QSO.
+
+DV is the only column where all six are genuine, and it is also the correct
+pairing for qiso (both are the isotropic dilation).
