@@ -33,6 +33,9 @@
 #                    that read it directly without going through
 #                    build_bao_likelihood / run_fisher; those scripts may
 #                    not reflect the current best-practice z_eff.
+#                    Values here are DR1 (Adame+24 Table 1). DR2 differs for
+#                    LRG3+ELG1/ELG2/QSO (0.934/1.321/1.484); it is not carried
+#                    here under the DR1-first rule.
 #
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
@@ -92,7 +95,7 @@ LRG2:
 LRG3_ELG1:
   tracer_type: MIX
   zrange: [0.8, 1.1]
-  z_eff: 0.934                   # FALLBACK ONLY (see header)
+  z_eff: 0.930                   # FALLBACK ONLY (see header)
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
@@ -102,7 +105,7 @@ LRG3_ELG1:
 ELG2:
   tracer_type: ELG
   zrange: [1.1, 1.6]
-  z_eff: 1.321                   # FALLBACK ONLY (see header)
+  z_eff: 1.317                   # FALLBACK ONLY (see header)
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
@@ -112,7 +115,7 @@ ELG2:
 QSO:
   tracer_type: QSO
   zrange: [0.8, 2.1]
-  z_eff: 1.484                   # FALLBACK ONLY (see header)
+  z_eff: 1.491                   # FALLBACK ONLY (see header)
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z
