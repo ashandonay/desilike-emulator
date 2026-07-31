@@ -44,11 +44,13 @@ can be seen as if it were m + n." So the (m+n) label is an interpretive relabel
 of a single varied parameter, and sigma(m+n) = sigma(m) -- the ERROR comparison
 is exact and the parameterisations match.
 
-The CENTRAL VALUES do not compare. In DESI's Eq. (4.9) m is a DEVIATION (m = 0
-means no shape change from the fiducial), i.e. our `dm`. Our emulator target is
-the ABSOLUTE slope m = m_fid + dm, which is -0.5775 at the fiducial for LRG2.
-The two differ by m_fid. Anything comparing mean m values -- bedcosmo included
--- has to account for that offset.
+The CENTRAL VALUES now compare directly. Since CHANGELOG S35 the mean emulator
+emits DESI's convention -- the Eq. (4.9) deviation, verified as -4.5e-05 at the
+DESI fiducial cosmology -- so no offset conversion is needed by bedcosmo or
+anything else. (Before S35 our target was the ABSOLUTE slope, -0.5775 at the
+fiducial, and every comparison had to subtract m_fid. Note desilike still calls
+the absolute slope `m`; its `dm` is what equals DESI's m, and the mean worker
+reads `extractor.dm` into a target named `m`.)
 
 The denominator is the FIDUCIAL value from DESI's own Table 11 (Appendix C),
 not the measured central value. An earlier version divided by the
