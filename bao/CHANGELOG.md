@@ -3665,6 +3665,122 @@ would have crashed.
 - NERSC `~/.conda/envs/emulator` is still on the old versions — harmless for σ,
   but match the pins before generating training data there.
 
+## 36. z_eff switched to DESI's FKP-weighted definition (2026-07-31)
+
+`_compute_z_eff_from_nz` weighted each n(z) slice by its Fisher information,
+`V_i × (n̄P/(1+n̄P))²` — the FKP weight **squared**, which is the definition of
+V_eff. DESI quotes z_eff as a pair-weighted mean redshift,
+
+    z_eff = Σ_ij w_i w_j (z_i+z_j)/2 / Σ_ij w_i w_j  →  Σ_i w_i z_i / Σ_i w_i
+
+for unrestricted pairs, with FKP weights `w = 1/(1 + n̄P_0)`. That is **linear**
+in the weight. In slice form, `z_eff = Σ z_i N_i w_i / Σ N_i w_i` with
+`N_i = n̄_i V_i`.
+
+One power of `n̄P` is the whole difference. Where `n̄P ≳ 1` the weight saturates
+and both agree; where `n̄P ≪ 1` across a wide bin the squared version punishes
+the sparse end far harder. Measured against DESI's published z_eff:
+
+| tracer | old (V_eff) | new (FKP) | DESI | old err | new err |
+|---|---|---|---|---|---|
+| BGS       | 0.2927 | 0.2964 | 0.295 | −0.8%  | +0.5%  |
+| LRG1      | 0.5084 | 0.5095 | 0.510 | −0.3%  | −0.1%  |
+| LRG2      | 0.7045 | 0.7057 | 0.706 | −0.2%  | −0.0%  |
+| LRG3+ELG1 | 0.9459 | 0.9555 | 0.930 | +1.7%  | +2.7%  |
+| ELG2      | 1.2984 | 1.3440 | 1.317 | −1.4%  | +2.1%  |
+| QSO       | 1.3312 | 1.4937 | 1.491 | **−10.7%** | **+0.2%** |
+
+QSO is the case that motivated this: `n̄P` runs 0.20 → 0.07 across a bin 1.3
+wide in redshift, so the squared weight put z_eff 10.7% low.
+
+**Two tracers got worse** (ELG2 −1.4% → +2.1%, LRG3+ELG1 +1.7% → +2.7%) and
+that is accepted, not tuned away. Picking the weighting that best reproduces
+DESI's numbers would be fitting to the reference — the §33r lesson. DESI
+applies FKP weights, so the FKP-weighted mean is the definition of record; the
+residual is a limitation of representing a sample by slice-level n̄ (and, for
+LRG3+ELG1, of describing two catalogues with one n̄ and one P_0). Also dropped:
+DESI restricts pairs to a separation range, which localises them in redshift —
+the unrestricted-pair collapse above ignores that.
+
+### Scope
+
+- **V_eff itself is unchanged.** The squared FKP weight is correct there — it
+  is computing information content, not locating a mean. The same kernel was
+  doing double duty; only the reporting redshift moved.
+- `Z_EFF_CONVENTION = "desi_fkp" | "fisher_veff"` selects the definition, so
+  the old numbers stay reproducible for regression comparison.
+- `_FKP_P0_BY_TYPE` (BGS 7e3, LRG 1e4, ELG 4e3, QSO 6e3 (Mpc/h)³) are DESI's
+  DR1 analysis choices keyed by `tracer_type`, not free parameters.
+- `shapefit/core.py::_fs_compute_z_eff` delegates to the same function, so the
+  two pipelines cannot drift apart on this.
+
+### Why it matters, and what it does not fix
+
+bedcosmo hardcodes DESI's redshifts (`prep_tracer_data.py`: QSO 1.484/1.491),
+so σ computed at z = 1.331 was being attached to a measurement placed at
+z = 1.484. That inconsistency is what this closes.
+
+It does **not** explain the σ deficit. Forcing z_eff to DESI's value in the
+shapefit pipeline moved QSO's P/D by ~2% and in the wrong direction on three of
+four targets (σ(q_iso) 0.797 → 0.774). Consistent with the deficit being
+uniform across tracers — if z_eff drove it, QSO would be an outlier, and it is
+not. The σ gap remains the shot-noise/effective-area question.
+
+On the mean side it is decisive: at DESI's z_eff the shapefit mean pipeline
+reproduces Table 11's fσ_s8 to **0.02% on all six tracers**, so the entire
+residual there was z_eff and the compression itself is exact.
+
+### The two pipelines want DIFFERENT behaviour, and that is correct
+
+Measured after the fact: the config-space path — the production σ-triplet
+driver — was never affected by any of this, because it never derives z_eff.
+All three `build_bao_likelihood` call sites in `config_space.py` (:489, :709,
+:762) pass `z_eff=float(cfg["z_eff"])` explicitly.
+
+That pinning is deliberate and must stay. Config space loads a DESI
+correlation-recon-poles bundle whose measured window matrix and covariance
+belong to one sample; they are only self-consistent with a theory evaluated at
+that sample's z_eff. The Fourier path has no such constraint — it builds its
+own analytic covariance — so there z_eff should be derived and should track
+cosmology and N_tracers (measured spread: ±0.9% for QSO over Ω_m ∈ [0.20,
+0.45], +0.10% over the N box; ELG2 +0.68% over N).
+
+So: **config space pins, Fourier derives.** What they must not do is silently
+disagree, and they were:
+
+| | yaml (was) | DESI bundle |
+|---|---|---|
+| LRG3+ELG1 | 0.934 | 0.930 |
+| ELG2      | 1.321 | 1.317 |
+| QSO       | 1.484 | 1.491 |
+
+Config space was evaluating the theory at one redshift against a window
+measured at another. The DR1 yaml correction closed that; `_assert_bundle_zeff`
+in `load_bundle` now makes it impossible to reopen.
+
+### Measured impact on production σ
+
+Measured once, by re-running `config_space.XiSigmaGenerator.sigma_triplet`
+per tracer with `cfg["z_eff"]` set to each convention in turn (throwaway
+script; the numbers are the record, the scaffolding was not kept):
+
+| tracer | σ @ DR1 vs DR2 | σ @ derived-FKP vs DR2 |
+|---|---|---|
+| BGS / LRG1 / LRG2 | 0.00% | ≤0.39% |
+| LRG3+ELG1 | ±0.31% | −1.65% / +1.63% |
+| ELG2 | ±0.24% | −1.38% / +0.98% |
+| QSO | +0.16% | +0.22% |
+
+All under 1.7%; ρ moves ≤0.03%. **Production BAO training data does not need
+regenerating for this** — a claim made earlier in the opposite direction, from
+benchmarking the Fourier path that bedcosmo does not consume.
+
+### Not yet done
+
+Regression baselines (`golden_*.npz`) and the Fourier-quantity (`covar`) and
+shapefit training data predate this. Config-space (`config`) training data is
+affected only at the ≤0.31% level via the yaml correction.
+
 ## Constraints respected throughout
 
 - No `covariance_scale`, `α_stoch`, `η`, or data-derived window

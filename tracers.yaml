@@ -26,13 +26,30 @@
 #                    (Adame+24 Table 2 / DESI SV completeness; Massara+24,
 #                    Yuan+24 for ELG modeling). Physics-derivable, no σ
 #                    calibration to DESI involved.
-#   z_eff            *FALLBACK ONLY*. Production code derives the
-#                    Fisher-weighted z_eff from the n(z) slices file
-#                    (`_compute_z_eff_from_nz` in prep_covar.py). The
-#                    yaml value is retained for legacy diagnostic scripts
-#                    that read it directly without going through
-#                    build_bao_likelihood / run_fisher; those scripts may
-#                    not reflect the current best-practice z_eff.
+#   z_eff            NOT a fallback -- read this before assuming it is unused.
+#                    Two pipelines treat it differently, deliberately:
+#
+#                      config space  AUTHORITATIVE. Every build_bao_likelihood
+#                        call in bao/config_space.py passes z_eff=cfg["z_eff"]
+#                        explicitly, so for the production sigma-triplet driver
+#                        this value IS the z_eff. It must equal the z_eff of the
+#                        DESI bundle supplying the window matrix and covariance:
+#                        those were measured on that sample and are only
+#                        self-consistent with a theory evaluated there.
+#                        `_assert_bundle_zeff` enforces it at load_bundle time.
+#
+#                      Fourier / shapefit  IGNORED. They build their own
+#                        analytic covariance, so there is no measured window to
+#                        stay consistent with, and they derive z_eff from the
+#                        n(z) slices using DESI's FKP-weighted definition
+#                        (`_compute_z_eff_from_nz` in bao/core.py) -- letting it
+#                        track cosmology and N_tracers.
+#
+#                    Values here are DR1 (Adame+24 Table 1), matching the DR1
+#                    bundles. DR2 differs for LRG3+ELG1/ELG2/QSO
+#                    (0.934/1.321/1.484) and is not carried here under the
+#                    DR1-first rule; the per-release `overrides` mechanism is
+#                    where it belongs when DR2 comes up.
 #
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
@@ -50,8 +67,10 @@
 #
 # Derived quantities NOT listed here (computed inside the pipeline from
 # n(z) slices + cosmology):
-#   - z_eff          Fisher-weighted effective redshift (see
-#                    `_compute_z_eff_from_nz` in prep_covar.py).
+#   - z_eff          Derived in the Fourier and shapefit paths ONLY, with
+#                    DESI's FKP-weighted convention (`_compute_z_eff_from_nz`
+#                    in bao/core.py). Config space uses the value above
+#                    instead -- see its schema entry.
 #   - nbar(z)        Comoving 3D density per slice (from nbar_file in
 #                    ~/data/desi/nz_slices/<tracer>_nz_slices.csv).
 #   - Σ_perp, Σ_par  Post-reconstruction BAO damping
@@ -62,7 +81,7 @@
 BGS:
   tracer_type: BGS
   zrange: [0.1, 0.4]
-  z_eff: 0.295                   # FALLBACK ONLY (see header)
+  z_eff: 0.295                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
@@ -72,7 +91,7 @@ BGS:
 LRG1:
   tracer_type: LRG
   zrange: [0.4, 0.6]
-  z_eff: 0.510                   # FALLBACK ONLY (see header)
+  z_eff: 0.510                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
@@ -82,7 +101,7 @@ LRG1:
 LRG2:
   tracer_type: LRG
   zrange: [0.6, 0.8]
-  z_eff: 0.706                   # FALLBACK ONLY (see header)
+  z_eff: 0.706                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
@@ -92,7 +111,7 @@ LRG2:
 LRG3_ELG1:
   tracer_type: MIX
   zrange: [0.8, 1.1]
-  z_eff: 0.934                   # FALLBACK ONLY (see header)
+  z_eff: 0.930                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
@@ -102,7 +121,7 @@ LRG3_ELG1:
 ELG2:
   tracer_type: ELG
   zrange: [1.1, 1.6]
-  z_eff: 1.321                   # FALLBACK ONLY (see header)
+  z_eff: 1.317                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
@@ -112,7 +131,7 @@ ELG2:
 QSO:
   tracer_type: QSO
   zrange: [0.8, 2.1]
-  z_eff: 1.484                   # FALLBACK ONLY (see header)
+  z_eff: 1.491                   # config-space anchor; = DESI bundle (see header)
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z
