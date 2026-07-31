@@ -3760,8 +3760,9 @@ in `load_bundle` now makes it impossible to reopen.
 
 ### Measured impact on production σ
 
-Re-running the config-space pipeline at all three conventions
-(`emulator_vs_desi.py --z-eff-variants`):
+Measured once, by re-running `config_space.XiSigmaGenerator.sigma_triplet`
+per tracer with `cfg["z_eff"]` set to each convention in turn (throwaway
+script; the numbers are the record, the scaffolding was not kept):
 
 | tracer | σ @ DR1 vs DR2 | σ @ derived-FKP vs DR2 |
 |---|---|---|
