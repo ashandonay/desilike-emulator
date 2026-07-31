@@ -234,17 +234,22 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
     cmap = plt.get_cmap("RdBu_r").copy(); cmap.set_bad("white")
     dcmap = plt.get_cmap("PuOr_r").copy(); dcmap.set_bad("white")
     keep = np.tril(np.ones((4, 4), bool))          # lower triangle + diagonal
-    lt = 1e-3
-    norm_c = SymLogNorm(linthresh=lt, vmin=-1.0, vmax=1.0, base=10)
-    norm_d = SymLogNorm(linthresh=lt, vmin=-1.0, vmax=1.0, base=10)
+    # Raw covariance, NOT normalised. An earlier version divided each tracer by
+    # max(diag(C_DESI)); that made the DESI (f_sigma_r, f_sigma_r) cell read
+    # exactly 1.000 for every tracer, which looks like a measured value and is
+    # not -- it is the normalisation constant. Raw keeps every printed number a
+    # real quantity. symlog spans the ~3 decades from the smallest off-diagonal
+    # (~2e-5) to BGS's sigma^2(f_sigma_r) (~6e-2).
+    lt = 1e-5
+    vmax = 7e-2
+    norm_c = SymLogNorm(linthresh=lt, vmin=-vmax, vmax=vmax, base=10)
+    norm_d = SymLogNorm(linthresh=lt, vmin=-vmax, vmax=vmax, base=10)
 
     im_c = im_d = None
     for col, t in enumerate(tracers):
         th = theory if theory in data[t]["theories"] else next(iter(data[t]["theories"]))
         Co = _cov_matrix(data[t]["theories"][th]["targets"])
         Cd = _cov_matrix(data[t]["desi"], desi=True)
-        scale = float(np.max(np.diag(Cd)))
-        Co, Cd = Co / scale, Cd / scale
         for row, (M, cm, nm) in enumerate(((Co, cmap, norm_c), (Cd, cmap, norm_c),
                                            (Co - Cd, dcmap, norm_d))):
             ax = axes[row][col]
@@ -255,9 +260,9 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
                 for j in range(i + 1):
                     v = M[i, j]
                     a = abs(v)
-                    txt = "0" if a < 1e-4 else (f"{v:+.3f}" if a >= 1e-3 else f"{v:+.0e}")
-                    ax.text(j, i, txt, ha="center", va="center", fontsize=6.8,
-                            color="white" if a > 0.15 else "black")
+                    txt = "0" if a < 1e-6 else f"{v:+.1e}".replace("e-0", "e-")
+                    ax.text(j, i, txt, ha="center", va="center", fontsize=6.4,
+                            color="white" if a > 8e-3 else "black")
             ax.set_xticks(range(4)); ax.set_yticks(range(4))
             ax.set_xticklabels(_RHO_LABELS, fontsize=8)
             ax.set_yticklabels(_RHO_LABELS, fontsize=8)
@@ -274,16 +279,14 @@ def plot_rho_matrix(data, tracers, out_path, theory="rept"):
 
     fig.suptitle("ShapeFit compressed-parameter COVARIANCE vs DESI DR1 "
                  "(2411.12021 App. A, ShapeFit-alone)\n"
-                 "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$; "
-                 "each tracer normalised by $\\max\\,\\mathrm{diag}\\,C_{\\rm DESI}$; "
-                 "lower triangle", fontsize=11)
+                 "basis $(q_{\\rm iso},\\, q_{\\rm ap},\\, f\\sigma_r/f\\sigma_r,\\, m)$ "
+                 "-- first three fractional, $m$ absolute; raw $C$, lower triangle",
+                 fontsize=11)
     fig.subplots_adjust(right=0.87, hspace=0.14, wspace=0.10, top=0.87)
     c1 = fig.add_axes([0.895, 0.45, 0.013, 0.40])
-    fig.colorbar(im_c, cax=c1).set_label(
-        r"$C/\max\,\mathrm{diag}\,C_{\rm DESI}$  (symlog)", fontsize=9)
+    fig.colorbar(im_c, cax=c1).set_label(r"$C$  (symlog)", fontsize=9)
     c2 = fig.add_axes([0.895, 0.08, 0.013, 0.26])
-    fig.colorbar(im_d, cax=c2).set_label(
-        r"$\Delta\,(C/\max\,\mathrm{diag}\,C_{\rm DESI})$", fontsize=9)
+    fig.colorbar(im_d, cax=c2).set_label(r"$\Delta C$  (symlog)", fontsize=9)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
