@@ -26,9 +26,9 @@
 #                    (Adame+24 Table 2 / DESI SV completeness; Massara+24,
 #                    Yuan+24 for ELG modeling). Physics-derivable, no σ
 #                    calibration to DESI involved.
-#   z_eff            *FALLBACK ONLY*. Production code derives the
-#                    Fisher-weighted z_eff from the n(z) slices file
-#                    (`_compute_z_eff_from_nz` in prep_covar.py). The
+#   z_eff            *FALLBACK ONLY*. Production code derives z_eff from the
+#                    n(z) slices file with DESI's FKP-weighted definition
+#                    (`_compute_z_eff_from_nz` in bao/core.py). The
 #                    yaml value is retained for legacy diagnostic scripts
 #                    that read it directly without going through
 #                    build_bao_likelihood / run_fisher; those scripts may
@@ -50,8 +50,8 @@
 #
 # Derived quantities NOT listed here (computed inside the pipeline from
 # n(z) slices + cosmology):
-#   - z_eff          Fisher-weighted effective redshift (see
-#                    `_compute_z_eff_from_nz` in prep_covar.py).
+#   - z_eff          FKP-weighted effective redshift, DESI's convention (see
+#                    `_compute_z_eff_from_nz` in bao/core.py).
 #   - nbar(z)        Comoving 3D density per slice (from nbar_file in
 #                    ~/data/desi/nz_slices/<tracer>_nz_slices.csv).
 #   - Σ_perp, Σ_par  Post-reconstruction BAO damping
