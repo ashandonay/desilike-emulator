@@ -37,6 +37,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from util import plots_dir
+
 
 # Match these to your BAO tracer-bin definitions in util/tracers.yaml.
 BAO_BINS: dict[str, tuple[float, float]] = {
@@ -891,8 +895,8 @@ def main() -> None:
 
     caps_tag = "".join(args.caps)
     plot_base = f"normalized_nz_{args.elg_target}_{caps_tag}"
-    overlay_path = cwd / f"{plot_base}_overlay.png"
-    panels_path = cwd / f"{plot_base}_panels.png"
+    overlay_path = plots_dir() / f"{plot_base}_overlay.png"
+    panels_path = plots_dir() / f"{plot_base}_panels.png"
 
     plot_title = (
         f"Normalized DESI n(z) shapes | ELG={args.elg_target} | "
@@ -914,8 +918,8 @@ def main() -> None:
     print(f"wrote {overlay_path}")
     print(f"wrote {panels_path}")
 
-    unnorm_design_path = Path.cwd() / f"{plot_base}_unnormalized_design_nbar.png"
-    unnorm_file_path = Path.cwd() / f"{plot_base}_unnormalized_file_nbar.png"
+    unnorm_design_path = plots_dir() / f"{plot_base}_unnormalized_design_nbar.png"
+    unnorm_file_path = plots_dir() / f"{plot_base}_unnormalized_file_nbar.png"
 
     plot_unnormalized_nz_curves(
         slices=slices,

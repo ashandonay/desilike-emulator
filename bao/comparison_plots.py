@@ -42,7 +42,7 @@ import core
 import config_space as cc
 import fourier_space
 import desi_reference as desi_ref
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _HERE = Path(__file__).resolve().parent
@@ -290,7 +290,7 @@ def _plot_forecast(data, out_path, space):
 def run_forecast(space):
     data = _gather_config() if space == "config" else _gather_fourier()
     _print_table(data, space)
-    _plot_forecast(data, _HERE / f"forecast_comparison_{space}_dr1.png", space)
+    _plot_forecast(data, plots_dir() / f"bao_forecast_comparison_{space}_dr1.png", space)
 
 
 # ===========================================================================
@@ -358,7 +358,7 @@ def run_cov(matrix, tracers):
         print(f"building covs for {t} ...", flush=True)
         covs[t] = _covs(t)
     for m in (["corr", "cov"] if matrix == "both" else [matrix]):
-        _plot_cov(covs, m, _HERE / f"cov_comparison_{m}_dr1.png")
+        _plot_cov(covs, m, plots_dir() / f"bao_cov_comparison_{m}_dr1.png")
 
 
 # ===========================================================================
@@ -439,7 +439,7 @@ def run_theory(tracers):
                  "(dashed = theory, BB=0; solid = theory + best-fit DESI broadband)",
                  fontsize=12)
     fig.tight_layout()
-    out = _HERE / "theory_comparison_dr1.png"
+    out = plots_dir() / "bao_theory_comparison_dr1.png"
     fig.savefig(out, dpi=120, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out}")

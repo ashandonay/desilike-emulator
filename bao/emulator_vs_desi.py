@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 
 import config_space as cc
 import desi_reference as rs
-from util import build_model, decode_emulator_outputs
+from util import build_model, decode_emulator_outputs, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _DISPLAY = {"LRG3_ELG1": "LRG3+ELG1"}
@@ -226,7 +226,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models-dir", default=str(_DEFAULT_MODELS),
                     help="directory of per-tracer .pt checkpoints (default: dr1/base)")
-    ap.add_argument("--out", default=str(_HERE / "emulator_vs_desi_dr1.png"))
+    ap.add_argument("--out", default=str(plots_dir() / "bao_emulator_vs_desi_dr1.png"))
     args = ap.parse_args()
 
     data = _gather(args.models_dir)
