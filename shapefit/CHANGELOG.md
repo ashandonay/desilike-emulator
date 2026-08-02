@@ -2671,3 +2671,33 @@ physical gain. Align it at the next golden regeneration, or leave it.
 So "the DESI fiducial" is written down twice independently. §38's q == 1 is
 best understood as the assertion that those two agree; §40 is the assertion
 that cosmoprimo's copy has not moved.
+
+## §41 — `fiducial-id` promoted to an actual unit test
+
+§40 added the check but left it manual, which undercut its whole point: its
+value is catching a change *nobody in this repo made*, and a check you have to
+remember to type is the wrong shape for that.
+
+Added `tests/test_fiducial_identity.py`, the repo's first real test. It calls
+`validate_forecast.check_fiducial_identity` rather than restating the numbers,
+so the CLI and the test cannot drift apart on what the fiducial is. A second
+test asserts `FID_SAMPLE` and the recorded cosmoprimo values agree to 1e-6 —
+admitting the ln10A_s rounding §40 documented, and nothing larger.
+
+Only this check was promoted. The rest of `validate_forecast.py` needs CLASS
+runs over six tracers; `fiducial-id` is 3.2 s of assertions on constants.
+
+Verified by negative test: perturbing the recorded `h` to 0.68 fails with
+`h 0.6800000000 0.6736000000 -9.4e-03 <-- FAIL`, naming the parameter.
+
+### Repo notes
+
+- **`test_cov_scaling.py` is not a test.** It is an argparse plotting CLI that
+  happens to carry the `test_` prefix, and pytest fails collecting it. Hence
+  `testpaths = ["tests"]` plus `norecursedirs` in pyproject.toml — `pytest`
+  from the repo root now works.
+- pytest was not in the emulator env. Installed after a dry run confirmed it
+  adds only `iniconfig`, `pluggy`, `pytest` and upgrades nothing (the env is
+  pinned: desilike 4cfd6bec, cosmoprimo 1b100803). Declared as the `dev`
+  optional-dependency; no pipeline needs it.
+- Still no CI. The test runs on demand.

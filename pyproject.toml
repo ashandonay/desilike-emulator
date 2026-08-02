@@ -17,3 +17,14 @@ packages = ["desilike_emulator", "desilike_emulator.bao", "desilike_emulator.sha
 desilike_emulator = "."
 "desilike_emulator.bao" = "bao"
 "desilike_emulator.shapefit" = "shapefit"
+
+# pytest is not needed to run any pipeline -- only `pytest tests/`.
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# test_cov_scaling.py is a PLOTTING script, not a test, despite the name --
+# it is an argparse CLI and pytest would fail collecting it. Confining
+# collection to tests/ keeps `pytest` working from the repo root.
+norecursedirs = ["bao", "shapefit", "autoresearch", "emulator", "training_data"]
