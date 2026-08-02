@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 import core
 import config_space as cc
 import desi_reference as desi_ref
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _QS = [("DH_over_rs", "DH/rd"), ("DM_over_rs", "DM/rd"), ("DV_over_rs", "DV/rd")]
@@ -181,7 +181,7 @@ def _plot_corr(R):
                 ax.set_ylabel(f"{t}\n(shot {d['shot_frac']:.0%})", fontsize=9)
             ax.set_xticks([]); ax.set_yticks([])
     fig.colorbar(im, ax=axes, shrink=0.4, label="correlation")
-    out = Path(__file__).resolve().parent / "alpha_sn_cov_compare.png"
+    out = plots_dir() / "alpha_sn_cov_compare.png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     plt.close(fig)
     print(f"\nSaved correlation-matrix comparison to: {out}")

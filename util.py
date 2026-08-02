@@ -543,6 +543,26 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
         raise ValueError(f"Unknown analysis: {analysis}")
 
 
+def plots_dir() -> Path:
+    """Repo-level `plots/` directory, created on demand.
+
+    Every diagnostic figure lands here rather than beside the script that made
+    it, so the analysis directories stay code-only. The whole tree is
+    gitignored (both `*.png` and `plots/`) — figures are regenerable, and
+    large binaries in git history are not worth the pull cost on a public repo.
+
+    Because the directory is shared across analyses, a figure name that names a
+    concept more than one analysis has (covariance, forecast, scaling, training
+    data, emulator-vs-DESI, ...) must carry its analysis as a prefix:
+    `bao_forecast_comparison_*.png` vs `shapefit_sigma_vs_desi.png`. Names that
+    are already unambiguous (`alpha_sn_cov_compare`, the `normalized_nz_*`
+    catalogue parses) are left alone.
+    """
+    d = _THIS_DIR / "plots"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def mlflow_tracking_dir(analysis: str) -> str:
     """Filesystem path of the per-analysis MLflow store.
 

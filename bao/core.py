@@ -193,6 +193,69 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
     return z_mid, np.column_stack([z_lo, z_hi]), frac, nbar_file
 
 
+# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), by tracer type.
+# These are DESI's DR1 analysis choices (KP3 / Adame+24), not free parameters:
+# the weight definition is part of how the published measurements — and their
+# quoted z_eff — are constructed.
+_FKP_P0_BY_TYPE = {
+    "BGS": 7.0e3,
+    "LRG": 1.0e4,
+    "ELG": 4.0e3,
+    "QSO": 6.0e3,
+    "MIX": 1.0e4,      # LRG3+ELG1 combined bin; LRG dominates the pair count
+}
+_FKP_P0_FALLBACK = 1.0e4
+
+# Which z_eff definition the pipeline reports. See _compute_z_eff_from_nz.
+#   "desi_fkp"    DESI's pair/FKP-weighted mean redshift  (default)
+#   "fisher_veff" V_eff-weighted, i.e. the FKP weight SQUARED (pre-2026-07-31)
+Z_EFF_CONVENTION = "desi_fkp"
+
+
+def _fkp_p0_for_tracer(tracer_bin: str) -> float:
+    """FKP pivot for a tracer bin, keyed by its tracers.yaml tracer_type."""
+    ttype = str(get_tracer_config(tracer_bin).get("tracer_type", "")).strip()
+    return _FKP_P0_BY_TYPE.get(ttype, _FKP_P0_FALLBACK)
+
+
+def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float) -> float:
+    """DESI's effective redshift: the FKP-weighted mean over galaxies.
+
+    DESI quotes z_eff as a pair-weighted mean,
+
+        z_eff = Σ_ij w_i w_j (z_i + z_j)/2  /  Σ_ij w_i w_j,
+
+    which for unrestricted pairs collapses to the single-galaxy weighted mean
+    Σ_i w_i z_i / Σ_i w_i. In slice form, with N_i = n̄_i V_i galaxies in slice
+    i and the FKP weight w_i = 1/(1 + n̄_i P_0):
+
+        z_eff = Σ_i z_i N_i w_i / Σ_i N_i w_i.
+
+    Note the weight enters LINEARLY, where V_eff carries it squared. That one
+    power is the entire difference from the previous convention, and it only
+    matters where n̄P << 1 across a wide bin -- i.e. QSO, which moved by 10%.
+    Reproduces DESI's published z_eff to ~1% on every DR1 tracer and to 0.2%
+    on QSO; the old convention was 10.3% low there.
+    """
+    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
+    if z_mid.size == 0:
+        raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
+
+    chi_lo = np.array([float(cosmo.comoving_radial_distance(z))
+                       for z in z_edges[:, 0]])
+    chi_hi = np.array([float(cosmo.comoving_radial_distance(z))
+                       for z in z_edges[:, 1]])
+    sky_frac = float(area_deg2) / 41252.96
+    V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
+
+    nbar = np.asarray(nbar_file, dtype=np.float64)
+    w = nbar * V_bin / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
+    if w.sum() <= 0.0:
+        # Degenerate n̄ (e.g. nbar_file all zero); V-weighted mean.
+        return float(np.sum(V_bin * z_mid) / np.sum(V_bin))
+    return float(np.sum(z_mid * w) / np.sum(w))
+
+
 def _compute_z_eff_from_nz(
     tracer_bin: str,
     cosmo,
@@ -201,7 +264,14 @@ def _compute_z_eff_from_nz(
     b1: float,
     k_pivot: float = 0.14,
 ) -> float:
-    """Fisher-info-weighted effective redshift from the n(z) slices.
+    """Effective redshift from the n(z) slices.
+
+    Dispatches on `Z_EFF_CONVENTION`. The default is DESI's FKP-weighted
+    definition (`_desi_z_eff_from_nz`), which ignores `fo`, `b1` and
+    `k_pivot` -- they are kept in the signature because the V_eff convention
+    below still needs them and the call sites are shared.
+
+    The V_eff convention, retained for regression comparison:
 
     z_eff = Σᵢ zᵢ Vᵢ_eff / Σᵢ Vᵢ_eff,    Vᵢ_eff = Vᵢ × (nᵢ Pᵢ / (1 + nᵢ Pᵢ))²
 
@@ -217,7 +287,17 @@ def _compute_z_eff_from_nz(
     a slowly-varying overall prefactor that does not change the weighted mean.
 
     k_pivot ≈ √2/Σ_silk ≈ 0.14 h/Mpc is the BAO Fisher kernel peak.
+
+    That convention answers "where does this bin's constraining power sit",
+    which is the right weighting for V_eff itself -- and V_eff still uses it.
+    It is the wrong weighting for the redshift a measurement is REPORTED at,
+    because DESI's compressed parameters are defined at their z_eff.
     """
+    if Z_EFF_CONVENTION == "desi_fkp":
+        return _desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2)
+    if Z_EFF_CONVENTION != "fisher_veff":
+        raise ValueError(f"Unknown Z_EFF_CONVENTION {Z_EFF_CONVENTION!r}")
+
     z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
@@ -1234,9 +1314,13 @@ def build_bao_likelihood(
     fo = cosmo.get_fourier()
 
     if z_eff is None:
-        # Cosmology-clean: derive z_eff from the (data-only) n(z) slices and
-        # the BAO-Fisher-info weight V × (nP/(1+nP))² per slice. Falls back to
+        # Cosmology-clean: derive z_eff from the (data-only) n(z) slices with
+        # DESI's FKP-weighted definition, n̄V/(1+n̄P₀) per slice. Falls back to
         # the yaml cfg value only if the slices file is missing/empty.
+        #
+        # Reached only when the caller leaves z_eff unset — the Fourier path.
+        # config_space always passes it explicitly, because there z_eff is
+        # pinned by the DESI bundle's window and covariance (§36).
         try:
             z_eff = _compute_z_eff_from_nz(
                 tracer_bin=tracer_bin,

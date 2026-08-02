@@ -1,4 +1,6 @@
 *.png
+# all diagnostic figures land here (util.plots_dir); regenerable
+plots/
 *.csv
 __pycache__/
 *.egg-info/

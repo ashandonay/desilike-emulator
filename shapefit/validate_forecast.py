@@ -45,7 +45,7 @@ import numpy as np
 
 import fourier_space
 from fourier_space import sf_core
-from util import TRACER_TYPE_CHOICES, ntracers, ntracers_range
+from util import TRACER_TYPE_CHOICES, ntracers, ntracers_range, plots_dir
 
 TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
@@ -127,7 +127,7 @@ def check_scaling(tracers) -> None:
         print(f"  {tracer}: sigma_qiso {sigmas['sigma_qiso'][0]:.4f} -> "
               f"{sigmas['sigma_qiso'][-1]:.4f} over N=[{lo:.3g}, {hi:.3g}]")
     fig.tight_layout()
-    out_png = "scaling_vs_ntracers_shapefit.png"
+    out_png = plots_dir() / "shapefit_scaling_vs_ntracers.png"
     fig.savefig(out_png, dpi=140)
     print(f"  wrote {out_png}")
     if failures:

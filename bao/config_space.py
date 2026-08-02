@@ -88,10 +88,36 @@ _BUNDLES = {
 # ===========================================================================
 # §1  Bundle I/O + broadband basis  (↔ observable/BB setup in build_bao_likelihood)
 # ===========================================================================
+def _assert_bundle_zeff(tracer, z_bundle):
+    """The yaml z_eff must equal the bundle's.
+
+    Config space PINS z_eff from tracers.yaml (every build_bao_likelihood call
+    here passes it explicitly) rather than deriving it, and that is deliberate:
+    the bundle ships DESI's measured window matrix and covariance for one
+    sample, which are only self-consistent with a theory evaluated at that
+    sample's z_eff. Deriving z_eff here — as the Fourier path correctly does,
+    since it builds its own analytic covariance — would evaluate the theory at
+    one redshift against a window measured at another.
+
+    The two silently disagreed until 2026-07-31: the yaml carried DESI's DR2
+    values (LRG3+ELG1 0.934, ELG2 1.321, QSO 1.484) against DR1 bundles
+    (0.930, 1.317, 1.491). Small, but exactly the kind of drift that is
+    invisible until it is expensive, so it is now an assertion.
+    """
+    z_cfg = float(TRACER_CONFIGS[tracer]["z_eff"])
+    if abs(z_cfg - float(z_bundle)) > 1e-3:
+        raise ValueError(
+            f"z_eff mismatch for {tracer}: tracers.yaml has {z_cfg}, the DESI "
+            f"bundle was measured at {z_bundle}. Config space pins the yaml "
+            f"value, so these must agree — update tracers.yaml to the bundle's "
+            f"release, or point _BUNDLES at the matching release.")
+
+
 def load_bundle(tracer):
     """Load a DESI correlation-recon-poles bundle: cov, window W, observable
     (ells/s/data) and theory (ells/s) grids."""
     fname, z = _BUNDLES[tracer]
+    _assert_bundle_zeff(tracer, z)
     with h5py.File(_LIK_DIR / fname, "r") as f:
         cov = np.asarray(f["covariance/value"][...])
         W = np.asarray(f["window/value"][...])

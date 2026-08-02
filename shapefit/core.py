@@ -389,13 +389,23 @@ def _fs_compute_z_eff(
     area_deg2: float,
     b1: float,
 ) -> float:
-    """Fisher-info-weighted effective redshift from the n(z) slices.
+    """Effective redshift from the n(z) slices.
+
+    Dispatches on bao_core.Z_EFF_CONVENTION, so the FS and BAO pipelines
+    cannot drift apart on this. Under the default ("desi_fkp") the FS-specific
+    band averaging is irrelevant -- DESI's weight uses a fixed FKP pivot, not
+    P(k) -- so this delegates and `fo`/`b1` go unused.
+
+    The retained V_eff convention ("fisher_veff"):
 
     z_eff = sum_i z_i V_i_eff / sum_i V_i_eff with
     V_i_eff = V_i x <(n_i P_i(k)/(1+n_i P_i(k)))^2>_band, the FKP weight
     band-averaged over the FS kernel (clone of bao_core._compute_z_eff_from_nz
     but band-averaged instead of the single BAO pivot k=0.14).
     """
+    if bao_core.Z_EFF_CONVENTION == "desi_fkp":
+        return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2)
+
     z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(tracer_bin)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
