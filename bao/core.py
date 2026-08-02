@@ -198,25 +198,30 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
 # These are DESI's DR1 analysis choices (KP3 / Adame+24), not free parameters:
 # the weight definition is part of how the published measurements — and their
 # quoted z_eff — are constructed.
-_FKP_P0_BY_TYPE = {
-    "BGS": 7.0e3,
-    "LRG": 1.0e4,
-    "ELG": 4.0e3,
-    "QSO": 6.0e3,
-    "MIX": 1.0e4,      # LRG3+ELG1 combined bin; LRG dominates the pair count
-}
-_FKP_P0_FALLBACK = 1.0e4
-
 # Which z_eff definition the pipeline reports. See _compute_z_eff_from_nz.
-#   "desi_fkp"    DESI's pair/FKP-weighted mean redshift  (default)
-#   "fisher_veff" V_eff-weighted, i.e. the FKP weight SQUARED (pre-2026-07-31)
-Z_EFF_CONVENTION = "desi_fkp"
+#   "desi_eq21"   DESI 2024 III Eq. (2.1): weight (n̄ w_FKP)^2 V   (default)
+#   "desi_fkp"    linear FKP weight, n̄ V w_FKP        (§36; WRONG power)
+#   "fisher_veff" FKP squared but with the z-DEPENDENT P_g(k,z)  (pre-§36)
+Z_EFF_CONVENTION = "desi_eq21"
 
 
 def _fkp_p0_for_tracer(tracer_bin: str) -> float:
-    """FKP pivot for a tracer bin, keyed by its tracers.yaml tracer_type."""
-    ttype = str(get_tracer_config(tracer_bin).get("tracer_type", "")).strip()
-    return _FKP_P0_BY_TYPE.get(ttype, _FKP_P0_FALLBACK)
+    """FKP pivot P0(k=0.14) for a tracer BIN, from tracers.yaml.
+
+    Per BIN, not per tracer_type: DESI 2024 III Table 2 gives LRG1 and LRG2
+    8.9e3 but LRG3 8.4e3, so a type-keyed lookup cannot represent them. The
+    values are DESI's own, "rounded numbers taken from the DR1 P0(k)
+    measurements" at k = 0.14 h/Mpc.
+    """
+    cfg = get_tracer_config(tracer_bin)
+    p0 = cfg.get("fkp_p0")
+    if p0 is None:
+        raise KeyError(
+            f"tracers.yaml entry for {tracer_bin!r} has no `fkp_p0`. It is "
+            "DESI 2024 III Table 2's P0(k=0.14) and there is no safe default "
+            "-- a wrong pivot silently biases z_eff."
+        )
+    return float(p0)
 
 
 def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
@@ -239,7 +244,41 @@ def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
 
 def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
                         n_tracers=None, dataset: str = "dr1") -> float:
-    """DESI's effective redshift: the FKP-weighted mean over galaxies.
+    """DESI's effective redshift, DESI 2024 III Eq. (2.1).
+
+    Verbatim from arXiv:2404.03000 S2.2: "The z_eff values are calculated
+    weighting by the square of the weighted number density of randoms (with
+    the weights -- including FKP -- described above), n_ran(z):
+
+        z_eff = INT r^2 dr z n_ran^2(z) / INT r^2 dr n_ran^2(z)      (2.1)
+
+    where r is the comoving distance to the redshift z."
+
+    No pair sum, no separation restriction -- an integral over the SQUARED
+    weighted random density. With n_ran = n̄ w_FKP, w_FKP = 1/(1 + n̄ P_0):
+
+        z_eff = Σ_i z_i (n̄_i w_i)^2 V_i / Σ_i (n̄_i w_i)^2 V_i.
+
+    Equivalently the V_eff-weighted mean: Eq. (2.2) weights V_eff by
+    (n̄P_0/(1+n̄P_0))^2, which differs only by the constant P_0^2 -- and a
+    constant cancels in a weighted mean.
+
+    Both earlier conventions were wrong, in opposite ways:
+      - `fisher_veff` (pre-S36) squared the weight correctly but used the
+        z-DEPENDENT P_g(k,z) = b1^2 P_lin(k,z) instead of the constant pivot.
+      - `desi_fkp` (S36) fixed the pivot but DROPPED the square, on a
+        pair-weighting argument whose collapse to a single-galaxy mean
+        assumes every galaxy has the same number of partners.
+
+    Max |err| against DESI's published z_eff over the six DR1 bins:
+
+        fisher_veff  10.3%  (QSO)
+        desi_fkp      2.28% (LRG3)
+        desi_eq21     0.65% (ELG2)
+
+    The residual is most likely the n(z) input: Eq. (2.1) uses the WEIGHTED
+    random density (completeness and systematics included) where our slice
+    files carry raw n̄. The same form on DESI's own randoms lands tighter.
 
     z_eff DEPENDS ON N_tracers, and the dependence does not cancel. Scaling
     n̄ -> alpha*n̄ leaves w_i = alpha*n̄_i V_i / (1 + alpha*n̄_i P₀), and alpha
@@ -269,22 +308,6 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     the number-weighted mean sits ABOVE the volume-weighted one.
 
     Pass n_tracers=None to evaluate at the dataset's own density.
-
-    DESI quotes z_eff as a pair-weighted mean,
-
-        z_eff = Σ_ij w_i w_j (z_i + z_j)/2  /  Σ_ij w_i w_j,
-
-    which for unrestricted pairs collapses to the single-galaxy weighted mean
-    Σ_i w_i z_i / Σ_i w_i. In slice form, with N_i = n̄_i V_i galaxies in slice
-    i and the FKP weight w_i = 1/(1 + n̄_i P_0):
-
-        z_eff = Σ_i z_i N_i w_i / Σ_i N_i w_i.
-
-    Note the weight enters LINEARLY, where V_eff carries it squared. That one
-    power is the entire difference from the previous convention, and it only
-    matters where n̄P << 1 across a wide bin -- i.e. QSO, which moved by 10%.
-    Reproduces DESI's published z_eff to ~1% on every DR1 tracer and to 0.2%
-    on QSO; the old convention was 10.3% low there.
     """
     z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
     if z_mid.size == 0:
@@ -299,7 +322,9 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
 
     nbar = (np.asarray(nbar_file, dtype=np.float64)
             * _nz_scale_factor(tracer_bin, n_tracers, dataset))
-    w = nbar * V_bin / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
+    # Eq. (2.1): weight by the SQUARE of the weighted number density.
+    n_weighted = nbar / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
+    w = n_weighted ** 2 * V_bin
     if w.sum() <= 0.0:
         # Degenerate n̄ (e.g. nbar_file all zero); V-weighted mean.
         return float(np.sum(V_bin * z_mid) / np.sum(V_bin))
@@ -350,7 +375,7 @@ def _compute_z_eff_from_nz(
     It is the wrong weighting for the redshift a measurement is REPORTED at,
     because DESI's compressed parameters are defined at their z_eff.
     """
-    if Z_EFF_CONVENTION == "desi_fkp":
+    if Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return _desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
                                    n_tracers=n_tracers, dataset=dataset)
     if Z_EFF_CONVENTION != "fisher_veff":

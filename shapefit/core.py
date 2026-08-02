@@ -394,7 +394,7 @@ def _fs_compute_z_eff(
     """Effective redshift from the n(z) slices.
 
     Dispatches on bao_core.Z_EFF_CONVENTION, so the FS and BAO pipelines
-    cannot drift apart on this. Under the default ("desi_fkp") the FS-specific
+    cannot drift apart on this. Under the default ("desi_eq21") the FS-specific
     band averaging is irrelevant -- DESI's weight uses a fixed FKP pivot, not
     P(k) -- so this delegates and `fo`/`b1` go unused.
 
@@ -405,7 +405,7 @@ def _fs_compute_z_eff(
     band-averaged over the FS kernel (clone of bao_core._compute_z_eff_from_nz
     but band-averaged instead of the single BAO pivot k=0.14).
     """
-    if bao_core.Z_EFF_CONVENTION == "desi_fkp":
+    if bao_core.Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
                                             n_tracers=n_tracers,
                                             dataset=dataset)
