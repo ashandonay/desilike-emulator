@@ -126,30 +126,41 @@ def _dump_covar(out: Dict[str, np.ndarray], tracer: str) -> None:
 
 def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
     """Mean-pipeline path: per-tracer extractor at the fiducial-cosmology
-    z_eff (the same convention generate_mean_data.py uses)."""
+    z_eff derived per sample, the same convention generate_mean_data.py uses."""
     fid_sample = _sample_for(COSMO_GRID[0])
     theta_fid = sf_core._to_shapefit_cosmo_params(fid_sample)
     from desilike.theories.primordial_cosmology import get_cosmo
 
     cosmo_fid = get_cosmo(("DESI", dict(theta_fid)))
     fo_fid = cosmo_fid.get_fourier()
-    from util import get_tracer_config
+    from util import get_tracer_config, ntracers
 
     cfg = get_tracer_config(tracer)
+    # Record the fiducial-cosmology, DR1-count z_eff as a diagnostic anchor
+    # only. Production no longer uses a single frozen z_eff (S42), so this is
+    # NOT the z the rows below are evaluated at -- passing z_eff=None makes the
+    # worker derive it per sample from that sample's cosmology AND N_tracers,
+    # which is what generate_mean_data.py does. Pinning it here would leave the
+    # harness blind to the very dependence S42 added.
     try:
         z_eff = sf_core._fs_compute_z_eff(
             tracer_bin=tracer, cosmo=cosmo_fid, fo=fo_fid,
             area_deg2=_AREA, b1=float(cfg.get("bias_recon", 2.0)),
+            n_tracers=ntracers(tracer, "dr1"), dataset="dr1",
         )
     except (FileNotFoundError, ValueError):
         z_eff = float(cfg["z_eff"])
     _record(out, f"mean/{tracer}/z_eff", z_eff)
 
+    N_fid = float(ntracers(tracer, "dr1"))
     for row in COSMO_GRID:
-        label = row[0]
-        sample = _sample_for(row)
+        label, N_factor = row[0], row[8]
+        # N_tracers is a mean-emulator INPUT since S42 and it moves z_eff, so
+        # the grid's lowN/highN rows must reach the mean dump too -- otherwise
+        # the golden pins a dependence it never exercises.
+        sample = {**_sample_for(row), "N_tracers": N_factor * N_fid}
         _s, vals, tb = fourier_space._worker_run_mean_targets(
-            (sample, tracer, z_eff, None)
+            (sample, tracer, None, None, _AREA, "dr1")
         )
         if vals is None:
             raise RuntimeError(f"mean extractor failed for {tracer}/{label}:\n{tb}")
