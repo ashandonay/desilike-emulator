@@ -382,7 +382,8 @@ def check_mean_ap(tracers) -> None:
 
     def _run(sample, tracer, z):
         _s, vals, err = fourier_space._worker_run_mean_targets(
-            (sample, tracer, z, sf_core.PARAM_DEFAULTS))
+            (sample, tracer, z, sf_core.PARAM_DEFAULTS,
+             float(sf_core.dataset_area("dr1")), "dr1"))
         if vals is None:
             raise RuntimeError(f"{tracer}: mean worker failed\n{err}")
         return float(vals[0]), float(vals[1])
@@ -394,10 +395,14 @@ def check_mean_ap(tracers) -> None:
     for t in tracers:
         cosmo = DESI()
         cfg = get_tracer_config(t, analysis="shapefit", dataset="dr1")
+        # Must pass N_tracers: z_eff depends on it (S42), and the fiducial
+        # row below asserts q == 1 at the DR1 count, so the z used here has
+        # to be the z the worker would derive for that same sample.
         z = sf_core._fs_compute_z_eff(
             tracer_bin=t, cosmo=cosmo, fo=cosmo.get_fourier(),
             area_deg2=float(sf_core.dataset_area("dr1")),
-            b1=float(cfg.get("bias_recon", 2.0)))
+            b1=float(cfg.get("bias_recon", 2.0)),
+            n_tracers=ntracers(t, "dr1"), dataset="dr1")
 
         qiso, qap = _run(dict(FID_SAMPLE), t, z)
         dev = max(abs(qiso - 1.0), abs(qap - 1.0))

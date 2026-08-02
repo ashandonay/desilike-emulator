@@ -48,6 +48,7 @@ from util import (
     TRACER_CONFIGS,
     get_tracer_config,
     latin_hypercube_samples,
+    ntracers,
 )
 
 warnings.filterwarnings("default")
@@ -218,8 +219,56 @@ def _fkp_p0_for_tracer(tracer_bin: str) -> float:
     return _FKP_P0_BY_TYPE.get(ttype, _FKP_P0_FALLBACK)
 
 
-def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float) -> float:
+def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
+    """alpha = N_tracers / N_dataset, the uniform rescaling of n(z).
+
+    The n(z) slice files record the DESI sample at its own size, so forecasting
+    a different N means the density everywhere scales by this factor. Uniform
+    scaling holds the SHAPE of n(z) fixed; realistically deeper observation
+    also shifts the shape (more high-z objects), so this is the conservative
+    model. Returns 1.0 when n_tracers is None, which restores the old
+    file-density behaviour exactly.
+    """
+    if n_tracers is None:
+        return 1.0
+    ref = float(ntracers(tracer_bin, dataset))
+    if not np.isfinite(ref) or ref <= 0.0:
+        return 1.0
+    return float(n_tracers) / ref
+
+
+def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
+                        n_tracers=None, dataset: str = "dr1") -> float:
     """DESI's effective redshift: the FKP-weighted mean over galaxies.
+
+    z_eff DEPENDS ON N_tracers, and the dependence does not cancel. Scaling
+    n̄ -> alpha*n̄ leaves w_i = alpha*n̄_i V_i / (1 + alpha*n̄_i P₀), and alpha
+    fails to factor out because slices at different densities respond
+    differently. The two limits are both alpha-independent:
+
+        n̄P << 1  ->  w -> alpha*n̄V,  alpha cancels  ->  NUMBER-weighted mean
+        n̄P >> 1  ->  w -> V/P₀,      n̄ drops out    ->  VOLUME-weighted mean
+
+    so z_eff slides between them as N changes. Physically: adding galaxies
+    saturates the dense slices first (they cross into n̄P >> 1 and stop gaining
+    weight, since extra galaxies where you already have plenty add little
+    information) while sparse slices keep gaining, so weight migrates toward
+    the sparse end.
+
+    The effect is therefore largest where the bin STRADDLES n̄P ~ 1, not where
+    the bin is widest. Measured over the emulator box [0.5, 1.5] x N_dr1:
+
+        LRG3  n̄P 0.70-5.66 (crosses 1)   +1.22%    <- largest
+        ELG2  n̄P 0.89-2.15               +0.67%
+        BGS   n̄P 4.02-5.18               +0.36%
+        QSO   n̄P 0.15-0.22               +0.10%    <- widest bin, deep in the
+        LRG1  n̄P 5.12-5.46               -0.02%       shot-noise limit, so
+        LRG2  n̄P 5.08-5.74               -0.01%       alpha nearly cancels
+
+    LRG1/LRG2 move the other way because their n(z) rises across the bin, so
+    the number-weighted mean sits ABOVE the volume-weighted one.
+
+    Pass n_tracers=None to evaluate at the dataset's own density.
 
     DESI quotes z_eff as a pair-weighted mean,
 
@@ -248,7 +297,8 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float) -> float:
     sky_frac = float(area_deg2) / 41252.96
     V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
 
-    nbar = np.asarray(nbar_file, dtype=np.float64)
+    nbar = (np.asarray(nbar_file, dtype=np.float64)
+            * _nz_scale_factor(tracer_bin, n_tracers, dataset))
     w = nbar * V_bin / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
     if w.sum() <= 0.0:
         # Degenerate n̄ (e.g. nbar_file all zero); V-weighted mean.
@@ -263,6 +313,8 @@ def _compute_z_eff_from_nz(
     area_deg2: float,
     b1: float,
     k_pivot: float = 0.14,
+    n_tracers=None,
+    dataset: str = "dr1",
 ) -> float:
     """Effective redshift from the n(z) slices.
 
@@ -270,6 +322,11 @@ def _compute_z_eff_from_nz(
     definition (`_desi_z_eff_from_nz`), which ignores `fo`, `b1` and
     `k_pivot` -- they are kept in the signature because the V_eff convention
     below still needs them and the call sites are shared.
+
+    `n_tracers` rescales n(z) (see `_nz_scale_factor`); None evaluates at the
+    dataset's own density. BOTH conventions carry the dependence -- the V_eff
+    weight is the same FKP factor squared, so it has the same two
+    alpha-independent limits and the same sliding in between.
 
     The V_eff convention, retained for regression comparison:
 
@@ -294,7 +351,8 @@ def _compute_z_eff_from_nz(
     because DESI's compressed parameters are defined at their z_eff.
     """
     if Z_EFF_CONVENTION == "desi_fkp":
-        return _desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2)
+        return _desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
+                                   n_tracers=n_tracers, dataset=dataset)
     if Z_EFF_CONVENTION != "fisher_veff":
         raise ValueError(f"Unknown Z_EFF_CONVENTION {Z_EFF_CONVENTION!r}")
 
@@ -314,7 +372,8 @@ def _compute_z_eff_from_nz(
         pk = _linear_pk_1d(fo, z=float(z))
         P_g[i] = float(b1) ** 2 * float(pk(np.array([k_pivot]))[0])
 
-    nP = np.asarray(nbar_file, dtype=np.float64) * P_g
+    nP = (np.asarray(nbar_file, dtype=np.float64)
+          * _nz_scale_factor(tracer_bin, n_tracers, dataset)) * P_g
     fkp_sq = (nP / (1.0 + nP)) ** 2
     V_eff_per_slice = V_bin * fkp_sq
 
@@ -1268,6 +1327,7 @@ def build_bao_likelihood(
     area: float = 14000.0,
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
+    dataset: str = "dr1",
     override_sigmas: Tuple[float, float] | None = None,
     n_iter: int = 1,
     include_fog: bool = True,
@@ -1328,6 +1388,13 @@ def build_bao_likelihood(
                 fo=fo,
                 area_deg2=float(area),
                 b1=float(cfg.get("bias_recon", 2.0)),
+                # z_eff moves with the sample size: the FKP weight is not
+                # linear in n̄, so alpha does not cancel (see
+                # _desi_z_eff_from_nz). Deriving it at the file density while
+                # forecasting a different N was internally inconsistent --
+                # the V_eff -> n_eff root-find below already uses N.
+                n_tracers=float(N_tracers),
+                dataset=dataset,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])
@@ -1974,6 +2041,7 @@ def compute_pipeline_sigmas(
     area: float = 14000.0,
     n_iter: int = 1,
     include_fog: bool = True,
+    dataset: str = "dr1",
 ) -> Tuple[float, float]:
     """Return (sigma_perp_post, sigma_par_post) computed by the pipeline for this sample."""
     if param_defaults:
@@ -1997,6 +2065,8 @@ def compute_pipeline_sigmas(
                 fo=fo,
                 area_deg2=float(area),
                 b1=float(cfg.get("bias_recon", 2.0)),
+                n_tracers=float(N_tracers),
+                dataset=dataset,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])

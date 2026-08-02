@@ -161,7 +161,7 @@ def load_training(version: str, dataset: str = "dr1",
     return out, names
 
 
-def _binned(xr, y, nbins=10):
+def _binned(xr, y, nbins=6):
     """Median and 16-84 band of y in nbins log-spaced bins of xr."""
     edges = np.geomspace(xr.min(), xr.max() * (1 + 1e-9), nbins + 1)
     idx = np.clip(np.digitize(xr, edges) - 1, 0, nbins - 1)
@@ -226,18 +226,19 @@ def figure_fiducial(sweep, names, out_png):
     print(f"  wrote {out_png}")
 
 
-def figure_training(train, names, out_png, version):
+def figure_training(train, names, out_png, version, nbins=6):
     import matplotlib.pyplot as plt
     fig, axarr = _grid(
         names,
         f"ShapeFit covar training set {version} — targets vs "
         r"$N_{\rm tracers}$, marginalised over the 5-parameter cosmology "
-        "prior (median, 16–84%)")
+        "prior (median, 16–84%). Band width = label spread N_tracers does "
+        "NOT explain.")
     for tracer, (N, y) in train.items():
         xr = N / ntracers(tracer, "dr1")
         c = TRACER_COLOR[tracer]
         for i, name in enumerate(names):
-            xc, med, lo, hi = _binned(xr, y[:, i])
+            xc, med, lo, hi = _binned(xr, y[:, i], nbins)
             if xc.size == 0:
                 continue
             axarr[i].fill_between(xc, lo, hi, color=c, alpha=0.16, lw=0)
@@ -260,6 +261,8 @@ def main():
     p.add_argument("--workers", type=int, default=12)
     p.add_argument("--version", default="v100",
                    help="covar training-set version for the training figure.")
+    p.add_argument("--nbins", type=int, default=6,
+                   help="N_tracers bins for the training-set medians.")
     args = p.parse_args()
 
     pd = plots_dir()
@@ -279,7 +282,7 @@ def main():
     if args.figure in ("training", "both"):
         train, names = load_training(args.version)
         figure_training(train, names, pd / "shapefit_ntracers_training.png",
-                        args.version)
+                        args.version, args.nbins)
 
 
 if __name__ == "__main__":

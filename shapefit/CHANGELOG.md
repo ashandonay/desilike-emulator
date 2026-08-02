@@ -2701,3 +2701,117 @@ Verified by negative test: perturbing the recorded `h` to 0.68 fails with
   pinned: desilike 4cfd6bec, cosmoprimo 1b100803). Declared as the `dev`
   optional-dependency; no pipeline needs it.
 - Still no CI. The test runs on demand.
+
+## §42 — z_eff depends on N_tracers (and on cosmology): both pipelines fixed
+
+Prompted by a direct question: should the mean values depend on N_tracers?
+They should, and neither pipeline was doing it.
+
+### Why N moves z_eff at all
+
+The FKP weight is not linear in n̄. With `w_i = n̄_i V_i / (1 + n̄_i P₀)`,
+scaling n̄ -> alpha·n̄ leaves alpha in place, because slices at different
+densities respond differently. Both limits ARE alpha-independent:
+
+    n̄P << 1  ->  w -> alpha·n̄V,  alpha cancels  ->  NUMBER-weighted mean
+    n̄P >> 1  ->  w -> V/P₀,      n̄ drops out    ->  VOLUME-weighted mean
+
+so z_eff slides between them. Adding galaxies saturates the dense slices first
+(they cross into n̄P >> 1 and stop gaining weight -- extra galaxies where you
+already have plenty add little information) while sparse slices keep gaining,
+so weight migrates toward the sparse end.
+
+The effect is therefore largest where the bin STRADDLES n̄P ~ 1, NOT where the
+bin is widest:
+
+    tracer   n̄P range      spread   dz over [0.5, 1.5] x N_dr1
+    LRG3     0.70-5.66      8.0x       +1.22%   <- only one crossing n̄P = 1
+    ELG2     0.89-2.15      2.4x       +0.67%
+    BGS      4.02-5.18      1.3x       +0.36%
+    QSO      0.15-0.22      1.5x       +0.10%   <- WIDEST bin (dz = 1.3), but
+    LRG1     5.12-5.46      1.1x       -0.02%      uniformly shot-noise
+    LRG2     5.08-5.74      1.1x       -0.01%      limited, so alpha cancels
+
+QSO is the instructive case: Δz = 1.3 and almost no N-sensitivity, because
+n̄P ≈ 0.2 everywhere. LRG3 has Δz = 0.3 and moves twelve times more.
+LRG1/LRG2 move the other way because their n(z) RISES across the bin, putting
+the number-weighted mean above the volume-weighted one.
+
+### Three treatments, none of which agreed
+
+    pipeline    cosmology dep.        N dep.
+    mean        FROZEN at fiducial    none
+    covar       per sample            none
+    correct     yes                   yes
+
+The covar path took `N_tracers`, did the V_eff -> n_eff root-find with it, and
+then computed z_eff from the unscaled file density -- internally inconsistent.
+The mean path froze z_eff entirely, so mu and C of the SAME per-tracer Gaussian
+likelihood were evaluated at different redshifts. Cosmology dependence across
+the prior box, which the mean was discarding:
+
+    BGS  -0.74%..+0.65%   LRG1 -0.19%..+0.19%   LRG2 -0.11%..+0.12%
+    LRG3 -0.13%..+0.16%   ELG2 -0.16%..+0.21%   QSO  -0.84%..+1.08%
+
+Note these are COMPLEMENTARY to the N effect: N dominates for LRG3, cosmology
+for QSO and BGS. Neither is negligible relative to the other.
+
+### Changes
+
+`bao/core.py`: `_nz_scale_factor(tracer_bin, n_tracers, dataset)` returning
+alpha = N/N_dataset; `_desi_z_eff_from_nz` and the `fisher_veff` branch both
+apply it; `n_tracers`/`dataset` threaded through `_compute_z_eff_from_nz` and
+both call sites (`build_bao_likelihood`, `compute_pipeline_sigmas`).
+`n_tracers=None` restores the old behaviour exactly.
+
+`shapefit/core.py`: same through `_fs_compute_z_eff`.
+
+`shapefit/fourier_space.py`: the mean worker derives z_eff per sample from
+cosmology + N_tracers. Extractor cache quantized to 1e-4 in z with FIFO
+eviction at 16 entries -- per-sample z_eff would otherwise never hit the cache
+AND grow without bound, and the mean path already holds ~0.5 GB RSS/worker.
+Quantization is 0.01% in z -> ~0.002% in f_sigmar, three orders under the
+emulator's own median error.
+
+`shapefit/generate_mean_data.py`: **N_tracers is now a mean-emulator input**,
+bounds from `ntracers_range` (never hardcoded, bao S33n). `--z-eff` still pins.
+
+### Measured impact
+
+Mean labels, over [0.5, 1.5] x N_dr1 at the fiducial cosmology:
+
+    LRG3  f_sigmar 0.438254 -> 0.436993   (-0.29%)
+    QSO   f_sigmar 0.374710 -> 0.374546   (-0.04%)
+
+qiso and qap stay EXACTLY 1 regardless of N, as the ratio structure requires
+(same z top and bottom). So the whole N-dependence of the mean lands on
+f_sigmar, and m at the 1e-7 level.
+
+Covar sigmas move as expected with the corrected z_eff; LRG3 z_eff now tracks
+N (0.9324 / 0.9399 / 0.9439 at 0.5/1.0/1.5 x N_dr1).
+
+### Why this is worth the interface change
+
+All of it is <=0.3% on f_sigmar against DESI's 4-10% sigma, so it invalidates
+nothing. The reason to fix rather than document is that the N piece varies
+ALONG THE DESIGN AXIS. A constant bias cancels when bedcosmo compares two N
+values; an N-dependent one does not, and comparing N values is the entire
+question the emulator exists to answer.
+
+### Consequences
+
+- Goldens invalidated (bit-exact) -- both bao and shapefit. Regenerate.
+- shapefit mean training data must be regenerated with the new input vector;
+  covar too (already pending from the §36 z_eff convention change, so this
+  costs one regen rather than two).
+- bedcosmo: the mean emulator's input vector gains N_tracers, so models.yaml
+  and `_build_emulator_input`'s whitelist need it. NOT yet done.
+- bao Fourier sigmas change; bao CONFIG SPACE IS UNAFFECTED, since it pins
+  z_eff to the DESI bundle and never reaches this path. Production BAO for
+  bedcosmo is config space, so it is insulated.
+
+### Caveat on the model
+
+"More tracers = uniform rescaling of n(z)" holds the SHAPE fixed. Realistically
+deeper observation also shifts the shape (more high-z objects), which would
+move z_eff further. The numbers above are the conservative version.

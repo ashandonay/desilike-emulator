@@ -1,6 +1,6 @@
 """Parallel generator of ShapeFit mean-emulator training data.
 
-Maps emulator INPUTS  (cosmology θ, omega basis — no N_tracers)
+Maps emulator INPUTS  (cosmology θ, omega basis, + N_tracers)
   to emulator OUTPUTS (qiso, qap, f_sigmar, m)
 
 via desilike's ShapeFitPowerSpectrumExtractor at the tracer's effective
@@ -9,11 +9,12 @@ side of the per-tracer ShapeFit Gaussian likelihood in bedcosmo (which has
 no differentiable f_sigmar/m of its own); the "covar" side is
 generate_covar_data.py.
 
-Per-tracer because z_eff differs per tracer. z_eff is computed ONCE at the
-DESI fiducial cosmology with the FS Fisher weight (the extractor's z is an
-init-time argument; the residual cosmology dependence of z_eff enters the
-labels only through slowly-varying volume weights — documented approximation;
---z-eff overrides for sensitivity checks).
+Per-tracer because z_eff differs per tracer. z_eff is derived PER SAMPLE from
+that sample's cosmology and N_tracers -- neither dependence cancels, and
+freezing it also left mu and C evaluated at different redshifts within one
+Gaussian likelihood (CHANGELOG S42). N_tracers is an emulator input for this
+reason: the compressed parameters are DEFINED at z_eff, so the predicted mean
+depends on the sample size. --z-eff pins it for sensitivity checks.
 
 Usage (from shapefit/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
@@ -41,6 +42,7 @@ from util import (
     TRACER_TYPE_CHOICES,
     get_default_save_path,
     get_tracer_config,
+    ntracers_range,
     parse_priors,
     save_dataset,
 )
@@ -126,6 +128,16 @@ def main() -> None:
     else:
         priors = {k: dict(DEFAULT_PRIORS[k]) for k in model_params}
 
+    # N_tracers is a mean-emulator INPUT: it moves z_eff, and the compressed
+    # parameters are defined AT z_eff, so the predicted mean genuinely depends
+    # on the sample size (shapefit CHANGELOG S42). Bounds always from
+    # ntracers_range -- never hardcoded (bao CHANGELOG S33n).
+    priors["N_tracers"] = {
+        "dist": "uniform",
+        "low": ntracers_range(args.tracer_bin, args.dataset)[0],
+        "high": ntracers_range(args.tracer_bin, args.dataset)[1],
+    }
+
     all_cosmo_keys = set(DEFAULT_PRIORS) - {"N_tracers"}
     fixed_keys = all_cosmo_keys - set(model_params)
     param_defaults = {k: PARAM_DEFAULTS[k] for k in fixed_keys if k in PARAM_DEFAULTS}
@@ -135,10 +147,13 @@ def main() -> None:
         if all(p in model_params for p in spec["params"])
     }
 
-    z_eff = args.z_eff if args.z_eff is not None else _fiducial_z_eff(
-        args.tracer_bin,
-        float(args.area) if args.area is not None
-        else sf_core.dataset_area(args.dataset))
+    area = (float(args.area) if args.area is not None
+            else sf_core.dataset_area(args.dataset))
+    # z_eff is NOT resolved here any more. It is derived per sample inside the
+    # worker from that sample's cosmology AND N_tracers, because neither
+    # dependence cancels (shapefit CHANGELOG S42). --z-eff still pins it for
+    # sensitivity checks.
+    z_eff = args.z_eff
 
     save_path = os.path.abspath(
         args.save_path if args.save_path else
@@ -147,7 +162,8 @@ def main() -> None:
     )
 
     worker_fn = fourier_space._worker_run_mean_targets
-    make_task = lambda s: (s, args.tracer_bin, z_eff, param_defaults)  # noqa: E731
+    make_task = lambda s: (s, args.tracer_bin, z_eff, param_defaults,  # noqa: E731
+                           area, args.dataset)
 
     print(f"Tracer bin: {args.tracer_bin}")
     print(f"Cosmo model: {cosmo_model} (varied: {model_params})")
@@ -155,8 +171,10 @@ def main() -> None:
         print(f"Fixed params: {param_defaults}")
     print("Using priors:", priors)
     print(f"Active constraints: {list(constraints.keys())}")
-    print(f"z_eff = {z_eff:.4f} "
-          f"({'pinned' if args.z_eff is not None else 'fiducial-derived'})")
+    if z_eff is not None:
+        print(f"z_eff = {z_eff:.4f} (PINNED via --z-eff)")
+    else:
+        print("z_eff = per-sample (cosmology + N_tracers)")
     print(f"Target: {sf_core.MEAN_TARGET_NAMES}")
     print("Writing dataset to:", save_path)
 
