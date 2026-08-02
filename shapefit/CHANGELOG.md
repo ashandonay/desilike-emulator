@@ -2520,8 +2520,32 @@ different cosmologies and every other check still passes.
 ratio built directly from cosmoprimo — the AP machinery in the regime the
 emulator is actually used in, which the plot cannot reach.
 
-All 18 rows pass. Deviation 4.6e-8 (BGS) to 1.3e-7 (QSO), rising with z; that
-is the `omega_cdm -> Omega_m -> omega_cdm` round trip, not a modelling error.
+All 18 rows pass. Deviation 4.6e-8 (BGS) to 1.3e-7 (QSO), rising with z.
+
+**What that floor is** (corrected — the first version of this entry blamed the
+`omega_cdm -> Omega_m -> omega_cdm` round trip, which is wrong; that mapping is
+exact). Interrogating the extractor at QSO:
+
+    parameters   h, n_s, N_ncdm, m_ncdm      rel = 0.000e+00  (bit-identical)
+    derived      rs_drag                     +1.05e-08
+                 comoving_angular_distance   -9.13e-08
+                 efunc                       +1.63e-07
+    engine       cosmoprimo.classy.ClassEngine on BOTH sides
+
+The parameters agree exactly, so the mapping is not the source. The floor is
+two separately-initialised CLASS instances — `self.fiducial` built once at
+`initialize`, `self.cosmo` run per call — requesting different outputs and
+therefore interpolating the background off different grids. `efunc` (read off
+the background table) is worst; `rs_drag` (a scalar thermo output) is best.
+That also explains the rise with z: the grid is coarser there. A parameter
+offset would not behave that way.
+
+Corollary: there is no meaningful difference in HOW numerator and denominator
+are computed. `BAOExtractor._set_base` is one function called twice, and line
+316 (`cosmo = self.fiducial if fiducial else self.cosmo`) is the only branch.
+Identical arithmetic, identical engine. The check is therefore an assertion
+about the cosmology handed in, and its noise floor is CLASS's interpolation
+reproducibility.
 
 Tolerances 1e-5 on both. Placed by negative test, not by taste: injecting the
 bug the check exists for (drop `omega_ncdm`, the legacy

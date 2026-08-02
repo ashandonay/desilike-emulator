@@ -217,8 +217,16 @@ def check_kmax(tracers) -> None:
     print("  depend on a regime where the model is known to be wrong.")
 
 
-# q = 1 should hold to machine precision; the residual ~1e-7 is the
-# omega_cdm -> Omega_m -> omega_cdm round trip in _to_mean_extractor_params.
+# q = 1 holds to ~1e-7, not to machine precision. That floor is NOT the
+# omega_cdm -> Omega_m -> omega_cdm round trip (measured: h, n_s, m_ncdm all
+# agree at exactly 0 relative error, so the mapping is exact). It is two
+# separately-initialised CLASS instances -- the fiducial built once at
+# extractor init, the calculator run per call -- requesting different outputs
+# and so interpolating the background off different grids. Measured at QSO:
+# rs_drag 1.0e-8, comoving_angular_distance 9.1e-8, efunc 1.6e-7, with the
+# same ClassEngine on both sides. Hence the rise with z: coarser grid, not a
+# growing physical discrepancy.
+#
 # 1e-5 is loose enough not to flag that and tight enough to catch the bug it
 # exists for: dropping omega_ncdm shifts omega_cdm by ~0.0006, which shows up
 # here at the 1e-4 level.
