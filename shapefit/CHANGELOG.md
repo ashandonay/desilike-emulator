@@ -2614,3 +2614,60 @@ above it, so the check bites at roughly the 0.05% level. Looser than q's 1e-5
 because the floor is, not because the requirement is weaker.
 
 24/24 rows pass.
+
+## §40 — Pin the fiducial in ABSOLUTE terms; ratios cannot see it move
+
+Closes the gap §38/§39 left open, and ends the fiducial-check thread.
+
+Every assertion in `check_mean_ap` is a ratio of the varying cosmology to the
+fiducial. Anything that moves BOTH sides together cancels exactly and passes:
+
+  - cosmoprimo repointing the `DESI` alias. It is literally an alias --
+    `DESI = AbacusSummitBase` (fiducial.py:264) -> `AbacusSummit(name='000')`
+    -- and the same module already ships `DESIDR2Flatw0waCDM` with materially
+    different values (Omega_m 0.3192, w0 -0.754, wa -0.857);
+  - a different Boltzmann engine;
+  - a different precision setting. `AbacusSummitBase` takes `precision=None`
+    and documents `precision='base'` as materially different.
+
+Any of those silently redefines every mean training label, because the labels
+ARE ratios to this object. This is not hypothetical: cosmoprimo was upgraded
+in place (1b100803), and we have already been burned once by trusting an
+upstream default, when `with_now='peakaverage'` mislabelled sigma ~2x.
+
+### Added: `validate_forecast.py --check fiducial-id`
+
+Recorded 2026-08-02 against cosmoprimo 1b100803:
+
+    omega_cdm 0.1200000000    n_s       0.9649000000   rs_drag 99.0844267934
+    omega_b   0.0223700000    m_ncdm    0.0599999193   sigma8   0.8076353990
+    h         0.6736000000    N_ncdm    1.0            engine  classy.ClassEngine
+    ln10A_s   3.0363942553    N_eff     3.0459982215
+    tau_reio  0.0544000000    w0/wa     -1.0 / 0.0
+
+Inputs at 1e-8 (definitional), derived scalars at 1e-6 (CLASS jitter, but
+tight enough that a precision or engine change shows). 14/14 pass at 1e-11 or
+better.
+
+### Known, not fixed: FID_SAMPLE carries a rounded ln10A_s
+
+`validate_forecast.FID_SAMPLE` has `ln10A_s = 3.036394`; cosmoprimo's DESI is
+`3.0363942553`. 8.4e-8 relative — two orders below the §39 shape floor, so
+nothing measurable, and it is NOT the source of any floor reported there.
+
+Deliberately not corrected: FID_SAMPLE feeds the bit-exact
+`np.array_equal` goldens, so a 1e-8 shift would break every one of them for no
+physical gain. Align it at the next golden regeneration, or leave it.
+
+### Where the fiducial actually comes from (the question that started this)
+
+  - mean extractor: `fiducial="DESI"` — a bare string, fully built-in, we pass
+    NOTHING. This is why q != 1 off-fiducial and the labels carry AP signal.
+  - covar template: `fiducial=("DESI", dict(theta_cosmo))` — the tuple form,
+    "(name, dict of parameters to update)". The built-in overridden by OUR
+    sample, so q == 1 identically and only the Fisher curvature is meaningful.
+  - `FID_SAMPLE`: a THIRD encoding, our own literal.
+
+So "the DESI fiducial" is written down twice independently. §38's q == 1 is
+best understood as the assertion that those two agree; §40 is the assertion
+that cosmoprimo's copy has not moved.

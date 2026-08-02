@@ -250,6 +250,105 @@ _Q_AP_TOL = 1e-5
 _SHAPE_UNITY_TOL = 5e-4
 
 
+# The absolute identity of cosmoprimo's "DESI" fiducial, recorded 2026-08-02
+# against cosmoprimo 1b100803. Every mean label is defined RELATIVE to this
+# object (the extractor's fiducial=), so if it moves, every label silently
+# changes meaning while all the ratio checks still pass.
+#
+# Inputs are definitional and compared exactly-ish; derived scalars carry a
+# loose tolerance because they come out of CLASS.
+_FIDUCIAL_PARAMS = {
+    "omega_cdm": 0.1200000000,
+    "omega_b": 0.0223700000,
+    "h": 0.6736000000,
+    "ln10A_s": 3.0363942553,
+    "n_s": 0.9649000000,
+    "m_ncdm": 0.0599999193,
+    "N_ncdm": 1.0,
+    "N_eff": 3.0459982215,
+    "tau_reio": 0.0544000000,
+    "w0_fld": -1.0,
+    "wa_fld": 0.0,
+}
+_FIDUCIAL_DERIVED = {"rs_drag": 99.0844267934, "sigma8": 0.8076353990}
+_FIDUCIAL_ENGINE = "cosmoprimo.classy.ClassEngine"
+_FID_PARAM_TOL = 1e-8
+# Loose enough for CLASS build/version jitter, tight enough that a precision
+# or engine change shows: precision='base' moves these well above 1e-6.
+_FID_DERIVED_TOL = 1e-6
+
+
+def check_fiducial_identity() -> None:
+    """Pin cosmoprimo's DESI fiducial in ABSOLUTE terms.
+
+    This is the gap `check_mean_ap` cannot close. Every check there is a
+    ratio of the varying cosmology to the fiducial, so anything that moves
+    BOTH sides together cancels exactly and passes:
+
+      - cosmoprimo repointing the `DESI` alias (it is `DESI =
+        AbacusSummitBase` at fiducial.py:264, and the same module already
+        ships DESIDR2Flatw0waCDM with quite different values);
+      - a different Boltzmann engine;
+      - a different precision setting (AbacusSummitBase takes precision=None
+        by default and documents precision='base' as materially different).
+
+    Any of those silently redefines every mean training label, since the
+    labels ARE ratios to this object. Absolute values are the only way to see
+    it. Compare to `with_now`, where trusting an upstream default mislabelled
+    sigma ~2x.
+    """
+    print("\n=== Fiducial identity (cosmoprimo 'DESI', absolute) ===")
+    from cosmoprimo.fiducial import DESI
+
+    c = DESI()
+    h = c.h
+    got = {
+        "omega_cdm": float(c.Omega0_cdm * h * h),
+        "omega_b": float(c.Omega0_b * h * h),
+        "h": float(h),
+        "ln10A_s": float(np.log(c.A_s * 1e10)),
+        "n_s": float(c.n_s),
+        "m_ncdm": float(np.atleast_1d(c.m_ncdm).sum()),
+        "N_ncdm": float(np.atleast_1d(c.N_ncdm).sum()),
+        "N_eff": float(c.N_eff),
+        "tau_reio": float(c.tau_reio),
+        "w0_fld": float(c.w0_fld),
+        "wa_fld": float(c.wa_fld),
+    }
+    fails = 0
+    print(f"{'param':>12s} {'expected':>18s} {'got':>18s} {'rel':>10s}")
+    for k, want in _FIDUCIAL_PARAMS.items():
+        rel = (got[k] - want) / want if want else got[k] - want
+        ok = abs(rel) < _FID_PARAM_TOL
+        fails += not ok
+        print(f"{k:>12s} {want:18.10f} {got[k]:18.10f} {rel:10.1e}"
+              f"{'' if ok else '  <-- FAIL'}")
+
+    derived = {"rs_drag": float(c.rs_drag),
+               "sigma8": float(c.get_fourier().sigma8_m)}
+    for k, want in _FIDUCIAL_DERIVED.items():
+        rel = derived[k] / want - 1.0
+        ok = abs(rel) < _FID_DERIVED_TOL
+        fails += not ok
+        print(f"{k:>12s} {want:18.10f} {derived[k]:18.10f} {rel:10.1e}"
+              f"{'' if ok else '  <-- FAIL'}")
+
+    eng = type(c.engine).__module__ + "." + type(c.engine).__name__
+    ok = eng == _FIDUCIAL_ENGINE
+    fails += not ok
+    print(f"{'engine':>12s} {_FIDUCIAL_ENGINE:>18s} -> {eng}"
+          f"{'' if ok else '  <-- FAIL'}")
+
+    print(f"\n  Tolerances: inputs {_FID_PARAM_TOL:g}, derived "
+          f"{_FID_DERIVED_TOL:g} (CLASS).")
+    print("  A failure here means the fiducial MOVED. Every mean label is")
+    print("  defined relative to it, so the training data is stale even")
+    print("  though every ratio check still passes.")
+    if fails:
+        raise SystemExit(f"  {fails} fiducial identity check(s) FAILED")
+    print("  fiducial unchanged.")
+
+
 def check_mean_ap(tracers) -> None:
     """Self-consistency of the mean pipeline's AP outputs.
 
@@ -352,7 +451,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--check",
                    choices=["fiducial", "scaling", "damping", "kmax",
-                            "mean-ap", "all"],
+                            "mean-ap", "fiducial-id", "all"],
                    default="all")
     p.add_argument("--tracers", nargs="*", default=None,
                    choices=list(TRACER_TYPE_CHOICES),
@@ -368,6 +467,8 @@ def main() -> int:
         check_damping(tracers)
     if args.check in ("kmax", "all"):
         check_kmax(tracers)
+    if args.check in ("fiducial-id", "all"):
+        check_fiducial_identity()
     if args.check in ("mean-ap", "all"):
         check_mean_ap(tracers)
     return 0
