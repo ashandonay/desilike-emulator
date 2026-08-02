@@ -261,8 +261,22 @@ def _get_mean_extractor(tracer_bin: str, z_eff: float):
 
         # with_now MUST be explicit — same de-wiggling trap as the template
         # (desilike defaults to 'peakaverage'; DESI uses Wallisch 2018).
+        #
+        # `fiducial` is explicit for the same reason, even though 'DESI' is
+        # already desilike's default. It is the denominator of every mean
+        # label: BAOExtractor._set_base(fiducial=True) evaluates it once at
+        # init, and get() returns qiso = DV_over_rd / DV_over_rd_fid,
+        # qap = DH_over_DM / DH_over_DM_fid. An upstream default change would
+        # silently redefine the whole training set, exactly as the
+        # 'peakaverage' default silently mislabelled sigma ~2x.
+        #
+        # NOTE this is the plain DESI fiducial, NOT the ("DESI", theta_cosmo)
+        # the covar template uses (core.py). There the fiducial IS the sample,
+        # so q == 1 identically and only the Fisher curvature is meaningful;
+        # here the fiducial is fixed and q carries the AP signal.
         extractor = ShapeFitPowerSpectrumExtractor(
             z=float(z_eff),
+            fiducial="DESI",
             with_now="wallish2018",
         )
         _MEAN_EXTRACTOR_CACHE[key] = extractor

@@ -2470,3 +2470,74 @@ volume weighting pushes high — not a plotting artifact. It means any QSO
 comparison against DESI is being made at a different effective redshift, which
 is worth remembering when reading QSO in the σ and covariance plots. Flagged
 here; not chased.
+
+## §38 — The AP panels never tested the pipeline; add a check that does
+
+Follow-on from §37, prompted by a simple question: given fiducial cosmology
+inputs, does the mean pipeline return exactly 1?
+
+### What the comparison plot actually validates
+
+`plot_mean`'s two AP panels draw
+
+```python
+at_z_desi = desi_ref.fiducial_dv_dhdm(z_desi)[idx]
+at_z_ours = desi_ref.fiducial_dv_dhdm(z_ours)[idx]
+```
+
+Both markers are cosmoprimo's DESI *fiducial* evaluated at a redshift, compared
+against Table 11 — which is also a fiducial. The mean pipeline's own output
+never enters. So the panels test that our cosmoprimo fiducial reproduces DESI's
+published fiducial (<=0.13%), plus the z_eff offset on top. That is a
+reference-data check, not a pipeline check, and the panel title oversells it.
+
+Nor can the panels be rewired to do better, because of how q is defined
+(desilike `power_template.py`, `BAOExtractor.get`):
+
+    qiso = DV_over_rd / DV_over_rd_fid
+    qap  = DH_over_DM / DH_over_DM_fid          # DH over DM, not DM over DH
+
+Numerator and denominator share `self.z`, so at fiducial input q == 1 for ANY
+z_eff. q is dimensionless and normalised to the fiducial: the absolute
+DV/rd is divided out by construction. Recovering it means multiplying by a
+fiducial you fetched from cosmoprimo or Table 11 — circular. z_eff can
+therefore never appear in q itself, only in the fiducial multiplied back in.
+
+### But q == 1 is a real, falsifiable assertion
+
+It needs no DESI reference data at all: it says the extractor's varying
+cosmology and its fixed fiducial agree when handed the same cosmology. Nothing
+in the suite was asserting it, and it is the ONLY test that exercises the mean
+path's cosmology mapping. That matters because the two pipelines map cosmology
+differently — `_to_mean_extractor_params` assembles `Omega_m` from the omega
+basis (including `omega_ncdm`), while the covar path passes `omega_cdm`
+straight through. If they diverge, the mean and covar emulators are trained on
+different cosmologies and every other check still passes.
+
+### Added: `validate_forecast.py --check mean-ap`
+
+(a) fiducial input, q must be 1; (b) perturbed input, q must equal the same
+ratio built directly from cosmoprimo — the AP machinery in the regime the
+emulator is actually used in, which the plot cannot reach.
+
+All 18 rows pass. Deviation 4.6e-8 (BGS) to 1.3e-7 (QSO), rising with z; that
+is the `omega_cdm -> Omega_m -> omega_cdm` round trip, not a modelling error.
+
+Tolerances 1e-5 on both. Placed by negative test, not by taste: injecting the
+bug the check exists for (drop `omega_ncdm`, the legacy
+`util.to_extractor_params` behaviour) gives 7.1e-4 and fails every row. So the
+threshold sits ~70x above the numerical floor and ~70x below the target bug.
+
+### Also: `fiducial="DESI"` is now explicit in `_get_mean_extractor`
+
+It was relying on desilike's default. The default is correct today, but it is
+the denominator of every mean label, and this is exactly the `with_now`
+footgun again — where the `'peakaverage'` default was silently wrong and
+mislabelled sigma ~2x. Made explicit; behaviour unchanged.
+
+### Not changed
+
+The AP panels themselves. They are still worth plotting — reference-data
+agreement and the z_eff offset are both things we want to see — but they are
+not evidence about the pipeline, and §37's framing of them should be read with
+that in mind.

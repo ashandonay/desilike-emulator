@@ -45,7 +45,8 @@ import numpy as np
 
 import fourier_space
 from fourier_space import sf_core
-from util import TRACER_TYPE_CHOICES, ntracers, ntracers_range, plots_dir
+from util import (TRACER_TYPE_CHOICES, get_tracer_config, ntracers,
+                  ntracers_range, plots_dir)
 
 TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
@@ -216,10 +217,102 @@ def check_kmax(tracers) -> None:
     print("  depend on a regime where the model is known to be wrong.")
 
 
+# q = 1 should hold to machine precision; the residual ~1e-7 is the
+# omega_cdm -> Omega_m -> omega_cdm round trip in _to_mean_extractor_params.
+# 1e-5 is loose enough not to flag that and tight enough to catch the bug it
+# exists for: dropping omega_ncdm shifts omega_cdm by ~0.0006, which shows up
+# here at the 1e-4 level.
+_Q_UNITY_TOL = 1e-5
+# Agreement required between the extractor's q and the same ratio built
+# straight from cosmoprimo. Both are cosmoprimo underneath, so this is a
+# convention test (eta, DH/DM orientation, which cosmology is the fiducial),
+# not a numerical one -- it passes at <1e-6 or fails outright.
+_Q_AP_TOL = 1e-5
+
+
+def check_mean_ap(tracers) -> None:
+    """Self-consistency of the mean pipeline's AP outputs.
+
+    Needs no DESI reference data: qiso and qap are ratios of the SAME
+    extractor's varying cosmology to its fixed fiducial, both at the same z.
+
+      (a) at fiducial input, q must be exactly 1 -- the numerator and
+          denominator are then the same cosmology. This is the only test that
+          exercises the mean path's cosmology mapping (_to_mean_extractor_params
+          assembles Omega_m from the omega basis, including omega_ncdm; the
+          covar path passes omega_cdm straight through). If those two ever
+          disagree, the mean and covar emulators are trained on different
+          cosmologies and nothing else in the suite would notice.
+
+      (b) off-fiducial, q must equal the distance ratio computed directly from
+          cosmoprimo. This is the AP machinery proper, in the regime the
+          emulator is actually used in. Note the comparison plots CANNOT test
+          this: their AP panels compare a fiducial to a fiducial, so the
+          extractor's numerator never enters.
+    """
+    print("\n=== Mean-pipeline AP self-consistency ===")
+    from cosmoprimo.fiducial import DESI
+
+    def _q_from_cosmoprimo(theta, z):
+        c = sf_core.get_cosmo(("DESI", dict(theta)))
+        DH = (299792.458 / 1e3) / (100.0 * c.efunc(z))
+        DM = c.comoving_angular_distance(z)
+        # eta = 1/3, matching BAOExtractor._set_base.
+        DV = DH ** (1.0 / 3.0) * DM ** (2.0 / 3.0) * z ** (1.0 / 3.0)
+        return DV / c.rs_drag, DH / DM      # (DV/rd, DH/DM) -- NOT DM/DH
+
+    def _run(sample, tracer, z):
+        _s, vals, err = fourier_space._worker_run_mean_targets(
+            (sample, tracer, z, sf_core.PARAM_DEFAULTS))
+        if vals is None:
+            raise RuntimeError(f"{tracer}: mean worker failed\n{err}")
+        return float(vals[0]), float(vals[1])
+
+    perturbations = [("omega_cdm +5%", {"omega_cdm": FID_SAMPLE["omega_cdm"] * 1.05}),
+                     ("h -3%", {"h": FID_SAMPLE["h"] * 0.97})]
+    fails = 0
+    print(f"{'tracer':>8s} {'case':>14s} {'qiso':>12s} {'qap':>12s} {'max dev':>10s}")
+    for t in tracers:
+        cosmo = DESI()
+        cfg = get_tracer_config(t, analysis="shapefit", dataset="dr1")
+        z = sf_core._fs_compute_z_eff(
+            tracer_bin=t, cosmo=cosmo, fo=cosmo.get_fourier(),
+            area_deg2=float(sf_core.dataset_area("dr1")),
+            b1=float(cfg.get("bias_recon", 2.0)))
+
+        qiso, qap = _run(dict(FID_SAMPLE), t, z)
+        dev = max(abs(qiso - 1.0), abs(qap - 1.0))
+        ok = dev < _Q_UNITY_TOL
+        fails += not ok
+        print(f"{t:>8s} {'fiducial':>14s} {qiso:12.8f} {qap:12.8f} "
+              f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
+
+        for name, pert in perturbations:
+            s = {**FID_SAMPLE, **pert}
+            qiso, qap = _run(s, t, z)
+            theta_p = sf_core._to_shapefit_cosmo_params(s)
+            theta_f = sf_core._to_shapefit_cosmo_params(dict(FID_SAMPLE))
+            dv_p, dhdm_p = _q_from_cosmoprimo(theta_p, z)
+            dv_f, dhdm_f = _q_from_cosmoprimo(theta_f, z)
+            dev = max(abs(qiso / (dv_p / dv_f) - 1.0),
+                      abs(qap / (dhdm_p / dhdm_f) - 1.0))
+            ok = dev < _Q_AP_TOL
+            fails += not ok
+            print(f"{'':>8s} {name:>14s} {qiso:12.8f} {qap:12.8f} "
+                  f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
+
+    print(f"\n  'max dev' is |q - 1| for the fiducial row and |q/q_cosmoprimo - 1|")
+    print(f"  for the perturbed rows. Tolerances {_Q_UNITY_TOL:g} / {_Q_AP_TOL:g}.")
+    if fails:
+        raise SystemExit(f"  {fails} AP self-consistency check(s) FAILED")
+    print("  all rows pass.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--check",
-                   choices=["fiducial", "scaling", "damping", "kmax", "all"],
+                   choices=["fiducial", "scaling", "damping", "kmax",
+                            "mean-ap", "all"],
                    default="all")
     p.add_argument("--tracers", nargs="*", default=None,
                    choices=list(TRACER_TYPE_CHOICES),
@@ -235,6 +328,8 @@ def main() -> int:
         check_damping(tracers)
     if args.check in ("kmax", "all"):
         check_kmax(tracers)
+    if args.check in ("mean-ap", "all"):
+        check_mean_ap(tracers)
     return 0
 
 
