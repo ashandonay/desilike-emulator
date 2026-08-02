@@ -236,6 +236,18 @@ _Q_UNITY_TOL = 1e-5
 # convention test (eta, DH/DM orientation, which cosmology is the fiducial),
 # not a numerical one -- it passes at <1e-6 or fails outright.
 _Q_AP_TOL = 1e-5
+# Same assertion for the two SHAPE targets, which q cannot reach: q is built
+# from distances alone, so it is blind to n_s and ln10A_s entirely. dm brings
+# in n_s; f_sigmar/f_sigmar_fid is the ONLY one of the four sensitive to
+# ln10A_s (amplitude does not change a slope, so dm does not move with it).
+#
+# Looser floor than q, and for a different reason: these run through the
+# de-wiggled P(k) and a numerical log-slope at kp, not a background integral.
+# Measured at fiducial input, |dm| <= 7.8e-5 and |f_sigmar/fid - 1| <= 6.5e-5,
+# worst at low z and not monotonic -- P(k)/filter numerics, not the background
+# grid. 5e-4 sits ~6x above that floor; a 0.1% error in n_s or ln10A_s gives
+# 9.4e-4 to 1.5e-3, so the check bites at roughly the 0.05% level.
+_SHAPE_UNITY_TOL = 5e-4
 
 
 def check_mean_ap(tracers) -> None:
@@ -295,6 +307,22 @@ def check_mean_ap(tracers) -> None:
         print(f"{t:>8s} {'fiducial':>14s} {qiso:12.8f} {qap:12.8f} "
               f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
 
+        # Shape targets, same assertion, different numerics and different
+        # parameter coverage (see _SHAPE_UNITY_TOL). Read off the extractor
+        # rather than the worker: the worker returns the ABSOLUTE f_sigmar,
+        # and the self-consistent quantity is its ratio to f_sigmar_fid.
+        ex = fourier_space._get_mean_extractor(t, z)
+        ex(**sf_core._to_mean_extractor_params(
+            {**FID_SAMPLE, **sf_core.PARAM_DEFAULTS}))
+        ex.get()
+        dm = float(ex.dm)
+        dfsr = float(ex.f_sigmar / ex.f_sigmar_fid) - 1.0
+        sdev = max(abs(dm), abs(dfsr))
+        sok = sdev < _SHAPE_UNITY_TOL
+        fails += not sok
+        print(f"{'':>8s} {'  shape':>14s} {dm:12.2e} {dfsr:12.2e} "
+              f"{sdev:10.1e} {'' if sok else '  <-- FAIL'}")
+
         for name, pert in perturbations:
             s = {**FID_SAMPLE, **pert}
             qiso, qap = _run(s, t, z)
@@ -309,8 +337,12 @@ def check_mean_ap(tracers) -> None:
             print(f"{'':>8s} {name:>14s} {qiso:12.8f} {qap:12.8f} "
                   f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
 
-    print(f"\n  'max dev' is |q - 1| for the fiducial row and |q/q_cosmoprimo - 1|")
-    print(f"  for the perturbed rows. Tolerances {_Q_UNITY_TOL:g} / {_Q_AP_TOL:g}.")
+    print(f"\n  Columns are (qiso, qap) except on the 'shape' rows, which are")
+    print(f"  (dm, f_sigmar/f_sigmar_fid - 1). 'max dev' is the distance from")
+    print(f"  the required value: 1 for q and f_sigmar/fid, 0 for dm; the")
+    print(f"  perturbed rows compare q against cosmoprimo instead.")
+    print(f"  Tolerances: q {_Q_UNITY_TOL:g} / AP {_Q_AP_TOL:g} / "
+          f"shape {_SHAPE_UNITY_TOL:g}.")
     if fails:
         raise SystemExit(f"  {fails} AP self-consistency check(s) FAILED")
     print("  all rows pass.")

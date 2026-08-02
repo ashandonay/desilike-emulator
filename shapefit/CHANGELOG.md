@@ -2565,3 +2565,52 @@ The AP panels themselves. They are still worth plotting — reference-data
 agreement and the z_eff offset are both things we want to see — but they are
 not evidence about the pipeline, and §37's framing of them should be read with
 that in mind.
+
+## §39 — Extend the fiducial check to the shape targets: q is blind to n_s and ln10A_s
+
+§38's check asserts qiso == qap == 1 at fiducial input. Scoping that honestly:
+it pins one claim, *fiducial in -> fiducial out*, and catches three ways to
+break it (FID_SAMPLE drifting from cosmoprimo's DESI, a wrong
+`_to_mean_extractor_params`, a changed `fiducial=` on the extractor).
+
+But q is built from distances alone. **It cannot see `n_s` or `ln10A_s` at
+all** — neither enters a background integral. So a bug mapping either through
+the omega basis passed §38 clean, and two of the four mean targets had no
+fiducial assertion on them.
+
+`m` and `f_sigmar` have the identical self-consistent form: the extractor
+stores `m_fid` and `f_sigmar_fid` at init, exactly parallel to
+`DV_over_rd_fid`, so at fiducial input `dm` must be 0 and
+`f_sigmar / f_sigmar_fid` must be 1.
+
+### Floors, and why they are looser
+
+    tracer      dm        f_sigmar/fid - 1
+    BGS      -7.83e-05        -6.47e-05
+    LRG1     -4.87e-05        -4.01e-05
+    LRG2     -4.46e-05        -3.67e-05
+    LRG3     -1.83e-05        -1.48e-05
+    ELG2     -1.86e-05        -1.51e-05
+    QSO      -2.34e-05        -1.91e-05
+
+~1e-5 to 1e-4, three orders looser than q's 1e-7, worst at low z and NOT
+monotonic — so this is the de-wiggled P(k) and the numerical log-slope at kp,
+a different numerical path from §38's background-grid floor. Physically
+irrelevant: DESI's sigma_m is 0.03-0.09, so 8e-5 is ~0.1% of an error bar.
+
+`dn` is exactly 0 on every tracer (n_s passes straight through).
+
+### Sensitivity, measured on LRG3
+
+    ln10A_s +0.1%   dm unchanged        f_sigmar/fid - 1  +1.5e-03
+    n_s     +0.1%   dm +9.4e-04         f_sigmar/fid - 1  +1.1e-03
+
+`f_sigmar` is the ONLY one of the four that moves with `ln10A_s` — amplitude
+does not change a slope, so `dm` is flat against it. Without the f_sigmar row
+the ln10A_s mapping has no test anywhere in the suite.
+
+Tolerance 5e-4: ~6x above the floor, and a 0.1% parameter error lands 2-3x
+above it, so the check bites at roughly the 0.05% level. Looser than q's 1e-5
+because the floor is, not because the requirement is weaker.
+
+24/24 rows pass.
