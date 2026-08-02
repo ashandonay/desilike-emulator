@@ -35,9 +35,10 @@ our z_eff can be put on the same axis. See `plot_mean`.
 
 The one genuinely predictive entry is f_sigmar: f(z) * sigma_r is an absolute
 number our pipeline computes from the input cosmology, comparable to DESI's
-measured f sigma_s8. Even there, our z_eff and DESI's differ (Fisher- vs
-volume-weighted; bao CHANGELOG S18), and f*sigma8 evolves fast, so the panel
-annotates both redshifts.
+measured f sigma_s8. Since the z_eff convention was corrected to DESI's
+FKP-weighted definition (bao CHANGELOG S36) four of six tracers agree with
+DESI's published z_eff to <0.5%; LRG3 and ELG2 still differ by ~2%, and
+f*sigma8 evolves fast, so the panel labels those two with their Delta z.
 
 m needs no conversion: the mean emulator now emits DESI's m -- the Eq. (4.9)
 shape parameter, which multiplies the fiducial template so m = 0 is no shape
@@ -219,6 +220,11 @@ def _cov_matrix(targets, desi=False):
 # single cut on |rho_DESI| masks the ill-conditioned cells for BOTH kinds. The
 # diagonal (rho = 1) is never masked.
 _PCT_RHO_FLOOR = 0.05
+
+# Minimum |z_eff/z_DESI - 1| worth labelling on the f sigma_r panel. Below this
+# the two conventions agree and the label is clutter; above it the label is the
+# explanation for a visible residual. See `plot_mean`.
+_Z_EFF_LABEL_FLOOR = 0.005
 
 
 def _pct_matrix(Mo, Md, Rd, floor=_PCT_RHO_FLOOR):
@@ -444,14 +450,21 @@ def plot_mean(data, tracers, out_path, theory="rept"):
     ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                 capsize=3, label="DESI DR1")
     ax.plot(x, ours, "o", ms=7, color="tab:blue", label="generator (predicted)")
+    # Under the DESI FKP z_eff convention four of six tracers now agree with
+    # DESI's published z_eff to <0.5%, so annotating every point is noise.
+    # Label only the two that still differ: f*sigma8 evolves fast enough that a
+    # 2% shift in z is ~1.5% in f sigma_r, comparable to the residual plotted.
     for i, t in enumerate(tracers):
+        dz = data[t]["theories"][theory]["z"] / data[t]["z_desi"] - 1.0
+        if abs(dz) < _Z_EFF_LABEL_FLOOR:
+            continue
         side = -1 if i == len(tracers) - 1 else 1     # last one points inward
-        ax.annotate(f"z {data[t]['theories'][theory]['z']:.2f}/"
-                    f"{data[t]['z_desi']:.2f}", (i, ours[i]),
+        ax.annotate(rf"$\Delta z$ {100 * dz:+.1f}%", (i, ours[i]),
                     textcoords="offset points", xytext=(8 * side, -3),
                     ha="left" if side > 0 else "right", fontsize=6, color="0.3")
     ax.set_ylabel(r"$f\sigma_r$")
-    ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n" r"z generator/DESI annotated",
+    ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n"
+                 r"$\Delta z$ vs DESI labelled where $>$0.5%",
                  fontsize=9)
 
     # m: deviation on both sides.
