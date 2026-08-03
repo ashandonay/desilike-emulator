@@ -3790,3 +3790,130 @@ affected only at the ≤0.31% level via the yaml correction.
   Smith+20, Avila+20, Rocher+23, Richardson+12, Eftekharzadeh+15).
 - Emulator-ready: every per-tracer quantity recomputes when
   cosmology changes via the M_cut root-find inside `_hod_halo_props`.
+
+## 37. z_eff: N_tracers dependence, DESI Eq. (2.1), and per-bin FKP pivots (2026-08-02)
+
+Three corrections to z_eff, found while auditing the §36 change. §36 fixed one
+error and introduced another; this fixes both, and adds a dependence neither
+convention had.
+
+### 37a — z_eff depends on N_tracers, and nothing was tracking it
+
+The FKP weight is not linear in n̄. Scaling n̄ → α·n̄ leaves
+w_i = α n̄_i V_i/(1 + α n̄_i P₀), and α does NOT factor out, because slices at
+different densities respond differently. Both limits are α-independent:
+
+    n̄P ≪ 1  →  w → α n̄V,  α cancels  →  NUMBER-weighted mean
+    n̄P ≫ 1  →  w → V/P₀,  n̄ drops out →  VOLUME-weighted mean
+
+so z_eff slides between them. Adding galaxies saturates the dense slices first
+— they cross into n̄P ≫ 1 and stop gaining weight, since extra galaxies where
+you already have plenty add little information — while sparse slices keep
+gaining, so weight migrates toward the sparse end.
+
+The effect is largest where the bin STRADDLES n̄P ~ 1, **not** where the bin is
+widest. Over the emulator box [0.5, 1.5] × N_dr1:
+
+| tracer | n̄P range | Δz over the box |
+|---|---|---|
+| LRG3 | 0.70–5.66 (crosses 1) | **+1.22%** |
+| ELG2 | 0.89–2.15 | +0.67% |
+| BGS | 4.02–5.18 | +0.36% |
+| QSO | 0.15–0.22 | +0.10% |
+| LRG1 | 5.12–5.46 | −0.02% |
+| LRG2 | 5.08–5.74 | −0.01% |
+
+QSO is the instructive case: by far the widest bin (Δz = 1.3) and almost no
+sensitivity, because it is uniformly shot-noise limited. LRG1/LRG2 move the
+other way because their n(z) rises across the bin.
+
+`build_bao_likelihood` took `N_tracers`, used it for the V_eff → n_eff
+root-find, then derived z_eff from the *unscaled* file density — internally
+inconsistent. Added `_nz_scale_factor()`, threaded `n_tracers`/`dataset`
+through `_compute_z_eff_from_nz` and both call sites. `n_tracers=None`
+reproduces the old behaviour exactly.
+
+Uniform rescaling holds the n(z) SHAPE fixed; deeper observation also shifts
+the shape, so this is the conservative model.
+
+### 37b — Eq. (2.1): the weight is SQUARED
+
+§36 switched to a linear FKP weight, arguing DESI's pair-weighted mean
+"collapses to the single-galaxy weighted mean for unrestricted pairs". That
+reasoning was wrong. From the primary source, arXiv:2404.03000 §2.2:
+
+> "The z_eff values are calculated weighting by the **square of the weighted
+> number density of randoms** (with the weights — including FKP — described
+> above), n_ran(z):
+>
+>     z_eff = ∫ r² dr z n²_ran(z) / ∫ r² dr n²_ran(z)          (2.1)
+>
+> where r is the comoving distance to the redshift z."
+
+No pair sum, no separation restriction. With n_ran = n̄·w_FKP the slice weight
+is (n̄w)²V.
+
+| convention | weight | max err vs DESI |
+|---|---|---|
+| `fisher_veff` (pre-§36) | V·(n̄P_g(k,z)/(1+n̄P_g))², z-DEPENDENT P | 10.3% (QSO) |
+| `desi_fkp` (§36) | n̄V/(1+n̄P₀), constant pivot but LINEAR | 2.28% (LRG3) |
+| `desi_eq21` (now) | (n̄/(1+n̄P₀))²·V | **0.65%** (ELG2) |
+
+`fisher_veff` had the square right and the pivot wrong; §36 fixed the pivot and
+broke the square. The correct form is the combination and was never tried.
+
+Consistency check: Eq. (2.2) weights V_eff by (n̄P₀/(1+n̄P₀))², which differs
+from Eq. (2.1) only by the constant P₀² — and a constant cancels in a weighted
+mean. **DESI's z_eff IS the V_eff-weighted mean.** The original instinct was
+structurally right all along.
+
+### 37c — FKP pivots are per BIN, not per tracer type
+
+Table 2 gives P₀(k=0.14), "rounded numbers taken from the DR1 P₀(k)
+measurements":
+
+| bin | DESI | ours (was) |
+|---|---|---|
+| BGS | 9.2e3 | 7.0e3 |
+| LRG1 | 8.9e3 | 1.0e4 |
+| LRG2 | 8.9e3 | 1.0e4 |
+| LRG3+ELG1 | 5.9e3 | 1.0e4 |
+| ELG2 | 2.9e3 | 4.0e3 |
+| QSO | 5.0e3 | 6.0e3 |
+
+Every value was wrong, and LRG1/LRG2 (8.9e3) vs LRG3 (8.4e3) cannot be
+expressed by a type-keyed map at all. Moved to `tracers.yaml` as `fkp_p0`;
+`_fkp_p0_for_tracer` now RAISES when it is missing rather than falling back —
+a wrong pivot silently biases z_eff and there is no safe default.
+
+### Result
+
+    tracer      z_eff    DESI     err     (was §36)
+    BGS        0.2958   0.295   +0.28%     +0.49%
+    LRG1       0.5096   0.510   -0.08%     -0.10%
+    LRG2       0.7058   0.706   -0.03%     -0.04%
+    LRG3_ELG1  0.9517   0.930   +2.33%     +2.74%
+    ELG2       1.3256   1.317   +0.65%     +2.05%
+    QSO        1.4839   1.491   -0.47%     +0.18%
+
+### Known limitation: the LRG3+ELG1 MIX bin
+
++2.33%, far worse than any single-population bin, and NO pivot fixes it
+(8.4e3 → +2.49%, 5.9e3 → +2.33%, 2.6e3 → +1.83%). Expected: DESI weights each
+galaxy by its OWN tracer's pivot and its own n̄, so a two-population sample is
+not representable by one P₀ over a combined n(z). Left as-is — **config-space
+BAO pins z_eff from the DESI bundle and never reaches this path**, so the
+production path bedcosmo consumes is unaffected. Only the Fourier path moves.
+
+### Residual and scope
+
+0.65% worst case on the single-population bins. Most likely the n(z) input
+rather than the formula: Eq. (2.1) uses the WEIGHTED random density
+(completeness and systematic weights included) where our slice files carry raw
+n̄; the same form computed on DESI's own randoms lands tighter (0.39%
+excluding BGS).
+
+Config space is untouched (z_eff pinned by bundle). Fourier σ move. The
+`bao/regress_sigmas.py` fourier dump PINS `z_eff=cfg["z_eff"]` (line ~133), so
+the golden does not exercise this path at all — a known blind spot, not
+evidence of no change.
