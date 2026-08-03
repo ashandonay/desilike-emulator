@@ -3525,3 +3525,66 @@ fixed alone (§49). With n̄ ×1.23 and the Eq-8.4 pivots, LRG2 gives
 `nbar*P0 = 2.8e-4 × 1.23 × 10000 = 3.44` against DESI's measured `NX*P0 = 3.6` —
 close, where the current config gives 2.49. **Fix them together and re-test
 z_eff; do not fix either alone.**
+
+## §51 — Eq. (2.1) reproduced from DESI's own randoms to 0.064%: a reference z_eff
+
+Computing DESI 2024 III Eq. (2.1) directly from the v1.5 random catalogues —
+`n_ran = sum(WEIGHT x WEIGHT_FKP)` per slice, weight `n_ran^2 r^2 dr`, mean z
+within each slice from `sum(z w wf)/sum(w wf)`, dz = 0.01, NRAN = 2:
+
+| bin | z_eff (DESI randoms) | published | err |
+|---|---|---|---|
+| BGS | 0.2954 | 0.295 | +0.138% |
+| LRG1 | 0.5095 | 0.510 | −0.097% |
+| LRG2 | 0.7058 | 0.706 | −0.028% |
+| LRG3 | 0.9185 | 0.919 | −0.054% |
+| ELG2 | 1.3169 | 1.317 | −0.010% |
+| QSO | 1.4901 | 1.491 | −0.057% |
+
+**mean 0.064%, max 0.138%** — against our pipeline's **0.313% / 0.650%**. Five
+times better, with a residual consistent with the binning and NRAN=2 noise.
+
+No n(z) model, no `fkp_p0`, no slice files, no effective-area assumption (the
+area cancels in the ratio). Only DESI's catalogue and the fiducial distance
+relation. This is a **reference implementation** of Eq. (2.1) and it validates
+both the formula and the estimator.
+
+### The missing ingredient, identified
+
+`n_ran` uses **WEIGHT x WEIGHT_FKP**. `WEIGHT` carries completeness, imaging
+systematics and redshift failures (DESI 2024 II Eq. 8.2). Our
+`_desi_z_eff_from_nz` uses `nbar/(1 + nbar*P0)` — the FKP factor **only**.
+
+That is the compensating error §49 was circling: with the completeness term
+absent, the Table-2 pivots partially stand in for it, which is why "fixing" the
+pivots alone made z_eff worse.
+
+### It factorizes, so N-scaling stays analytic
+
+```
+n_ran,s = S1_s * w_fkp(z_s ; nbar(N))        S1_s = sum WEIGHT per slice
+```
+
+`S1_s` is randoms-derived geometry (already extracted, §47/§48) and every N and
+cosmology dependence sits in `w_fkp` and `V_s(cosmo)`. So:
+
+```
+z_eff(N, cosmo) = SUM z_s [S1_s w_fkp,s]^2 / V_s   /   SUM [S1_s w_fkp,s]^2 / V_s
+```
+
+fully analytic, no fitted parameter, same footing as the §47 norm.
+
+### Unblocks the §49/§50 tangle
+
+We now have a target rather than a coincidence to preserve. The three coupled
+quantities can be fixed **together** and checked against 0.064%:
+
+1. add the `WEIGHT` (completeness) term via `S1_s`,
+2. restore the Eq. (8.4) pivots (7000/10000/4000/6000) — note these are exactly
+   what `_FKP_P0_BY_TYPE` held before commit 740402d, which replaced them with
+   Table-2's `P0(k=0.14)`; `bao/fkp_analytic_cov.py:51` still has the correct
+   `P_FKP_DEFAULT = 1.0e4`, so the two paths currently disagree for LRG,
+3. re-examine n̄ (§50) once 1 and 2 are in.
+
+If our z_eff does not approach 0.064% with all three, something else is wrong —
+which is a far better test than any we have had.
