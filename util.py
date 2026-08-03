@@ -581,6 +581,22 @@ def mlflow_tracking_uri(analysis: str) -> str:
     return f"file:{mlflow_tracking_dir(analysis)}"
 
 
+def logs_dir(analysis: str) -> str:
+    """Filesystem path of the per-analysis log directory, created on demand.
+
+    Sibling of training_data/, models/ and mlruns/ under
+    emulator/{analysis}/. Exists so generation drivers write their logs
+    somewhere discoverable instead of wherever the caller happened to
+    redirect -- a run whose log lands in a scratch dir is a run nobody can
+    audit later.
+    """
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    d = os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "logs")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
                           cosmo_model: str | None = None,
                           dataset: str | None = None) -> str:

@@ -95,8 +95,27 @@ if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+# Log into the per-analysis logs/ dir rather than wherever the caller happened
+# to redirect. The driver is the only place that CAN name the file correctly,
+# since the version may have been auto-resolved just above. tee keeps stdout
+# live so an interactive run still shows progress.
+LOG_FILE="$("$PYBIN" - "$QUANTITY" "$VERSION" <<'PYLOG'
+import os, sys
+sys.path.insert(0, os.path.dirname(os.getcwd()))   # repo root (parent of shapefit/)
+from util import logs_dir
+quantity, version = sys.argv[1:3]
+print(os.path.join(logs_dir("shapefit"), f"shapefit_{quantity}_v{version}.log"))
+PYLOG
+)"
+if [[ -z "$LOG_FILE" ]]; then
+  echo "ERROR: could not resolve the log path via util.logs_dir." >&2
+  exit 1
+fi
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 echo "=== $GENERATOR: quantity=$QUANTITY dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
 echo "Tracers: $TRACERS"
+echo "Log: $LOG_FILE"
 echo
 
 for T in $TRACERS; do
