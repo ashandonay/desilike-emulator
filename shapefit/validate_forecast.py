@@ -452,11 +452,123 @@ def check_mean_ap(tracers) -> None:
     print("  all rows pass.")
 
 
+# Both pipelines reach z_eff through the SAME function, core._fs_compute_z_eff,
+# from two different call sites (covar: inside build_shapefit_likelihood; mean:
+# inside _mean_z_eff_for_sample). So what this tolerance guards is not
+# arithmetic, it is the ARGUMENTS each call site assembles independently -- the
+# omega-basis -> cosmoprimo mapping, the survey area, whether N_tracers is
+# threaded through at all, and which dataset's n(z) slices are read.
+#
+# Measured over 6 tracers x {N x 0.5/1.0/1.5, omega_cdm +5%, h -3%}: the two
+# paths agree BIT FOR BIT -- 0 ULP, rel dev exactly 0.0 -- on all 30 points.
+# There is no numerical floor to sit above, so unlike _Q_UNITY_TOL this number
+# is not a measured jitter level; it is chosen from both sides instead. 1e-9 is
+# ~6 orders above double-rounding noise on a z ~ 1 quantity, so an
+# equivalent-but-reassociated rewrite of either call site still passes, and ~5
+# orders BELOW the extractor's own z quantum (fourier_space._MEAN_Z_QUANTUM,
+# 1e-4 in z), so it bites long before a disagreement could change even which
+# cached extractor gets built, let alone a label.
+_ZEFF_CONSISTENCY_TOL = 1e-9
+# A z_eff that ignored its inputs would pass the rows above vacuously -- which
+# is EXACTLY the pre-S42 bug (the mean path froze z_eff at the fiducial
+# cosmology and ignored N entirely), and it would sail through a
+# covar-vs-mean-agree test. So also require z_eff to actually move across the
+# grid. Measured spread (max-min)/min per tracer: LRG3 1.23e-2, ELG2 6.78e-3,
+# BGS 3.59e-3, QSO 1.81e-3, LRG1 4.14e-4, LRG2 2.43e-4. LRG1/LRG2 are the
+# tight ones (n̄P ~ 5 throughout, so N nearly cancels -- S42) and their spread
+# is carried by the cosmology rows, not the N rows. 1e-4 sits 2.4x under the
+# tightest tracer, which is enough margin for CLASS jitter and still catches a
+# frozen or constant z_eff.
+_ZEFF_SPREAD_MIN = 1e-4
+
+
+def check_zeff_consistency(tracers) -> None:
+    """The covar and mean pipelines must derive the SAME z_eff.
+
+    This is the assertion S42 was made FOR but never made. mu and C of the
+    same per-tracer Gaussian likelihood are produced by two separate
+    pipelines and two separate generators, and before S42 they disagreed:
+    the covar path derived z_eff from the sampled cosmology while the mean
+    path froze it at the fiducial (up to 1.1% apart on QSO), and neither took
+    N_tracers into account (up to 1.22% across the box on LRG3). Both were
+    fixed, but nothing asserted that the fix left the two in agreement.
+
+    Nothing else in the suite can see a re-divergence. `check_mean_ap` only
+    ever touches the mean path, and it PINS z itself before calling the
+    worker, so a covar/mean split in the derivation is invisible to it. The
+    training data would not show it either: each emulator is internally
+    self-consistent, and the mismatch only surfaces downstream, as a mu
+    evaluated at one redshift being scored against a C evaluated at another.
+
+    Each side is driven through its production entry point, not through
+    `core._fs_compute_z_eff` directly, since the shared function is not what
+    can drift -- the argument assembly around it is:
+
+      covar : fourier_space.run_fisher(sample, ...)["z_eff"], the call
+              generate_covar_data.py's worker makes. It owns the
+              sample -> theta_cosmo mapping, the N_tracers pull out of the
+              sample dict, and the area default.
+      mean  : fourier_space._mean_z_eff_for_sample(...), the helper
+              _worker_run_mean_targets calls whenever its z_eff task field is
+              None (the generator default -- --z-eff still pins it).
+
+    Note `area` is deliberately NOT passed to run_fisher: the covar path
+    defaults it to dataset_area(dataset) internally, while the mean worker
+    receives it as an explicit task field. Forcing them equal here would
+    hide a drift between those two routes to the footprint.
+    """
+    print("\n=== z_eff consistency (covar pipeline vs mean pipeline) ===")
+    # The mean worker is handed an explicit area; mirror generate_mean_data.py.
+    area = float(sf_core.dataset_area("dr1"))
+    cases = [("N x 0.50", {}, 0.5),
+             ("N x 1.00", {}, 1.0),
+             ("N x 1.50", {}, 1.5),
+             ("omega_cdm +5%", {"omega_cdm": FID_SAMPLE["omega_cdm"] * 1.05}, 1.0),
+             ("h -3%", {"h": FID_SAMPLE["h"] * 0.97}, 1.0)]
+    fails = 0
+    print(f"{'tracer':>8s} {'case':>15s} {'z_eff covar':>14s} "
+          f"{'z_eff mean':>14s} {'rel dev':>10s}")
+    for t in tracers:
+        z_grid = []
+        for i, (name, pert, n_factor) in enumerate(cases):
+            # N_tracers via _fid_sample_for -> util.ntracers; never hardcoded.
+            sample = {**_fid_sample_for(t, n_factor), **pert}
+            z_cov = float(fourier_space.run_fisher(
+                sample, tracer_bin=t, param_defaults=sf_core.PARAM_DEFAULTS,
+                dataset="dr1")["z_eff"])
+            z_mean = float(fourier_space._mean_z_eff_for_sample(
+                {**sf_core.PARAM_DEFAULTS, **sample}, t, area, "dr1"))
+            dev = abs(z_mean - z_cov) / z_cov
+            ok = dev < _ZEFF_CONSISTENCY_TOL
+            fails += not ok
+            z_grid.append(z_cov)
+            print(f"{t if i == 0 else '':>8s} {name:>15s} {z_cov:14.8f} "
+                  f"{z_mean:14.8f} {dev:10.1e}{'' if ok else '  <-- FAIL'}")
+        spread = (max(z_grid) - min(z_grid)) / min(z_grid)
+        sok = spread > _ZEFF_SPREAD_MIN
+        fails += not sok
+        print(f"{'':>8s} {'  spread':>15s} {'':>14s} {'':>14s} {spread:10.1e}"
+              f"{'' if sok else '  <-- FAIL (z_eff frozen?)'}")
+
+    print("\n  Both columns bottom out in core._fs_compute_z_eff, so a passing")
+    print("  'rel dev' is not an arithmetic result -- it says the two call")
+    print("  sites assembled the same arguments (cosmology mapping, area,")
+    print("  N_tracers, dataset). The 'spread' row is the range of z_eff over")
+    print("  the grid, and must be non-zero or the rows above pass vacuously:")
+    print("  that is precisely how the pre-S42 frozen-z_eff bug would hide.")
+    print(f"  Tolerances: consistency {_ZEFF_CONSISTENCY_TOL:g} "
+          f"(observed: exactly 0), min spread {_ZEFF_SPREAD_MIN:g}.")
+    if fails:
+        raise SystemExit(f"  {fails} z_eff consistency check(s) FAILED")
+    print("  covar and mean derive the same z_eff at every grid point.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--check",
                    choices=["fiducial", "scaling", "damping", "kmax",
-                            "mean-ap", "fiducial-id", "all"],
+                            "mean-ap", "fiducial-id", "zeff-consistency",
+                            "all"],
                    default="all")
     p.add_argument("--tracers", nargs="*", default=None,
                    choices=list(TRACER_TYPE_CHOICES),
@@ -476,6 +588,8 @@ def main() -> int:
         check_fiducial_identity()
     if args.check in ("mean-ap", "all"):
         check_mean_ap(tracers)
+    if args.check in ("zeff-consistency", "all"):
+        check_zeff_consistency(tracers)
     return 0
 
 
