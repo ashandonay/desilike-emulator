@@ -1,3 +1,4 @@
+import warnings
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Type
@@ -202,6 +203,48 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
 _CSV_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
 _NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {csv_label: passed}
 _COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {component: passed}
+
+_DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
+
+
+def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
+    """Footprint in deg^2 for ``tracer_bin``: `area_deg2` from tracers.yaml.
+
+    The area is NOT one number per release. DESI 2024 II Table 2 gives it per
+    tracer CLASS, because priority vetoes remove sky from lower-priority
+    samples (a QSO target can veto an LRG) and the imaging vetoes differ:
+
+        BGS 7473    LRG 5740    ELG 5924    QSO 7249
+
+    against the ~7500 nominal DR1 footprint. Using 7500 everywhere inflates V
+    by 1.31x for LRG and 1.27x for ELG, which depresses nbar = N/V by the same
+    factor -- most of the n(z) gap measured in shapefit CHANGELOG S50 -- and
+    inflates the covariance mode count. BGS (0.996) and QSO (0.967) are barely
+    affected, which is why they behaved differently from LRG/ELG throughout
+    S46-S51.
+
+    ``area`` is survey GEOMETRY and is held fixed: `N_tracers` is the design
+    variable and scales the DENSITY within this footprint. Scaling area with N
+    instead would leave nbar invariant and the design axis inert.
+
+    Falls back to the release footprint, with a warning, for bins carrying no
+    `area_deg2` (e.g. Lya_QSO).
+    """
+    cfg = TRACER_CONFIGS.get(tracer_bin.strip(), {})
+    area = cfg.get("area_deg2")
+    if area is not None:
+        return float(area)
+    try:
+        fallback = _DATASET_AREA_FALLBACK[dataset]
+    except KeyError:
+        raise ValueError(
+            f"Unknown dataset {dataset!r}; "
+            f"known: {sorted(_DATASET_AREA_FALLBACK)}") from None
+    warnings.warn(
+        f"tracers.yaml has no `area_deg2` for {tracer_bin!r}; falling back to "
+        f"the {dataset} footprint ({fallback:.0f} deg^2). Per-tracer areas are "
+        "DESI 2024 II Table 2 -- see shapefit CHANGELOG S54.")
+    return float(fallback)
 
 
 def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:

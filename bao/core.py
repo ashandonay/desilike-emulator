@@ -249,6 +249,57 @@ def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
     return float(n_tracers) / ref
 
 
+_DESI_NX_CACHE: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
+
+
+def _desi_nz_geometry(tracer_bin: str, nbar_file):
+    """(nx, S1) for a tracer's slices, from DESI's own random catalogues.
+
+    `{tracer}_desi_nx.csv` is built from the v1.5 randoms and aggregated onto
+    this tracer's slice edges:
+
+      nbar_desi_nx  weighted mean of the `NX` column = n(z) <C_assign>(n_tile)
+                    (2411.12020 Eq. 8.3), the density DESI's own `WEIGHT_FKP`
+                    is built from. A DENSITY: scales with N_tracers.
+      S1_weight     sum of the `WEIGHT` column (completeness x z-failure x
+                    imaging systematics, Eqs. 8.1-8.2). Mask, tiling and
+                    per-region normalization -- survey GEOMETRY, fixed in N.
+
+    Both are randoms-derived: selection function, not clustering. See
+    shapefit CHANGELOG S51-S53.
+
+    Returns `(nbar_file, None)` with a warning when no table exists, so callers
+    fall back to the density form. LRG3_ELG1 (the BAO combined bin) has none --
+    it needs the LRG+ELG_LOPnotqso catalogue, which was never extracted.
+    """
+    if tracer_bin not in _DESI_NX_CACHE:
+        path = (Path.home() / "data" / "desi" / "nz_slices"
+                / f"{tracer_bin}_desi_nx.csv")
+        entry = None
+        if path.exists():
+            df = pd.read_csv(path)
+            nx = df["nbar_desi_nx"].to_numpy(dtype=np.float64)
+            s1 = df["S1_weight"].to_numpy(dtype=np.float64)
+            ok = (nx.size == len(nbar_file) and np.all(np.isfinite(nx))
+                  and np.all(nx > 0) and np.all(np.isfinite(s1))
+                  and np.all(s1 > 0))
+            if ok:
+                entry = (nx, s1)
+            else:
+                warnings.warn(
+                    f"{path.name}: {nx.size} rows vs {len(nbar_file)} slices, "
+                    "or non-positive values; falling back to nbar_file.")
+        _DESI_NX_CACHE[tracer_bin] = entry
+    entry = _DESI_NX_CACHE[tracer_bin]
+    if entry is None:
+        warnings.warn(
+            f"No DESI n(z) geometry table for {tracer_bin!r}; z_eff falls back "
+            "to `nbar_file`, which runs high and degrades agreement with "
+            "DESI's published z_eff (shapefit CHANGELOG S53).")
+        return np.asarray(nbar_file, dtype=np.float64), None
+    return entry
+
+
 def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
                         n_tracers=None, dataset: str = "dr1") -> float:
     """DESI's effective redshift, DESI 2024 III Eq. (2.1).
@@ -327,11 +378,30 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     sky_frac = float(area_deg2) / 41252.96
     V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
 
-    nbar = (np.asarray(nbar_file, dtype=np.float64)
-            * _nz_scale_factor(tracer_bin, n_tracers, dataset))
-    # Eq. (2.1): weight by the SQUARE of the weighted number density.
-    n_weighted = nbar / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
-    w = n_weighted ** 2 * V_bin
+    # Eq. (2.1)'s n_ran is the WEIGHTED RANDOM DENSITY, and its weights include
+    # completeness / z-failures / imaging systematics (the `WEIGHT` column,
+    # 2411.12020 Eqs. 8.1-8.2), not just FKP. Two separable pieces:
+    #
+    #   S1_s   sum WEIGHT per slice -- mask and tiling geometry. FIXED in N.
+    #   nx_s   DESI's `NX` = n(z) <C_assign> (Eq. 8.3) -- the density their own
+    #          WEIGHT_FKP is built from. SCALES with N.
+    #
+    #   n_ran,s = S1_s * w_fkp(z_s ; nx_s)  /  V_s
+    #
+    # so the Eq. (2.1) weight is (S1_s w_fkp)^2 / V_s. Reproduces DESI's
+    # published z_eff to 0.064% mean when evaluated on their randoms directly.
+    #
+    # `nbar_file` is NOT n_ran (1.19-2.37x high, per-tracer) and the covariance
+    # path (`fkp_analytic_cov.load_nz_slices`, N*frac/V) is a THIRD value again.
+    # See shapefit CHANGELOG S51-S53.
+    nx, s1 = _desi_nz_geometry(tracer_bin, nbar_file)
+    nbar = nx * _nz_scale_factor(tracer_bin, n_tracers, dataset)
+    w_fkp = 1.0 / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
+    if s1 is None:
+        # No geometry table: fall back to the density form, n_ran = nbar w_fkp.
+        w = (nbar * w_fkp) ** 2 * V_bin
+    else:
+        w = (s1 * w_fkp) ** 2 / V_bin
     if w.sum() <= 0.0:
         # Degenerate n̄ (e.g. nbar_file all zero); V-weighted mean.
         return float(np.sum(V_bin * z_mid) / np.sum(V_bin))

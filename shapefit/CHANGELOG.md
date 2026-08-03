@@ -3630,3 +3630,103 @@ statistics" alone — the **θ-cut** removes the small-angle bias and is the DR1
 default. Our pipeline has no θ-cut. Adopting DESI's weighting therefore matches
 their *weights* but not their *pair cut*; say so explicitly rather than implying
 full equivalence.
+
+## §53 — z_eff computed DESI's way: 0.313% -> 0.062%
+
+Three coupled corrections, landed together because each alone makes things worse
+(§49). Benchmarked by `shapefit/benchmark_desi.py`.
+
+### 1. Eq. (2.1) now uses the WEIGHTED RANDOM density
+
+`n_ran,s = S1_s * w_fkp(z_s ; nx_s)`, so the Eq. (2.1) weight is
+`(S1_s w_fkp)^2 / V_s`, with both inputs from DESI's own v1.5 randoms:
+
+- `S1_s` = `sum WEIGHT` per slice — mask, tiling, per-region normalization.
+  Survey GEOMETRY, fixed in N.
+- `nx_s` = `NX` = `n(z) <C_assign>` (2411.12020 Eq. 8.3) — the density DESI's
+  own `WEIGHT_FKP` is built from. SCALES with N.
+
+Was `nbar_file`, which is neither (1.19-2.37x high per tracer). Shipped as
+`~/data/desi/nz_slices/{tracer}_desi_nx.csv`; falls back with a warning where
+absent (LRG3_ELG1, which needs the LRG+ELG_LOPnotqso catalogue).
+
+### 2. FKP pivots restored to Eq. (8.4)
+
+7000 / 10000 / 4000 / 6000. These are exactly what `_FKP_P0_BY_TYPE` held before
+commit 740402d replaced them with Table-2's `P0(k=0.14)` — a measured clustering
+amplitude, not the convention DESI weights with.
+
+### 3. Footprint is PER TRACER (§54 below)
+
+### Result
+
+| | mean \|err\| | max \|err\| |
+|---|---|---|
+| before | 0.313% | 0.653% |
+| **after** | **0.062%** | **0.121%** |
+| reference (Eq. 2.1 on DESI's randoms, §51) | 0.064% | 0.138% |
+
+At the reference. QSO −0.476% → −0.054%, LRG3 +0.370% → −0.055%, ELG2 +0.653%
+→ −0.013%.
+
+**N-dependence preserved and stronger**: LRG3 +2.10% across [0.5, 1.5] x N_dr1
+(§42 measured +1.22%), ELG2 +0.99%, same sign pattern and ordering. N enters
+only through `w_fkp = 1/(1 + nx*alpha(N)*P0)` — `S1` is geometry and a uniform
+factor would cancel in a weighted mean regardless.
+
+## §54 — the footprint is per TRACER, not per release
+
+DESI 2024 II Table 2 gives area per tracer class, because priority vetoes remove
+sky from lower-priority samples ("a QSO target can remove sky area from lower
+priority samples") and imaging vetoes differ:
+
+| | BGS | LRG | ELG | QSO |
+|---|---|---|---|---|
+| area [deg²] | 7473 | 5740 | 5924 | 7249 |
+| ours was | 7500 | 7500 | 7500 | 7500 |
+| n̄ correction | 1.004 | **1.307** | **1.266** | 1.035 |
+
+Now `area_deg2` in tracers.yaml, read via `util.tracer_area()`.
+
+**This is why BGS was the outlier in §46, §50 and §51**: BGS (0.996) and QSO
+(0.967) barely move, so they never carried the error LRG (0.765) and ELG (0.790)
+did. Three "anomalies" and one cause.
+
+Validated against DESI's own `NX` — our `n_eff` over their FKP²-weighted ⟨NX⟩:
+
+| | BGS | LRG1 | LRG2 | LRG3 | ELG2 | QSO | mean | scatter |
+|---|---|---|---|---|---|---|---|---|
+| before | 0.998 | 0.758 | 0.735 | 0.466 | 0.631 | 0.972 | 0.760 | 24.3% |
+| after | 1.001 | 0.991 | 0.961 | 0.629 | 0.802 | 1.010 | **0.899** | **15.5%** |
+
+Confirms §50's n(z) gap was the footprint. LRG3 (0.629) remains open — its n(z)
+falls steeply across 0.8–1.1, so the FKP-weighted mean is sensitive to shape.
+
+⚠️ Area is GEOMETRY and is held fixed. `N_tracers` is the design variable and
+scales the DENSITY within the footprint; scaling area with N instead would leave
+n̄ invariant and the design axis inert. Caveat: the areas are coupled across
+tracers by the priority ordering, so a design that changed observing priorities
+would move them, and the pipeline would not know.
+
+### What did NOT improve, and why that is expected
+
+`--check shot` ratios move 0.699 -> 0.535 (LRG2). That compares `1/n_eff` to
+DESI's `S/A` with `A` the mesh norm we have NOT implemented (§46/§47). We have
+corrected the density while the normalization is still ours, so the comparison
+is mismatched in a new way. Not a regression: §46 already established the
+shot-noise gap is the norm, not n̄.
+
+### Still open
+
+- The mesh norm in the covariance path (§46/§47).
+- `fkp_analytic_cov.py:51` `P_FKP_DEFAULT = 1.0e4` is still uniform across
+  tracers where Eq. (8.4) wants 7000/4000/6000 for BGS/ELG/QSO.
+- The covariance still uses a THIRD n(z) (`load_nz_slices`, N*frac/V) — now
+  improved by the area fix but not yet routed through `NX`.
+- LRG3's residual density ratio, 0.629.
+
+### Regeneration
+
+z_eff is a per-sample emulator input (§42), so this invalidates the goldens and
+BOTH v2 training sets. Do the remaining items above before regenerating, so the
+cost is paid once.

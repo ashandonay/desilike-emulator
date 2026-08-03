@@ -104,9 +104,10 @@
 
 BGS:
   tracer_type: BGS
+  area_deg2: 7473  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [0.1, 0.4]
   z_eff: 0.295                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 9.2e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 7.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
@@ -115,9 +116,10 @@ BGS:
 
 LRG1:
   tracer_type: LRG
+  area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [0.4, 0.6]
   z_eff: 0.510                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
@@ -126,9 +128,10 @@ LRG1:
 
 LRG2:
   tracer_type: LRG
+  area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [0.6, 0.8]
   z_eff: 0.706                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
@@ -141,9 +144,12 @@ LRG3_ELG1:
   # Full shape uses the LRG3 block below instead.
   analyses: [bao]
   tracer_type: MIX
+  # No Table 2 row: this bin mixes LRG (5740) and ELG (5924). Take LRG's, since
+  # LRG dominates; the two differ by 3% so the choice is not consequential.
+  area_deg2: 5740                # DESI 2024 II Table 2, LRG-dominated combined bin
   zrange: [0.8, 1.1]
   z_eff: 0.930                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 5.9e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
@@ -159,9 +165,10 @@ LRG3:
   # 2.18 that fully explained the old scorecard outlier (shapefit CHANGELOG S31).
   analyses: [shapefit]
   tracer_type: LRG
+  area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [0.8, 1.1]
   z_eff: 0.919                   # FALLBACK ONLY; DESI 2024 V Table 1 (LRG3)
-  fkp_p0: 8.4e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0                # LRG value, as LRG1/LRG2 - not the MIX blend
   smoothing_scale: 15.0          # unused pre-recon; kept for schema symmetry
   f_interloper: 0.002            # LRG value (Adame+24 Table 2), not the blend
@@ -172,9 +179,10 @@ LRG3:
 
 ELG2:
   tracer_type: ELG
+  area_deg2: 5924  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [1.1, 1.6]
   z_eff: 1.317                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 2.9e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 4.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
@@ -183,9 +191,10 @@ ELG2:
 
 QSO:
   tracer_type: QSO
+  area_deg2: 7249  # DESI 2024 II Table 2, after priority+imaging vetoes
   zrange: [0.8, 2.1]
   z_eff: 1.491                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 5.0e3         # DESI 2024 III Table 2, P0(k=0.14)
+  fkp_p0: 6.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z

@@ -83,7 +83,7 @@ from desilike.theories.galaxy_clustering import (
 )
 from desilike.theories.primordial_cosmology import get_cosmo
 
-from util import get_tracer_config
+from util import get_tracer_config, tracer_area
 
 # Shared survey-physics + sampling machinery from the production BAO pipeline.
 # Imported as a module (never `import core` — that would self-import when the
@@ -494,9 +494,13 @@ def build_shapefit_likelihood(
             f"tracer_type missing from tracers.yaml entry for {tracer_bin!r}."
         )
 
-    # Footprint: explicit override wins, else the dataset's area. Never a
-    # frozen default -- see dataset_area().
-    area = float(area) if area is not None else dataset_area(dataset)
+    # Footprint: explicit override wins, else this TRACER's area. The area is
+    # per tracer class, not per release -- priority and imaging vetoes remove
+    # different sky from different samples (DESI 2024 II Table 2: BGS 7473,
+    # LRG 5740, ELG 5924, QSO 7249 against a ~7500 nominal). Using 7500 for all
+    # inflates V by 1.31x on LRG and 1.27x on ELG. Never a frozen default --
+    # see util.tracer_area() and shapefit CHANGELOG S54.
+    area = float(area) if area is not None else tracer_area(tracer_bin, dataset)
 
     cosmo = get_cosmo(("DESI", dict(theta_cosmo)))
     fo = cosmo.get_fourier()
