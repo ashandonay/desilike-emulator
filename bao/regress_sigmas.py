@@ -127,12 +127,23 @@ def _dump_fourier(out: Dict[str, np.ndarray], tracer: str) -> None:
         cosmo, _ = _sample_for(row)
         sample = {**core.PARAM_DEFAULTS, **config_space._FID, **cosmo}
         theta_cosmo, hrdrag = core._to_bao_cosmo_params(sample)
+        # z_eff is DERIVED here, not pinned from the yaml. Pinning it made the
+        # golden blind to the entire z_eff code path: it never reached
+        # _compute_z_eff_from_nz, so §36 and §37 both changed production
+        # labels while the regression stayed green. The lowN/highN grid rows
+        # now also exercise the N dependence (§37a), since z_eff moves with
+        # the sample size.
+        #
+        # NOTE the config dump above deliberately does the opposite -- config
+        # space pins z_eff from the DESI bundle by design (§36), so pinning
+        # there IS production behaviour.
         info = core.build_bao_likelihood(
             N_tracers=N_factor * N_fid, theta_cosmo=theta_cosmo,
             hrdrag=hrdrag, tracer_bin=tracer, zrange=cfg["zrange"],
-            z_eff=float(cfg["z_eff"]), area=_AREA, apmode=apmode,
+            area=_AREA, apmode=apmode,
         )
         pfx = f"fourier/{tracer}/{label}"
+        _record(out, f"{pfx}/z_eff", float(info["z_eff"]))
 
         # Raw desilike surfaces.
         for name, arr in info["cov_components"].items():

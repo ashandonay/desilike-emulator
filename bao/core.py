@@ -2061,6 +2061,12 @@ def build_bao_likelihood(
         "observable": observable,
         "is_lya": is_lya,
         "cov_components": cov_components,
+        # Surfaced so callers can see WHICH z_eff was used -- it is derived
+        # here unless pinned, and it moves with both cosmology and N_tracers
+        # (§37). shapefit's build_shapefit_likelihood has always returned it;
+        # this closes that asymmetry and lets the regression harness record it
+        # directly instead of only through everything downstream.
+        "z_eff": float(z),
     }
 
 
