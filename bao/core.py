@@ -194,10 +194,17 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
     return z_mid, np.column_stack([z_lo, z_hi]), frac, nbar_file
 
 
-# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), by tracer type.
+# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), per tracer BIN
+# (values live in tracers.yaml as `fkp_p0`; DESI 2024 III Table 2).
 # These are DESI's DR1 analysis choices (KP3 / Adame+24), not free parameters:
 # the weight definition is part of how the published measurements — and their
 # quoted z_eff — are constructed.
+#
+# Used in exactly ONE place: the z_eff derivation below. The V_eff -> n_eff
+# mapping does NOT use this pivot -- it band-averages the FKP weight over the
+# BAO kernel with the galaxy power P_g(k) computed from the HOD bias
+# (_fkp_band_weight_sq), so nothing about the forecast's effective density
+# depends on P_0.
 # Which z_eff definition the pipeline reports. See _compute_z_eff_from_nz.
 #   "desi_eq21"   DESI 2024 III Eq. (2.1): weight (n̄ w_FKP)^2 V   (default)
 #   "desi_fkp"    linear FKP weight, n̄ V w_FKP        (§36; WRONG power)

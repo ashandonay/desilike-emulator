@@ -395,10 +395,17 @@ def _fs_compute_z_eff(
 
     Dispatches on bao_core.Z_EFF_CONVENTION, so the FS and BAO pipelines
     cannot drift apart on this. Under the default ("desi_eq21") the FS-specific
-    band averaging is irrelevant -- DESI's weight uses a fixed FKP pivot, not
-    P(k) -- so this delegates and `fo`/`b1` go unused.
+    band averaging is irrelevant -- DESI 2024 III Eq. (2.1) weights by the
+    squared weighted random density at a FIXED FKP pivot, not P(k) -- so this
+    delegates and `fo`/`b1` go unused.
 
-    The retained V_eff convention ("fisher_veff"):
+    Both DESI names are accepted so that a bao-side rename cannot silently drop
+    the FS pipeline into the fallback below: an `== "desi_fkp"` test would go
+    False the moment the default became "desi_eq21", and shapefit would revert
+    to the 10.3%-error convention with nothing raising.
+
+    The retained V_eff convention ("fisher_veff"), 10.3% off on QSO because it
+    uses the z-DEPENDENT P_g(k,z) instead of the constant pivot:
 
     z_eff = sum_i z_i V_i_eff / sum_i V_i_eff with
     V_i_eff = V_i x <(n_i P_i(k)/(1+n_i P_i(k)))^2>_band, the FKP weight
@@ -505,9 +512,11 @@ def build_shapefit_likelihood(
                 fo=fo,
                 area_deg2=float(area),
                 b1=float(cfg.get("bias_recon", 2.0)),
-                # See bao_core._desi_z_eff_from_nz: the FKP weight is not
-                # linear in n̄, so the sample size does not cancel out of
-                # z_eff. Up to 1.22% across the emulator box (LRG3).
+                # z_eff moves with the sample size -- the FKP weight is not
+                # linear in n̄, so alpha does not cancel (bao_core
+                # _desi_z_eff_from_nz), up to 1.22% across the emulator box
+                # on LRG3. Must match what the BAO pipeline does, or the two
+                # derive different z_eff for the same tracer and N.
                 n_tracers=float(N_tracers),
                 dataset=dataset,
             )
