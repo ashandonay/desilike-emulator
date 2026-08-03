@@ -3588,3 +3588,45 @@ quantities can be fixed **together** and checked against 0.064%:
 
 If our z_eff does not approach 0.064% with all three, something else is wrong —
 which is a far better test than any we have had.
+
+## §52 — what DESI's `WEIGHT` column actually is (2411.12020, verified)
+
+Needed before implementing §51, since `S1_s = sum WEIGHT` is the geometry term.
+
+| symbol | definition | ref |
+|---|---|---|
+| `f_TLID` | inverse of the number of unique DESI targets competing for that tile+fiber | §5.1 |
+| `w_comp = 1/f_TLID` | fiber-assignment completeness; "analogous to the SDSS close pair weight" | Eq. (5.2) |
+| `f_tile` | per-`t_group` completeness for what `f_TLID` misses (fiber lost to a standard star/sky; ELG losing to an LRG). Analogous to SDSS sectors / `C_BOSS` | §5.1 |
+| `w_zfail` | redshift-failure weight | §7 |
+| `w_imsys` | imaging-systematics weight | §6 |
+| `w'_tot = w_comp w_zfail w_imsys` | | Eq. (8.1) |
+| **`w_tot = w'_tot / <w_comp>(n_tile)`** | **= the `WEIGHT` column** | Eq. (8.2) |
+
+### Three consequences
+
+1. **`WEIGHT` is NOT `1/completeness`.** Eq. (8.2) divides the mean completeness
+   at each `n_tile` back out, so total data counts "sum to approximately the
+   number of observed objects" while still tracking selection variation. What
+   remains is the *variation about* the mean, not the mean. Consistent with §46:
+   our per-bin counts match `N_dr1` **exactly**, rather than exceeding it.
+2. **`f_tile` is applied to the RANDOMS, not the data** (§5.3, §8.1). So the data
+   and random `WEIGHT` columns are different quantities — relevant because
+   `S1_s` was extracted from randoms.
+3. **Random weights are sampled FROM galaxies** (§8.1): randoms take redshifts
+   and all weights "from randomly chosen galaxies", present "purely to make sure
+   that their weighted (normalized) redshift distribution matches the data."
+
+Point 3 explains §51's shape agreement: our `slice_fraction` matched the `S1`
+shape to **0.77%** because the randoms' radial distribution is shuffled *from*
+the data and must match by construction. It also confirms `S1_s` is a
+**geometric** quantity — mask, tiling, per-region normalization — not an
+independent re-measurement of n(z). That is the footing policy allows.
+
+### ⚠️ Caveat for implementation
+
+§5.3 states the fiducial `w_comp` "does not produce unbiased 2-point clustering
+statistics" alone — the **θ-cut** removes the small-angle bias and is the DR1
+default. Our pipeline has no θ-cut. Adopting DESI's weighting therefore matches
+their *weights* but not their *pair cut*; say so explicitly rather than implying
+full equivalence.
