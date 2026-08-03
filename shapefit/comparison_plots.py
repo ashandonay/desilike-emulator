@@ -380,9 +380,16 @@ def plot_rho(data, tracers, out_path):
 # (index into the DESI 4-vector, sigma key, y label, Table 11 key, q label,
 #  legend corner -- residuals run one-signed in each panel, D_V/r_d negative and
 #  D_H/D_M positive, so the free corner is opposite in each)
+# Legend placement is "best", not a fixed corner, deliberately. These panels
+# plot a residual whose SCALE keeps shrinking as the pipeline improves -- the
+# D_H/D_M range went from +15.9% to -2.97% to -0.90% over three z_eff
+# corrections in one day -- so any hardcoded position is chosen against a
+# layout that no longer exists. "center left" was fine when the panel spanned
+# -3%..+1%; at +-1% it sat on top of the BGS/LRG1/LRG2 markers and read as
+# missing data.
 _DIST_PANELS = [
-    (0, "sigma_qiso", r"$D_V/r_d$", "DV_over_rd", r"$q_{\rm iso}$", "lower left"),
-    (1, "sigma_qap", r"$D_H/D_M$", "DH_over_DM", r"$q_{\rm ap}$", "center left"),
+    (0, "sigma_qiso", r"$D_V/r_d$", "DV_over_rd", r"$q_{\rm iso}$", "best"),
+    (1, "sigma_qap", r"$D_H/D_M$", "DH_over_DM", r"$q_{\rm ap}$", "best"),
 ]
 
 
