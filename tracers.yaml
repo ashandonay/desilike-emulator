@@ -82,6 +82,7 @@ BGS:
   tracer_type: BGS
   zrange: [0.1, 0.4]
   z_eff: 0.295                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 9.2e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
@@ -92,6 +93,7 @@ LRG1:
   tracer_type: LRG
   zrange: [0.4, 0.6]
   z_eff: 0.510                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
@@ -102,6 +104,7 @@ LRG2:
   tracer_type: LRG
   zrange: [0.6, 0.8]
   z_eff: 0.706                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
@@ -112,6 +115,7 @@ LRG3_ELG1:
   tracer_type: MIX
   zrange: [0.8, 1.1]
   z_eff: 0.930                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 5.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
@@ -122,6 +126,7 @@ ELG2:
   tracer_type: ELG
   zrange: [1.1, 1.6]
   z_eff: 1.317                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 2.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
@@ -132,6 +137,7 @@ QSO:
   tracer_type: QSO
   zrange: [0.8, 2.1]
   z_eff: 1.491                   # config-space anchor; = DESI bundle (see header)
+  fkp_p0: 5.0e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z

@@ -188,6 +188,11 @@ def get_bao_fisher_covariance(
         area=area,
         resolution=resolution,
         tracer_config=tracer_config,
+        # Forward the dataset: it is the reference count z_eff's N-scaling is
+        # measured against (core._nz_scale_factor), so a dr2 caller resolving
+        # against dr1 would silently mis-scale n(z). Previously build_bao_
+        # likelihood had no dataset argument and this was unreachable.
+        dataset=dataset,
         override_sigmas=override_sigmas,
         n_iter=n_iter,
         include_fog=include_fog,
