@@ -126,12 +126,21 @@ def main() -> None:
     if args.priors_json:
         priors = parse_priors(args.priors_json)
     else:
-        priors = {k: dict(DEFAULT_PRIORS[k]) for k in model_params}
+        # N_tracers FIRST, matching generate_covar_data.py. Both emulators are
+        # consumed by the same bedcosmo code path, and a mean vector ordered
+        # [cosmo..., N_tracers] against a covar vector [N_tracers, cosmo...]
+        # is a silent transposition for anything that indexes by position
+        # rather than by param_names. Dict order is insertion order, and this
+        # order is what save_dataset records.
+        varied_keys = ["N_tracers"] + model_params
+        priors = {k: dict(DEFAULT_PRIORS[k]) for k in varied_keys}
 
     # N_tracers is a mean-emulator INPUT: it moves z_eff, and the compressed
     # parameters are defined AT z_eff, so the predicted mean genuinely depends
     # on the sample size (shapefit CHANGELOG S42). Bounds always from
     # ntracers_range -- never hardcoded (bao CHANGELOG S33n).
+    # Overwrites the placeholder value; dict semantics keep the key in its
+    # original (first) position, so the recorded order is unaffected.
     priors["N_tracers"] = {
         "dist": "uniform",
         "low": ntracers_range(args.tracer_bin, args.dataset)[0],
