@@ -2815,3 +2815,713 @@ question the emulator exists to answer.
 "More tracers = uniform rescaling of n(z)" holds the SHAPE fixed. Realistically
 deeper observation also shifts the shape (more high-z objects), which would
 move z_eff further. The numbers above are the conservative version.
+
+## §43 — All six full-shape bundles fetched; §27a's "LRG-specific" n̄ deficit is REFUTED
+
+### The blocker is gone
+
+All six `likelihood_spectrum-poles-rotated_syst-hod_*_thetacut0.05.h5` are now in
+`~/data/desi/bao_dr1/likelihoods/`. The CFS path, previously only guessed:
+
+```
+/global/cfs/cdirs/desi/public/dr1/vac/dr1/full-shape-bao-clustering/v1.0/data/likelihood/
+```
+
+LRG2's fetched copy is **md5-identical** to the pre-existing local one, which
+validates the transfer of the other five. `compare_to_desi.py:_FS_BUNDLES` was
+hardcoded to LRG2 (written when that was all we had); it is now derived from
+`_DESI_SAMPLE`, so the two cannot drift apart, and absent files drop out
+silently as before.
+
+Access notes for next time — `data.desi.lbl.gov` and `portal.nersc.gov` are both
+Spin-backed and stay down for the whole outage; the NOIRLab mirror is up but
+carries only `spectro/`, no `vac/`. The DTNs stay up when Perlmutter is down
+(they front CFS). NERSC firewalls **outbound** ssh from the DTNs, so you must
+PULL from entropy, not push. `dtn01` resolves IPv6-only.
+
+### The measured shot noise
+
+`observable/spectrum/0/{norm, num_shotnoise}` — the covariance files carry
+`1`/`0` placeholders, only the bundles have the real values.
+
+| bin | norm A | num_shotnoise S | P_shot = S/A |
+|---|---|---|---|
+| BGS | 6.974617 | 39916.47 | 5723.11 |
+| LRG1 | 5.702207 | 28975.91 | 5081.53 |
+| LRG2 | 8.900322 | 46544.19 | 5229.50 |
+| LRG3 | 11.988125 | 114768.89 | 9573.55 |
+| ELG2 | 62.459913 | 667820.14 | 10691.98 |
+| QSO | 14.409514 | 682678.92 | 47376.96 |
+
+### 🔴 §27a was wrong: the deficit is universal, not LRG-specific
+
+`s ≡ Pshot_ours/Pshot_DESI` is the n̄ rescale that reconciles us with DESI.
+
+| tracer | z_eff | s (P_shot) | s (V_eff, §27a) | comp |
+|---|---|---|---|---|
+| BGS | 0.296 | 0.549 | 0.987 | 0.636 |
+| LRG1 | 0.510 | 0.699 | 0.792 | 0.693 |
+| LRG2 | 0.706 | 0.699 | 0.798 | 0.693 |
+| LRG3 | 0.922 | 0.752 | — | 0.693 |
+| ELG2 | 1.326 | 0.800 | 1.041 | 0.352 |
+| QSO | 1.484 | 0.773 | 1.016 | 0.874 |
+
+**LRG mean 0.717, non-LRG mean 0.707 — a difference of 0.009.** Every tracer is
+low, at s = 0.712 with 11.5% scatter. §27a's "LRG-specific and ~20%, with BGS /
+ELG2 / QSO within 4%" was an artifact of using V_eff, which **saturates where
+n̄P ≫ 1 and is therefore blind to the sparse tail that sets shot noise**. §27
+anticipated this ("V_eff is the weak probe... a null result cannot refute
+dispersion, only fail to confirm it") — it turns out V_eff did not merely fail
+to confirm, it pointed the wrong way. The V_eff − P_shot gap is **positive for
+all five comparable tracers** (mean +0.223, max +0.438 on BGS), exactly the
+signature of that blindness.
+
+### What it is, and is not
+
+- **Not completeness**: corr(s, comp) = −0.127, consistent with zero. Fourth
+  independent strike after §26c, §27 and §27a — and the first from the sharp
+  probe rather than a plausibility argument.
+- **Tracks z_eff**: corr = **+0.869**, monotone apart from QSO. Worst at low z
+  (BGS 0.549), approaching 0.8 by ELG2. The defect is in the **redshift
+  behaviour of the FKP V_eff→n_eff mapping**, not in any per-tracer catalog
+  property.
+
+⚠️ Do **not** close this with a fitted per-tracer or global n̄ rescale. That is
+precisely the fudge factor policy forbids. The z-trend is the lead to chase.
+
+Speculative and NOT established: the BAO forecast's uniform ~23% σ
+under-prediction (P/D ≈ 0.72–0.80) spans nearly the same range, and both would
+follow from n_eff being too high. Untested.
+
+## §44 — `W C Wᵀ` is invalid for the Fourier window (and valid for config space)
+
+### The observation
+
+`--check window` on all six tracers. Engine control (analytic vs desilike, same
+grid, no window) is 0.99–1.09 everywhere, so the window/no-window differences
+are the window and not the engine swap.
+
+| tracer | unwindowed | windowed | offdiag ours/DESI |
+|---|---|---|---|
+| BGS | 1.111 | 0.266 | 0.391 |
+| LRG1 | 2.332 | 0.574 | 0.565 |
+| LRG2 | 2.038 | 0.510 | 0.537 |
+| LRG3 | 1.768 | 0.608 | 0.476 |
+| ELG2 | 0.836 | 0.320 | 0.403 |
+| QSO | 0.726 | 0.344 | 0.205 |
+
+Windowing drops our covariance by 3.3× on average, landing at 0.44 of DESI's
+with only 43% of its bin-to-bin correlation. Both symptoms at once.
+
+Note §19's headline **0.815 for LRG2 is superseded** — the post-damping-fix
+value is 2.05 → 0.512, and we reproduce 2.038 → 0.510.
+
+### Ruled out, cheaply
+
+- **Survey area**: `DATASET_AREAS["dr1"] = 7500`, and our geometric volumes
+  reproduce by hand (LRG2 2.775 vs 2.85 Gpc³/h³). Not it.
+- **Window normalization**: `W @ 1` = 0.9418 / 1.0345 / 1.0190 / 0.9688 on the
+  monopole block. Properly normalized. Not it.
+- **The 3 zeroed systematic columns**: fixed templates with free amplitudes
+  carry no variance, so dropping them cannot bias the covariance. §19's "mildly
+  optimistic" remark applies to the theory/derivative side at the Fisher stage,
+  not here.
+- **Sub-fundamental binning of `C_kin`**: `C_kin` IS exactly diagonal
+  (max off-diag corr `0.000e+00`) on a Δk = 0.001 grid whose bins are 4.5×
+  narrower than LRG2's fundamental 2π/L = 0.0045. Looks damning, **is not**:
+  block-averaging the theory grid gives 0.5103 → 0.5069 (×2) → 0.4955 (×5), a
+  no-op. `fkp_analytic_cov` sets `dk = mean(diff(k))`, so the 1/δ variance
+  scaling exactly compensates the independence assumption. Algebra: 5 independent
+  fine bins give `5w²·(5V_coarse)`, one correlated coarse bin gives
+  `(5w)²·V_coarse` — identical.
+
+### The actual defect
+
+| | theory Δ | obs Δ | bin ratio | M_eff | suppression |
+|---|---|---|---|---|---|
+| **bao config-space** (LRG2, QSO) | 1.00 Mpc/h | 4.00 | 4.00 | **4.00** | **1.000** |
+| **shapefit Fourier** BGS | 0.001 h/Mpc | 0.005 | 5 | 17.8 | 0.282 |
+| LRG2 | | | 5 | 19.1 | 0.262 |
+| ELG2 | | | 5 | 13.5 | 0.371 |
+| QSO | | | 5 | 10.5 | 0.477 |
+
+`M_eff ≡ (ΣW)²/ΣW²` is the effective number of theory bins each observable bin
+draws on. In Fourier it is **2–4× the observable bin width**, so a diagonal
+`C_theory` picks up `ΣW² = (ΣW)²/M_eff` and the variance is suppressed by
+≈ 5/M_eff. That is an **artifact**: the window redistributes modes, it does not
+create independent ones. The mode count in an observable bin is set by the
+survey volume and the bin width, not by the kernel width.
+
+It also explains the second symptom — a diagonal `C_theory` has no correlation
+to propagate, hence the 0.43 off-diagonal.
+
+Underlying reason: `fkp_analytic_cov` reduces, for uniform n̄, to
+`2(P + 1/n̄)²/N_modes` (the `I` integrals supply the volume; `bin_factor/V =
+1/N_modes`). So `C_box` is already the covariance of the FKP estimator `P̂` —
+and `P̂` is itself window-convolved, normalized by the same `I22`. Applying `W`
+convolves a **second** time.
+
+### ✅ Production BAO is NOT affected
+
+`bao/config_space.py:442` uses the same `W @ C_theory @ W.T` pattern, but its
+window is an **exact 4:1 rebinning**: M_eff = 4.00 matching the bin ratio to the
+decimal, row sums exactly 1.0000, suppression exactly 1.000. Block-averaging is
+the correct operation for a diagonal covariance. The same code pattern is valid
+there and invalid here because the correlation-function window is a local rebin
+while the Fourier full-shape window is a genuine mode-mixing kernel — which is
+why the analogy did not catch it.
+
+### What this leaves
+
+The correct Gaussian baseline for shapefit is the FKP covariance on the
+**observable grid** — the "unwindowed" column above, which was never the naive
+comparison it was first labelled. Against DESI, Gaussian-only should sit a
+little below 1 (the non-Gaussian remainder is the rest). ELG2 (0.836) and QSO
+(0.726) are already about right. **The three LRG bins sit at 1.77–2.33, a factor
+~2.5 spread from the others**, and that is the open question.
+
+⚠️ **See §45 — the above "1.77–2.33 for the LRG bins" is NOT established as a
+physical defect.** DESI's covariance sits below the cosmic-variance floor on the
+same tracers, so part or all of that ratio is an unresolved property of the
+comparison, not of our covariance. Do not chase a physical LRG explanation
+before reading §45.
+
+## §45 — DESI's covariance sits BELOW the cosmic-variance floor; §44's LRG claim is withdrawn
+
+### What was chased, and eliminated
+
+§44 closed by calling the LRG bins' 1.77–2.33 "the open question". Four candidate
+causes were tested and **all four are dead**:
+
+1. **n(z) slice volumes.** `Σ Vᵢ / V_geom = 1.000` and `Σ n̄ᵢVᵢ / N_dr1 = 1.000`
+   for all six tracers, exactly. The slices are self-consistent.
+2. **SSC.** 0.0006 (QSO) to 0.098 (BGS) of our diagonal. Removing it entirely
+   leaves 2.05–3.15 against the plain covariance. Not the driver.
+3. **Rotation / θ-cut.** Against the PLAIN (unrotated, no θ-cut) covariance the
+   ratios are *worse*, not better: 2.275 / 3.410 / 3.139 / 2.867 / 1.497 / 1.166.
+4. **Normalization convention.** The plain covariance files carry `norm = 1`,
+   `num_shotnoise = 0` — but these are "already applied" markers, NOT raw-unit
+   flags. Bundle P0 / plain P0 on matched k is 0.921 / 1.072 / 0.952
+   (BGS/LRG2/QSO), where raw units would demand 1/norm = 0.143 / 0.112 / 0.069.
+   Both files are in the same normalized units.
+
+### The actual finding
+
+`N_from_cov ≡ 2(P₀+P_shot)²/Var` is the independent-mode count DESI's covariance
+behaves as if it had. As a multiple of the survey's own `V k²Δk/2π²`:
+
+| tracer | k=0.048 | k=0.098 | k=0.198 |
+|---|---|---|---|
+| BGS | 3.08 | 3.55 | 3.87 |
+| LRG2 | 2.77 | 2.97 | 2.79 |
+| QSO | 1.91 | 2.02 | 2.09 |
+
+**Flat in k** across a 4× range (LRG2: 2.77 / 2.97 / 2.79). A physical effect
+would carry k-structure; a flat offset is a normalization.
+
+And the level is impossible: a covariance cannot behave as if it had 2–4× more
+independent modes than the survey volume supports. That is below the
+cosmic-variance floor. Worse, the floor quoted here is itself conservative —
+with RSD, `Var(P₀) = 2/N ∫dμ/2 [P(k,μ)+1/n̄]² ≥ 2(P₀+1/n̄)²/N` by Jensen — so the
+true floor is higher and the violation larger. Solving for an area that would
+rescue it needs ≥ 22,000 deg², against DR1's 7500 and DESI's 14,000 final.
+
+The violation is confined to the **cosmic-variance-dominated** tracers. It scales
+with n̄P: QSO (n̄P = 0.21) sits at 1.9–2.1, ELG2 (0.63) between, the dense LRG/BGS
+bins (2.7–4.8) at 2.8–3.9. In the shot-noise-dominated limit the discrepancy
+nearly vanishes — which is also why the bundle covariance gives a *physical*
+V_implied/V_geom of 0.99 / 1.06 for ELG2/QSO and 1.29–1.82 for BGS/LRG.
+
+### Consequence
+
+**§44's LRG claim is withdrawn.** Our covariance reproducing ~2–3× DESI's on the
+dense bins cannot be attributed to a defect on our side while DESI's own
+covariance is below the floor by a comparable factor on the same bins. The two
+observations are the same unexplained number seen from opposite ends.
+
+Working rule until this is resolved:
+- The **bundle** covariance is the only internally consistent reference (real
+  `norm`/`num_shotnoise`, physical V_implied for the sparse tracers). The plain
+  covariance files are unusable for absolute levels.
+- Do **not** tune anything against these ratios, and do not build a physical
+  story for the LRG bins on them.
+
+### The check that bypasses all of this
+
+`--check compressed` compares against DESI 2024 V Appendix A's **published**
+constraints on the compressed parameters. That needs no covariance surgery, no
+window, no volume rescaling — and it is the number that actually matters for the
+emulator. It should be the arbiter, not the element-by-element covariance ratio.
+
+### The arbiter, run
+
+`--check compressed` against DESI 2024 V Appendix A, ours/DESI:
+
+| tracer | σ(qiso) | σ(qap) | σ(fσ_r)/fσ_r | σ(m) |
+|---|---|---|---|---|
+| BGS | 0.61 | 0.95* | 0.67 | 0.67 |
+| LRG1 | 0.99 | 1.01 | 1.03 | 1.07 |
+| LRG2 | 0.81 | 0.85 | 0.91 | 0.87 |
+| LRG3 | 0.69 | 0.67 | 0.73 | 0.73 |
+| ELG2 | 0.65 | 0.58 | 0.54 | 0.87 |
+| QSO | 0.78 | 0.81 | 0.75 | 0.94 |
+
+*DESI warns BGS α_AP is prior-dominated (flat 0.8–1.2), so its σ(qap) is a prior
+width, not a measurement.
+
+**0.54–1.07, mostly 0.65–0.95** — where a Fisher forecast at the truth belongs
+against an MCMC posterior. LRG1 is 0.99–1.07.
+
+🔴 **RETRACTED.** This does NOT settle §45. The argument assumed our σ would
+otherwise equal DESI's published σ — but those are MCMC posterior widths with
+nuisance marginalization, and a Fisher forecast at the truth is inherently
+tighter. The two comparisons do not share a denominator.
+
+Chaining them properly (`--check sigma` gives σ_ours(our C)/σ_ours(DESI C);
+`--check compressed` gives σ_ours(our C)/σ_DESI_pub):
+
+| tracer | cov ratio | √(cov ratio) | measured σ swap | ours/pub | with DESI's C |
+|---|---|---|---|---|---|
+| BGS | 1.111 | 1.054 | 1.114 | 0.725 | 0.651 |
+| LRG1 | 2.332 | 1.527 | 1.300 | 1.025 | 0.788 |
+| LRG2 | 2.038 | 1.428 | 1.279 | 0.860 | 0.673 |
+| LRG3 | 1.768 | 1.330 | 1.267 | 0.705 | 0.556 |
+| ELG2 | 0.836 | 0.914 | 0.946 | 0.660 | 0.698 |
+| QSO | 0.726 | 0.852 | 0.952 | 0.820 | 0.861 |
+
+Columns 3 and 4 agree: **the covariance ratio is real and propagates into σ as
+expected**. Column 6 — our Fisher with DESI's own covariance against DESI's
+published MCMC — is 0.56–0.86, a normal Fisher-vs-MCMC gap. So "our covariance
+is 2× large" and "our σ are tighter than published" are fully consistent, and
+the σ comparison never refuted anything.
+
+Correlation structure is broadly right — `qap–f_sigmar` −0.65…−0.73 against
+DESI's −0.53…−0.63 on every tracer, `qiso–qap` +0.22…+0.28 vs +0.21…+0.24 on the
+LRG bins. Two genuine weaknesses, both small and both worth revisiting only after
+the above is resolved: we under-predict `f_sigmar–m` (+0.01…+0.07 vs DESI's
++0.24…+0.37), and several near-zero correlations disagree in sign (|ρ| < 0.1,
+where a Fisher-vs-MCMC sign flip is not meaningful on its own).
+
+### §45a — the covariance ratio is fully accounted for by ONE anomaly
+
+Chaining the implied-volume numbers removes the need for two separate stories.
+For LRG2 against the bundle covariance:
+
+- ours implies **0.917** of the survey's mode count (just below 1, as FKP
+  weighting requires)
+- DESI's implies **1.818**
+- predicted ratio 1.818 / 0.917 = **1.98**; measured **2.038**
+
+That reproduces the whole excess. There is **one** anomaly, not two: our
+covariance sits where a Gaussian FKP calculation should, and DESI's sits below
+the cosmic-variance floor. The "LRG excess" is not a defect on our side, and
+§44's framing of it as one was wrong.
+
+### Table 1's V_eff is in Gpc³, NOT (Gpc/h)³
+
+A trap worth recording. DESI 2024 V Table 1 prints `Veff [Gpc3]` while printing
+`P0 [(h⁻¹Mpc)³]` in the adjacent column. Read naively in (Gpc/h)³ it gives
+V_eff/V_geom = 1.80 / 1.45 / 1.44 for BGS/LRG1/LRG2 — impossible, since
+V_eff = ∫[n̄P/(1+n̄P)]²dV ≤ V, and alarming because those are exactly the three
+bins with the covariance excess. Multiplying by h³ = 0.306:
+
+| tracer | V_eff (Gpc/h)³ | V_geom | ratio |
+|---|---|---|---|
+| BGS | 0.52 | 0.944 | 0.55 |
+| LRG1 | 0.79 | 1.791 | 0.44 |
+| LRG2 | 1.22 | 2.775 | 0.44 |
+| LRG3 | 1.53 | 5.733 | 0.27 |
+| ELG2 | 0.83 | 12.392 | 0.067 |
+| QSO | 0.46 | 32.294 | 0.014 |
+
+All ≤ 1, monotonically ordered by sparsity. **Our geometric volumes are correct**
+and the paper confirms the ~7,500 deg² footprint. Do not re-derive an area from
+Table 1 without the h³.
+
+### Still open
+
+Why DESI's covariance sits below the Gaussian floor. Note the floor should
+arguably be computed with V_eff (0.44 V_geom for LRG2), not V_geom, which makes
+the expected variance *larger* and the violation *worse* — so the resolution is
+not a volume choice. Unresolved; do not tune against these ratios meanwhile.
+
+### Provenance of the published constraints — verified
+
+`desi_reference._SF` and `_T11` were hand-transcribed and are now checked
+against arXiv:2411.12021 directly (`pdftotext -layout`). All **84** `_SF` values
+(6 tracers × 4 data-vector + 10 covariance entries) match verbatim AND
+positionally — the stored sequence is an exact prefix of the numbers in each
+tracer's own Appendix-A section, which rules out transposition, the failure mode
+presence-only matching would miss. All six `_T11` rows confirmed with their
+z_eff row headers. The paper PDF is not in the repo; re-fetch from arXiv if this
+needs redoing.
+
+## §46 — §43 RETRACTED: the shot-noise deficit is a NORMALIZATION convention, not physics
+
+### What §43 claimed, and why it was wrong
+
+§43 concluded the FKP `V_eff → n_eff` mapping mis-sets the shot-noise floor
+(`s = 0.712`, tracking z_eff at r = +0.869) and called the z-trend "the lead to
+chase". **There is no physical deficit.** The mapping is fine, our n(z) is fine,
+and the z-trend was the normalization ratio's tracer ordering in disguise.
+
+Established with the DR1 LSS catalogues (v1.5) read directly on CFS at
+`/global/cfs/cdirs/desi/public/dr1/survey/catalogs/dr1/LSS/iron/LSScats/v1.5/`.
+Galaxy counts in our z-bins match `N_dr1` **exactly** (LRG1 506911, LRG2 771894,
+LRG3 859822, ELG2 1415707; BGS +26, QSO +179), independently confirming our
+sample definitions and the §31 LRG-only LRG3 bin.
+
+### The authority: DESI 2024 II (arXiv:2411.12020) §10, Eqs. (10.5)–(10.6)
+
+```
+A  = (alpha_R / dV) * sum_cells n_D,i n_R,i      dV^(1/3) = 10 Mpc/h  (FIXED)
+N0 = (1/A) [ sum_D w_D,i^2 + alpha_R^2 sum_R w_R,i^2 ]
+alpha_R = sum w_d / sum w_r        (by WEIGHT, not by count)
+```
+
+So the bundle's `num_shotnoise` is the bracket and `norm` is A.
+
+**Shot noise: CONFIRMED to 42 ppm.** Reconstructed from the catalogues for LRG2:
+46546.14 vs the bundle's 46544.19. alpha-by-count gives 46519.7 (5.3e-4), an
+order of magnitude worse — the paper's alpha-by-weight is right. We compute S
+exactly as DESI does.
+
+**Norm: a MESH quantity, not a particle sum.** No particle-sum variant could ever
+have matched, which is why guessing variants was the wrong approach. Measured
+`A_naive = sum_data NX w w_fkp^2` against the bundles:
+
+| bin | A_naive | A_DESI | ratio | required inflation | residual |
+|---|---|---|---|---|---|
+| LRG1 | 8.3182 | 5.7022 | 1.4588 | 1.438 | **1.014** |
+| LRG2 | 12.8853 | 8.9003 | 1.4477 | 1.454 | **0.996** |
+| LRG3 | 16.9079 | 11.9881 | 1.4104 | 1.436 | **0.982** |
+| ELG2 | 77.1786 | 62.4599 | 1.2356 | 1.221 | **1.012** |
+| QSO | 17.3144 | 14.4095 | 1.2016 | 1.257 | **0.956** |
+| BGS | 8.9518 | 6.9746 | 1.2835 | 1.819 | 0.706 |
+
+**Five of six agree to ≤4.4%**, reproducing not just the level but the
+tracer-to-tracer *variation* (LRG ~1.45, ELG2/QSO ~1.2) that defeated every
+physical hypothesis tried.
+
+Mechanism: the particle sum sees the true small-scale density; the mesh smooths
+over 10 Mpc/h cells, which lowers `sum n_D n_R` wherever the selection function
+is patchy below that scale (veto masks, fibre-collision holes, tile boundaries).
+Suppression therefore varies per tracer — correlated with completeness without
+equalling it (LRG 0.686-0.709 vs comp 0.693; but ELG2 0.809 vs comp 0.352).
+
+### Hypotheses killed on the way (do not re-run these)
+
+1. **n_eff definition.** FKP-consistent `A/S` gives 0.702 vs V_eff-match's 0.712.
+   Identical. The functional was never the problem.
+2. **Density dispersion at fixed z.** Needs implausible lognormal sigma = 1.26-1.85
+   for BGS/LRG, and is *unreachable in the wrong direction* for LRG3/ELG2/QSO —
+   adding scatter LOWERS P_shot (QSO 1.00 -> 0.23), because the FKP weight peaks
+   at nbar*P ~ 1 and down-weights both ends. This is also why LRG3's CV(n) = 0.568
+   still yields P_shot/uniform = 0.998.
+3. **Weight dispersion.** Real and large (CV(w) = 0.31-0.61, measured), and it
+   closes most of the *mean* offset (1.40 -> 1.08 residual) — but not the
+   per-tracer pattern, and it over-shoots ELG2 (measured 1.45 vs required 1.22).
+   A genuine survey property, but not the cause here.
+
+### Consequence for the emulator
+
+A splits as `A(N) = [patchiness] x integral(nbar^2 w^2 dV)`. The bracket is a
+property of the MASK and RANDOMS — the same class as a randoms-derived window,
+which policy permits (geometry, not clustering) — and to first order it is
+N-independent, since n_D and n_R both scale linearly and the smoothing ratio
+depends on the shape of the selection function, not its amplitude. Residual
+N-dependence enters only weakly through `w_fkp = 1/(1+nbar*P)`, already modelled.
+**So the N-scaling stays analytic and the DR1 value only calibrates geometry.**
+This is NOT a fudge factor: it is a measured geometric normalization, not a
+tuned parameter, and it does not absorb any cosmology or N dependence.
+
+### Still open
+
+**BGS residual 0.706** — an extra factor 1.42 beyond the norm ratio, unique to
+BGS. Bright-time sample with its own footprint; suspicion is our V_survey/area
+for that bin rather than the norm, but that is a guess and needs its own check.
+
+Other facts from §10 worth keeping: DESI uses **all 18 randoms** ("more than 100x
+the data density"), and per-tracer box sizes 4000/7000/9000/10000 Mpc/h for
+BGS/LRG/ELG/QSO with 6 Mpc/h cells (k_Nyq ~ 0.5). The **10 Mpc/h norm cell is
+separate** from the 6 Mpc/h measurement grid.
+
+## §47 — DESI's norm reproduced from randoms alone: the normalization is GEOMETRY
+
+§46 identified the mesh normalization as the cause but left it as a measured
+ratio `A_naive/A_DESI`, which is a fudge factor by policy and — worse — a fixed
+constant cannot respond to N_tracers. This section removes both objections.
+
+### Reproducing Eq. (10.5) directly
+
+Painted the DR1 v1.5 catalogues onto the 10 Mpc/h grid Eq. (10.5) specifies,
+NGC+SGC, LRG 0.6–0.8, and evaluated two forms:
+
+```
+A_exact = (alpha_R/dV)   sum_cells n_D,i n_R,i      data x randoms
+A_ran   = (alpha_R^2/dV) sum_cells n_R,i^2          randoms only (n_D ~ alpha_R n_R)
+```
+
+| NRAN | A_exact | A_ran raw | A_ran corr | corr/exact | exact/TRUTH |
+|---|---|---|---|---|---|
+| 4 | 9.03945 | 10.75558 | 9.04164 | **1.0002** | 1.0156 |
+| 8 | 9.04465 | 9.89866 | 9.04158 | **0.9997** | 1.0162 |
+
+Three results:
+
+1. **Eq. (10.5) reproduces the bundle norm to 1.6%** (8.900322). The offset is
+   stable across NRAN, so it is not statistical — almost certainly NGP vs DESI's
+   TSC painting. Accept for now; revisit if 1.6% ever matters.
+2. **Randoms-only equals data×randoms to 0.03%** once self-pairs are removed.
+   `n_R,i^2 = sum_j w_j^2 + sum_{j!=k} w_j w_k`; the first term is pure shot
+   noise, so the unbiased estimator is `sum_i n_R,i^2 - sum_all w_r^2`.
+3. **The correction removes the NRAN dependence exactly**, not approximately:
+   raw drifts 10.756 -> 9.899 while corrected moves 9.04164 -> 9.04158 (7e-6).
+
+So the normalization is **pure survey geometry** — no data catalogue, no fitted
+factor, computable from the random catalogues alone. That is the same footing as
+a randoms-derived window, which policy permits.
+
+### ⚠️ Why a single constant is NOT enough
+
+`w_r = WEIGHT x WEIGHT_FKP` and `w_fkp = 1/(1 + nbar*P0)` depends on nbar —
+which is exactly what N_tracers changes. Extracting one `G` at DR1 density would
+silently freeze the FKP weighting and break the N-scaling, i.e. reintroduce the
+§42 failure mode (a constant bias cancels between two N values; an N-dependent
+one does not).
+
+A 10 Mpc/h cell spans a narrow z range, so `w_fkp` is constant within a cell:
+
+```
+n_R,i        = w_fkp(z_i) * m_i          m_i = sum_j w_comp,j   (completeness only)
+sum n_R,i^2  = sum_i w_fkp(z_i)^2 m_i^2
+```
+
+The extraction must therefore be a **per-z-slice geometry summary** — `sum m_i^2`,
+`sum m_i`, cell count, and the self-pair `sum w_comp^2`, on the same z slices as
+`~/data/desi/nz_slices/{tracer}_nz_slices.csv`. Then `A(N)` is analytic: reweight
+each slice by `w_fkp(z; nbar(N))^2` and sum.
+
+### Where this leaves the shot noise
+
+Both halves of `P_shot = S/A` now come from DESI's own definitions:
+- `S` verified to 42 ppm (§46)
+- `A` verified to 1.6%, from geometry, with analytic N-dependence
+
+No fitted parameter anywhere, and nothing that absorbs cosmology or N.
+
+### Method notes
+
+- Distance integrator (flat LCDM, Om = 0.31519 from AbacusSummit c000 incl. one
+  0.06 eV neutrino) agrees with cosmoprimo to 0.007% over z = 0.6–0.8.
+- `np.bincount` on flattened cell indices, not `np.add.at` — the latter is far
+  slower at ~90M points.
+- Grid from the data bounding box + 200 Mpc/h padding: 28.3M cells (NGC),
+  15.8M (SGC) at 10 Mpc/h.
+- Both A forms are invariant to NRAN in the mean (`n_R ~ N_ran`,
+  `alpha_R ~ 1/N_ran`); only the Poisson bias in `sum n_R^2` is not, hence the
+  self-pair subtraction rather than simply using all 18.
+
+## §48 — the per-slice factorization works; the factor 2 was our w_fkp, and it exposes an n(z) discrepancy
+
+### The factorization is sound (11%, not 2x)
+
+Computing both forms in ONE script on ONE grid with ONE z-cut (LRG 0.6–0.8,
+NRAN=2) removes the confounds that made the first comparison unreadable:
+
+```
+Q_exact = sum_i n_R,i^2 - sum_j (w w_fkp)^2                    = 1.52389e6
+Q_recon = sum_s <w_fkp>_s^2 (sum_i m_i^2 - sum_j w_j^2)        = 1.69348e6
+ratio 1.1113   (NGC 1.1215, SGC 1.0880)
+```
+
+`Q_exact` reproduces the direct mesh run (1.525e6), so §47's method is confirmed.
+The per-slice reconstruction is good to **11%** — a real approximation error from
+`w_fkp` varying within a slice, reducible with finer z bins, and worth reducing
+since it is large next to §47's 1.6% painting offset.
+
+### 🔴 The factor 2.096 was a self-inflicted error
+
+The earlier reconstruction used `w_fkp` computed from **our** n(z) slices
+(0.272–0.297). DESI ships it as a column, and their value is **0.19–0.21**:
+
+```
+(0.29/0.20)^2 = 2.10        observed discrepancy 2.096
+```
+
+Exactly the factor. Do not recompute a quantity DESI ships — `WEIGHT_FKP` is in
+every clustering catalogue.
+
+### 🔴 What that exposes: our n(z) is ~29% LOW
+
+DESI's `NX` for LRG 0.6–0.8 is **3.47–3.98e-4** (`NX*P0 ~ 3.2`); ours is
+**2.66–3.01e-4** (`nbar*P0 ~ 2.45`). Since `sum n_i V_i = N` holds exactly by
+construction (§46), an n̄ that is 29% low means the slice **volumes are 29% too
+large** — i.e. the effective area is nearer **5800 deg²** than the nominal 7500
+(`V = N/nbar = 2.14e9` vs our `V_survey = 2.775e9`).
+
+The nominal DR1 footprint is not the completeness-weighted effective area, and we
+have been using the nominal one everywhere.
+
+Worse, `~/data/desi/nz_slices/{tracer}_nz_slices.csv` carries **three** different
+n̄ columns and none matches DESI:
+
+| quantity | LRG2 |
+|---|---|
+| `nbar_design_file_volume` | 2.2e-4 |
+| what `load_nz_slices` returns | 2.8e-4 |
+| `nbar_file` = `nbar_shape_file_volume` | 5.3e-4 |
+| **DESI `NX`** | **3.6e-4** |
+
+And `file_area_deg2` is 30092.214 on row 0 but 20061.476 on rows 1+, with
+`file_effective_area_deg2` 28651 / 19101. Neither is a plausible DESI area and it
+should not vary by row. Row 0 also has `Nbin_file != shape_weight` while later
+rows have them identical — consistent with the parser artifact §28 called
+"harmless". It may not be.
+
+### Why this matters beyond the norm
+
+`V_survey` sets the covariance mode count, not just the shot noise. A 29% volume
+error propagates into every sigma. This is also the leading candidate for the
+**BGS residual** (§46, 0.706, needing an extra 1.42) — bright-time BGS would have
+its own effective area, different again from the dark-time tracers.
+
+### Open
+
+1. Extract `<NX>(z)` per tracer from the catalogues (cheap — data files only) and
+   compare against all three of our columns, for all six tracers.
+2. Settle which of our n̄ columns is meant to be DESI's, and whether the
+   `file_area_deg2` inconsistency is a parser bug or a misread of the source.
+3. Only then implement §46/§47 — the norm fix depends on n̄ through `w_fkp`, so
+   fixing the norm against a wrong n(z) would bake the error in.
+
+## §49 — the FKP pivots in tracers.yaml are the wrong QUANTITY; §48's n(z) claim is NOT established
+
+### Solid: our `fkp_p0` values are not DESI's FKP pivots
+
+DESI 2024 II Eqs. (8.3)–(8.4), verbatim:
+
+```
+n_x(z, n_tile) = n(z) <C_assign>(n_tile)
+w_FKP(z, n_tile) = 1 / [1 + n_x(z, n_tile) P0]
+```
+
+> "The value of P0 is chosen separately for each tracer, given an approximate
+> nominal value of the power spectrum monopole P0(k = 0.15 h/Mpc). The values used
+> in the DR1 analysis are P0,BGS = 7000, P0,LRG = 10,000, P0,ELG = 4000 and
+> P0,QSO = 6000 (Mpc/h)^3. **These values are only roughly consistent with the
+> actual clustering amplitude** of the respective DESI samples..."
+
+So the pivots are a **convention**, coarse round numbers per tracer. Our
+`tracers.yaml` carries DESI 2024 III **Table 2's P0(k=0.14)** — a *measured*
+clustering amplitude, a different quantity:
+
+| bin | ours (Table 2) | DESI Eq. (8.4) | ratio |
+|---|---|---|---|
+| BGS | 9200 | 7000 | 1.31 |
+| LRG1 | 8900 | 10000 | 0.89 |
+| LRG2 | 8900 | 10000 | 0.89 |
+| LRG3 | 8400 | 10000 | 0.84 |
+| ELG2 | 2900 | 4000 | 0.73 |
+| QSO | 5000 | 6000 | 0.83 |
+
+Wrong in both directions, by up to 31%. Confirmed empirically: back-solving
+`P0 = (1/w_FKP - 1)/NX` on the LRG catalogue gives **10648 ± 17** (0.16% scatter)
+against the stated 10000 — the 6.5% is Jensen bias from averaging `1/(1+nP)`
+over a slice. The relation and the value both check out.
+
+`NX` is DESI's own column: the local expected density `n(z)<C_assign>`, per
+object. Do not recompute it (§48) — and note it is **not purely radial**, since
+`<C_assign>` varies with n_tile.
+
+### ⚠️ But applying the correct pivots makes z_eff WORSE
+
+z_eff vs DESI's published values (2411.12021 Table 1), mean |error| over six bins:
+
+| pivots | nbar scale | max |err| | mean |err| |
+|---|---|---|---|
+| Table-2 (current) | 1.00 | **0.650%** | **0.313%** |
+| Table-2 | 1.29 | 0.945% | 0.457% |
+| Eq-8.4 | 1.00 | 1.022% | 0.401% |
+| Eq-8.4 | 1.29 | 1.311% | 0.545% |
+
+The current configuration is the best of the four. Monotonic degradation in both
+directions.
+
+### 🔴 RETRACTION: §48's "our n(z) is ~29% LOW" is NOT established
+
+§48 compared our slice n̄ (a **volume average**, `N x slice_fraction / V_slice`)
+against `<NX>` averaged over **randoms weighted by WEIGHT** — an object-weighted
+average of a spatially varying quantity. Those estimate different things, and a
+22% gap between them is unremarkable. The comparison was set up wrong.
+
+This also explains why the pivot fix alone degrades z_eff: only the product
+`nbar*P0` enters `w_FKP`, so one side cannot be corrected while the other is
+measured on a different footing.
+
+### Do not change tracers.yaml yet
+
+The pivot mismatch is real, but the one thing we can validate (z_eff against
+published values) gets worse when we "fix" it. That is the signature of
+compensating errors, and changing one of them alone is how you make a pipeline
+agree with nothing.
+
+Next, and it is a measurement not an inference: extract `<NX>` **volume-weighted**
+on the same 10 Mpc/h mesh (cell-average NX, then average over cells, not over
+objects). That is apples-to-apples with our slice n̄ and settles whether any
+discrepancy exists. Only then revisit the pivots — together with n̄, not alone.
+
+## §50 — the n(z) gap is REAL and converged at ~23%; §49's retraction was half right
+
+Volume-weighted `<NX>` on the 10 Mpc/h mesh, LRG 0.6–0.8, NRAN 2/4/8.
+
+### The estimator mattered, but only for 42% of it
+
+| | ratio to our slice n̄ |
+|---|---|
+| `<NX>_obj` (object-weighted — what §48 used) | **1.394** |
+| `<NX>_vol` (volume-weighted — correct) | **1.227** |
+
+§49 retracted §48's "n(z) is ~29% low" on the grounds that the comparison was
+object- vs volume-weighted. That was **half right**: switching estimators moves
+1.394 → 1.227, closing 42% of the gap. The remaining **23% is real.**
+
+`<NX>_obj` converges instantly (4.0083/4.0086/4.0084e-4 at z=0.60 across
+NRAN 2/4/8) since object-weighting is occupancy-independent. `<NX>_vol` drifts
+~0.6% per doubling and is still settling.
+
+### The boundary systematic cancels in the ratio
+
+Occupied-cell volume is badly behaved — 1.162 → 1.272 → 1.318 of our full-shell
+volume across NRAN 2/4/8, **not converged**, because a 10 Mpc/h cell straddling
+the patchy DESI mask counts as fully occupied and each extra random file finds
+more edge cells. So `V_occ` is unusable on its own, and so is `int(NX dV)`
+(1.453 → 1.572 → 1.619 × N).
+
+But their **ratio converges**: boundary-corrected `int(NX dV)/N` = 1.250 →
+1.235 → **1.229**, and it agrees with `<NX>_vol/ours` = 1.227 measured
+independently. Two routes, same answer.
+
+### What 1.23 means
+
+`integral(NX dV) = 1.23 N` over our 7500 deg² shell. Either DESI's `NX`
+overcounts by 23%, or **our V is 23% too large — an effective area near
+6100 deg² rather than the nominal 7500.** The nominal DR1 footprint is not the
+completeness-weighted effective area, and `V_survey` sets the covariance mode
+count, not just the shot noise.
+
+Still the leading candidate for the **BGS residual** (§46, 0.706): bright-time BGS
+would have its own effective area again.
+
+### Status of the three coupled quantities
+
+- `fkp_p0`: wrong quantity, established (§49). DESI Eq. (8.4) pivots are
+  7000/10000/4000/6000.
+- n̄: ~23% low, established here.
+- z_eff: currently agrees with DESI to 0.31% mean **with both errors in place**.
+
+Only the product `nbar*P0` enters `w_FKP`, and z_eff degrades when either is
+fixed alone (§49). With n̄ ×1.23 and the Eq-8.4 pivots, LRG2 gives
+`nbar*P0 = 2.8e-4 × 1.23 × 10000 = 3.44` against DESI's measured `NX*P0 = 3.6` —
+close, where the current config gives 2.49. **Fix them together and re-test
+z_eff; do not fix either alone.**

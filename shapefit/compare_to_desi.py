@@ -27,14 +27,21 @@ Checks (select with --check, default all):
          ACROSS tracers is not a density-response signal either (the window
          differs per footprint). This check is only good for k-SHAPE trends at
          fixed tracer.
-         The apples-to-apples version is C_obs = M C_kin M^T, with M the
-         window's 72x1047 value and C_kin our covariance on the window's own
-         theory grid (CHANGELOG S19 has the recipe). Doing that on LRG2 turns
-         a raw ratio of 1.586 into 0.815 with the right correlation structure
-         (P0 nearest-neighbour 0.79 vs DESI's 0.67), i.e. our Gaussian
-         covariance is ~18% LOW, not 60% high -- the familiar non-Gaussian
-         deficit. Not wired in here: it needs a per-tracer bundle and a
-         1047-bin auxiliary covariance (36 s).
+         *** S19's C_obs = M C_kin M^T is NOT the fix. *** See CHANGELOG S44.
+         fkp_analytic_cov reduces to 2(P + 1/nbar)^2 / N_modes, so C_kin is
+         ALREADY the covariance of the FKP estimator P-hat -- and P-hat is
+         itself window-convolved (same I22 normalization). Applying M
+         convolves a second time. Concretely: each observable bin spans 5
+         theory bins but M spreads it over M_eff = 10-19, so a diagonal C_kin
+         picks up sum(W^2) = (sum W)^2 / M_eff and the variance is suppressed
+         by ~5/M_eff. The window redistributes modes; it does not create
+         independent ones.
+         The correct Gaussian baseline is this check's own unwindowed number,
+         i.e. the FKP covariance on the OBSERVABLE grid. Against DESI that is
+         0.73-0.84 for ELG2/QSO (about where Gaussian-only should sit) and
+         1.77-2.33 for the three LRG bins, which is the open question.
+         NB the same M C M^T pattern IS valid in bao/config_space.py:442,
+         whose window is an exact 4:1 rebin (M_eff = 4.00, row sums 1.0000).
   sigma: rebuild the Fisher with DESI's covariance substituted for ours
          (core.build_shapefit_likelihood(cov_override=...)) and report how far
          the four sigmas move. Attributes any sigma gap to the covariance vs
@@ -108,13 +115,19 @@ _DESI_SAMPLE = {
     "QSO": "QSO_GCcomb_z0.8-2.1",
 }
 
-# Full data bundles (data vector + covariance + window). DR1 ships these per
-# tracer, but only LRG2 has been fetched locally so far.
+# Full data bundles (data vector + covariance + window), one per tracer bin,
+# from the dr1 full-shape-bao-clustering v1.0 VAC:
+#   .../public/dr1/vac/dr1/full-shape-bao-clustering/v1.0/data/likelihood/
+# All six are local as of 2026-08-03. Derived from _DESI_SAMPLE rather than
+# hardcoded so the two can never drift apart; entries whose file is absent are
+# dropped, and callers already handle a missing tracer.
 _FS_BUNDLES = {
-    "LRG2": _LIK_DIR / (
-        "likelihood_spectrum-poles-rotated_syst-hod_"
-        "LRG_GCcomb_z0.6-0.8_thetacut0.05.h5"
-    ),
+    tracer: path
+    for tracer, sample in _DESI_SAMPLE.items()
+    for path in [_LIK_DIR / (
+        f"likelihood_spectrum-poles-rotated_syst-hod_{sample}_thetacut0.05.h5"
+    )]
+    if path.exists()
 }
 
 # DESI's published (volume-weighted) effective redshifts, for reference only.
@@ -394,11 +407,13 @@ def check_cov(tracers: List[str], rotated: bool, thetacut: bool,
               f"{offdiag_mean(C_desi):>7.3f}{flag}")
         results[tracer] = {"ours": C_ours, "desi": C_desi, "k": ours["k"]}
 
-    print("  *** These ratios are NOT apples-to-apples: DESI's covariance is of a")
-    print("  window-convolved estimator and ours is unwindowed. On LRG2 the window")
-    print("  moves the ratio 2.046 -> 0.512. Neither the absolute level nor the")
-    print("  spread across tracers is interpretable -- the window differs per")
-    print("  footprint, so the comparison error does too. Use --check window.")
+    print("  These ratios ARE the right Gaussian baseline (CHANGELOG S44): the FKP")
+    print("  covariance on the observable grid already IS the covariance of the")
+    print("  window-convolved estimator P-hat. Applying W on top (--check window)")
+    print("  convolves twice and suppresses the variance by ~5/M_eff; do not read")
+    print("  its 'windowed' column as the corrected number.")
+    print("  Gaussian-only should sit a little BELOW 1 (non-Gaussian is the rest).")
+    print("  ELG2/QSO do; the three LRG bins sit at 1.77-2.33 and are unexplained.")
     print("  What IS usable here: the k-trend at fixed tracer (1.0 = our shape")
     print("  matches DESI's), since the window is a milder function of k than of")
     print("  overall normalization.")
@@ -563,11 +578,24 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
 
 
 def check_window(tracers: List[str]) -> None:
-    """Does the missing survey window explain the theory and covariance gaps?"""
+    """Does the missing survey window explain the theory and covariance gaps?
+
+    The THEORY half is sound: measured = W @ theory, and the convolved/raw
+    columns below are a fair comparison.
+
+    The COVARIANCE half is NOT. W @ C_kin @ W.T double-convolves -- see
+    CHANGELOG S44 and the module docstring. The 'windowed' number printed
+    below is retained because it is what the recipe produces and its
+    suppression (~5/M_eff) is the evidence for the diagnosis, but it is NOT
+    the corrected covariance. Use --check cov's unwindowed ratio for that.
+    """
     print("\n=== 5. Window convolution: does it close the gap? ===")
     print("    measured = W @ theory. Our forecast applies NO window (the")
-    print("    Fourier paths never have); bao/config_space.py:416 does apply")
-    print("    one in production for the correlation pipeline.")
+    print("    Fourier paths never have); bao/config_space.py:442 does apply")
+    print("    one in production for the correlation pipeline -- validly, since")
+    print("    that window is an exact 4:1 rebin (M_eff = 4.00).")
+    print("    *** The 'windowed' covariance below DOUBLE-CONVOLVES (S44).")
+    print("    It is diagnostic, not a corrected number. ***")
     for tracer in tracers:
         bundle = _FS_BUNDLES.get(tracer)
         if bundle is None or not bundle.exists():
