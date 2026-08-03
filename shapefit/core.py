@@ -270,18 +270,25 @@ def _fs_compute_z_eff(
     """Effective redshift from the n(z) slices.
 
     Dispatches on bao_core.Z_EFF_CONVENTION, so the FS and BAO pipelines
-    cannot drift apart on this. Under the default ("desi_fkp") the FS-specific
-    band averaging is irrelevant -- DESI's weight uses a fixed FKP pivot, not
-    P(k) -- so this delegates and `fo`/`b1` go unused.
+    cannot drift apart on this. Under the default ("desi_eq21") the FS-specific
+    band averaging is irrelevant -- DESI 2024 III Eq. (2.1) weights by the
+    squared weighted random density at a FIXED FKP pivot, not P(k) -- so this
+    delegates and `fo`/`b1` go unused.
 
-    The retained V_eff convention ("fisher_veff"):
+    Both DESI names are accepted so that a bao-side rename cannot silently drop
+    the FS pipeline into the fallback below: an `== "desi_fkp"` test would go
+    False the moment the default became "desi_eq21", and shapefit would revert
+    to the 10.3%-error convention with nothing raising.
+
+    The retained V_eff convention ("fisher_veff"), 10.3% off on QSO because it
+    uses the z-DEPENDENT P_g(k,z) instead of the constant pivot:
 
     z_eff = sum_i z_i V_i_eff / sum_i V_i_eff with
     V_i_eff = V_i x <(n_i P_i(k)/(1+n_i P_i(k)))^2>_band, the FKP weight
     band-averaged over the FS kernel (clone of bao_core._compute_z_eff_from_nz
     but band-averaged instead of the single BAO pivot k=0.14).
     """
-    if bao_core.Z_EFF_CONVENTION == "desi_fkp":
+    if bao_core.Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2)
 
     z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(tracer_bin)
