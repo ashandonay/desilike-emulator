@@ -3730,3 +3730,59 @@ shot-noise gap is the norm, not n̄.
 z_eff is a per-sample emulator input (§42), so this invalidates the goldens and
 BOTH v2 training sets. Do the remaining items above before regenerating, so the
 cost is paid once.
+
+## §55 — the FKP pivot and footprint were also uniform in the CONFIG-SPACE path
+
+§53/§54 fixed the z_eff and shapefit paths. The production **BAO config-space**
+path — `XiSigmaGenerator`, the emulator's σ-triplet driver — carried the same
+two errors independently:
+
+| | was | now |
+|---|---|---|
+| `_AREA` (config_space.py:56) | 7500 for every tracer | `util.tracer_area(tracer)` |
+| `P_FKP` | `P_FKP_DEFAULT = 1.0e4` for every tracer | `_pivot(tracer)` from tracers.yaml |
+
+`P_FKP_DEFAULT = 1e4` is **LRG's** Eq. (8.4) value, applied to all six. Wrong by
+1.43x for BGS (7000), 2.5x for ELG (4000) and 1.67x for QSO (6000).
+
+Threaded at four sites: `load_nz_slices` and both `gaussian_xi_multipole_cov`
+calls in the bundle builder, plus `XiSigmaGenerator.windowed_cov` — the last of
+which feeds production emulator training data, so it mattered most.
+
+`_AREA` survives as a fallback for call sites with no tracer in hand, documented
+as such. The synthetic self-test at config_space.py:479 keeps the default
+deliberately: it uses a uniform one-slice n(z) with no tracer.
+
+⚠️ This changes the production BAO covariance, and therefore every BAO σ. The
+bao goldens must be regenerated and the change measured before the config-space
+training data is trusted. Not yet done.
+
+### Consistency check that motivated the area fix
+
+`integral(NX dV)` against `N_tracers`, with DESI's density over DESI's footprint:
+
+| | BGS | LRG1 | LRG2 | LRG3 | ELG2 | QSO |
+|---|---|---|---|---|---|---|
+| Table-2 areas | 1.014 | 1.003 | 1.020 | 1.017 | **1.173** | 1.003 |
+| uniform 7500 | 1.018 | 1.310 | 1.333 | 1.329 | 1.485 | 1.038 |
+
+Five of six within 2%. A triangular check between three independently sourced
+quantities — DESI's measured `NX`, DESI's Table 2 area, and our
+`targets x comp x efficiency` — so agreement at 2% is meaningful.
+
+**ELG2 (1.173) is now the open one.** Its `analyses` split (ELG1 vs ELG2 within
+the 0.8–1.6 catalogue) is the obvious suspect; Table 2's area and counts cover
+the full ELG range while our bin is 1.1–1.6 only.
+
+### Still open after this
+
+- The **mesh norm** (§46/§47): validated to 0.03% from randoms alone, still not
+  wired into the covariance. Until it is, `--check shot` compares `1/n_eff`
+  against DESI's `S/A` and is not a fair test.
+- The covariance's **third n(z)**: `load_nz_slices` still builds `N*frac/V`
+  rather than using `NX` directly. The area fix moved it from 0.760 to 0.899 of
+  DESI's density; routing through `NX` would close the rest.
+- **LRG3's 0.629.** Note this compares `n_eff` (a V_eff-matched effective
+  density from the Brent solve) against an FKP²-weighted mean of `NX`. For a
+  steeply falling n(z) — which LRG3 has across 0.8–1.1 — those are not the same
+  functional, so part of the gap may be the comparison rather than the pipeline.

@@ -48,12 +48,26 @@ from desilike.theories.galaxy_clustering import (
     DampedBAOWigglesTracerPowerSpectrumMultipoles,
 )
 from fkp_analytic_cov import NZSlices, _fkp_integrals, P_FKP_DEFAULT, load_nz_slices
+from util import tracer_area as _tracer_area
 
 # ---------------------------------------------------------------------------
 # Fixed analysis settings
 # ---------------------------------------------------------------------------
 _FID = {"Om": 0.3152, "hrdrag": 99.08}          # single fiducial: Fisher, Grieb-cov, MCMC
+# Nominal DR1 footprint. NOT the per-tracer area -- priority and imaging vetoes
+# remove different sky per sample (DESI 2024 II Table 2: BGS 7473, LRG 5740,
+# ELG 5924, QSO 7249). Use `_tracer_area(tracer)`; this remains only for call
+# sites with no tracer in hand. See shapefit CHANGELOG S54.
 _AREA = 7500.0
+
+
+def _pivot(tracer: str) -> float:
+    """DESI's FKP pivot for a tracer (2411.12020 Eq. 8.4), from tracers.yaml.
+
+    `P_FKP_DEFAULT = 1e4` is LRG's value and was being applied to every tracer,
+    where Eq. (8.4) wants 7000 (BGS), 4000 (ELG) and 6000 (QSO). See shapefit
+    CHANGELOG S55."""
+    return float(TRACER_CONFIGS[tracer]["fkp_p0"])
 _DESI_PRIOR_SCALE = {"sigmapar": 2.0, "sigmaper": 2.0, "sigmas": 2.0}
 
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
@@ -399,7 +413,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
     cosmo = core.get_cosmo(("DESI", dict(theta)))
     slices = load_nz_slices(
-        tracer_bin=tracer, cosmo=cosmo, area_deg2=_AREA,
+        tracer_bin=tracer, cosmo=cosmo, area_deg2=_tracer_area(tracer),
         N_design=float(_get_ntracers(tracer)),
     )
 
@@ -418,7 +432,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     C_obsgrid = gaussian_xi_multipole_cov(
         s=s_grid, ells_obs=tuple(obs_ells),
         k=K_WIDE, P_ells_in=P_wide, ells_in=(0, 2, 4),
-        slices=slices, ds=ds_obs,
+        slices=slices, ds=ds_obs, P_FKP=_pivot(tracer),
     )
 
     # Windowed variant: build on the THEORY s-grid (th_s, th_ells) then convolve
@@ -434,7 +448,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     C_theory = gaussian_xi_multipole_cov(
         s=s_th, ells_obs=tuple(th_ells),
         k=K_WIDE, P_ells_in=P_wide, ells_in=(0, 2, 4),
-        slices=slices, ds=ds_th,
+        slices=slices, ds=ds_th, P_FKP=_pivot(tracer),
     )
     W = bundle["W"]
     if W.shape[1] != C_theory.shape[0]:
@@ -677,7 +691,7 @@ class XiSigmaGenerator:
         cosmo_fid = core.get_cosmo(("DESI", dict(theta_fid)))
         self._N_fid = float(_get_ntracers(tracer))
         self.slices = load_nz_slices(
-            tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_AREA,
+            tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_tracer_area(tracer),
             N_design=self._N_fid)
         # n̄ is exactly linear in N_design (load_nz_slices: nbar = N·frac/V_shell
         # at the fixed frame), so the cov shot-noise term can be rebuilt for any
@@ -716,7 +730,8 @@ class XiSigmaGenerator:
         C_theory = gaussian_xi_multipole_cov(
             s=self.s_th, ells_obs=tuple(self.th_ells), k=K_WIDE,
             P_ells_in=P_wide, ells_in=(0, 2, 4), slices=self._slices_for_N(N_tracers),
-            ds=self.ds_th, jbar_cache=self.jbar_cache)
+            ds=self.ds_th, jbar_cache=self.jbar_cache,
+            P_FKP=_pivot(self.tracer))
         C = self.W @ C_theory @ self.W.T
         return 0.5 * (C + C.T)
 
