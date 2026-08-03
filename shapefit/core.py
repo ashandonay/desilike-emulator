@@ -266,6 +266,8 @@ def _fs_compute_z_eff(
     fo,
     area_deg2: float,
     b1: float,
+    n_tracers=None,
+    dataset: str = "dr1",
 ) -> float:
     """Effective redshift from the n(z) slices.
 
@@ -289,9 +291,13 @@ def _fs_compute_z_eff(
     but band-averaged instead of the single BAO pivot k=0.14).
     """
     if bao_core.Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
-        return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2)
+        return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
+                                            n_tracers=n_tracers,
+                                            dataset=dataset)
 
     z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(tracer_bin)
+    nbar_file = (np.asarray(nbar_file, dtype=np.float64)
+                 * bao_core._nz_scale_factor(tracer_bin, n_tracers, dataset))
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -375,6 +381,11 @@ def build_shapefit_likelihood(
                 cosmo=cosmo,
                 fo=fo,
                 area_deg2=float(area),
+                # z_eff moves with the sample size -- the FKP weight is not
+                # linear in n̄, so alpha does not cancel (bao_core
+                # _desi_z_eff_from_nz). Must match what the BAO pipeline does,
+                # or the two derive different z_eff for the same tracer and N.
+                n_tracers=float(N_tracers),
                 b1=float(cfg.get("bias_recon", 2.0)),
             )
         except (FileNotFoundError, ValueError):
