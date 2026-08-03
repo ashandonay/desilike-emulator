@@ -2988,6 +2988,11 @@ before reading §45.
 
 ## §45 — DESI's covariance sits BELOW the cosmic-variance floor; §44's LRG claim is withdrawn
 
+> ⚠️ **SUPERSEDED IN PART BY §56.** The headline claim below — that DESI's
+> covariance is anomalous — overstates what the evidence supports. The floor it
+> is measured against rests on two assumptions this section never tested. Read
+> §56 before acting on anything here.
+
 ### What was chased, and eliminated
 
 §44 closed by calling the LRG bins' 1.77–2.33 "the open question". Four candidate
@@ -3786,3 +3791,59 @@ the full ELG range while our bin is 1.1–1.6 only.
   density from the Brent solve) against an FKP²-weighted mean of `NX`. For a
   steeply falling n(z) — which LRG3 has across 0.8–1.1 — those are not the same
   functional, so part of the gap may be the comparison rather than the pipeline.
+
+## §56 — §45 overstated: the "floor violation" rests on two untested assumptions
+
+§45 concluded that DESI's covariance "sits below the cosmic-variance floor",
+treating that as a hard physical impossibility on their side. That claim is
+stronger than the evidence supports, and the balance of evidence now points the
+other way.
+
+### The evidence against §45's framing
+
+**DESI's covariance is externally validated; our floor is not.** §45's own chain
+showed that our Fisher, using DESI's covariance, reproduces their published σ to
+0.56–0.86 — a normal Fisher-at-truth vs MCMC-posterior gap. So their covariance
+is self-consistent with constraints that appear in a published paper. Meanwhile
+the "floor" is a formula we wrote down. When an externally validated measurement
+and an in-house bound disagree, the bound is the more likely suspect.
+
+### The two assumptions
+
+1. **That the shipped covariance carries the same normalization as the shipped
+   data vector.** §46 verified the *data vector* is in normalized units (bundle
+   P0 / plain P0 = 0.92–1.07 where raw units would demand 0.07–0.14). It never
+   verified the *covariance*. The files carry no normalization metadata at all —
+   no attributes, just `value` and an observable grid labelled
+   `mesh2_spectrum_poles`. §45's own finding that the discrepancy is **flat in
+   k** is exactly a normalization signature.
+
+2. **That `N_modes = V k²Δk / 2π²` bounds a cutsky FKP estimator.** That is the
+   periodic-box mode count. DESI measures on a padded FFT box (7000 Mpc/h for
+   LRG, §10) with FKP weights and a survey window; the mapping from box modes to
+   independent modes for a weighted, windowed, cutsky estimator is not that
+   formula. §45 applied a textbook periodic-box bound to a measurement it does
+   not obviously govern.
+
+### Corrected reading
+
+The covariance ratios (ours 2.28–3.62 × DESI's, §55-era numbers) are **not**
+evidence that DESI's covariance is wrong. They are evidence that
+**our comparison of covariances rests on an unverified normalization and an
+unjustified mode count.** Nothing about the ratio has ever been interpretable,
+which is consistent with the fact that no correction has ever moved it: not the
+window treatment (§44), the shot noise (§46), the mesh norm (§55, tested — moves
+it the wrong way by 1.88x), n(z), the footprint, or the pivots.
+
+### Consequence
+
+The covariance ratio should not be used as a target, and the quarantine §45
+imposed stands — but for a different and weaker reason than §45 gave. The
+element-level comparison is unusable until (1) is settled, which needs
+either normalization metadata we do not have or an independent handle on the
+mock covariance's units.
+
+**`--check compressed` remains the usable end-to-end test**, and note it uses
+OUR covariance (`our_forecast` with no `cov_override`) against DESI's published
+constraints — not DESI's covariance. It is the only comparison here that has
+never depended on the disputed normalization.
