@@ -36,10 +36,12 @@ Checks (select with --check, default all):
          picks up sum(W^2) = (sum W)^2 / M_eff and the variance is suppressed
          by ~5/M_eff. The window redistributes modes; it does not create
          independent ones.
-         The correct Gaussian baseline is this check's own unwindowed number,
-         i.e. the FKP covariance on the OBSERVABLE grid. Against DESI that is
-         0.73-0.84 for ELG2/QSO (about where Gaussian-only should sit) and
-         1.77-2.33 for the three LRG bins, which is the open question.
+         *** And the ratio itself is NOT interpretable -- S56. *** Ours is
+         nearly DIAGONAL (off/diag ~ 0.005) while DESI's has nearest-neighbour
+         correlation ~0.6, so element-wise division divides two different
+         objects. No correction has ever moved these ratios: window treatment,
+         shot noise, mesh norm, n(z), footprint, pivots. Do not use them as a
+         target; use --check compressed.
          NB the same M C M^T pattern IS valid in bao/config_space.py:442,
          whose window is an exact 4:1 rebin (M_eff = 4.00, row sums 1.0000).
   sigma: rebuild the Fisher with DESI's covariance substituted for ours
@@ -98,7 +100,7 @@ import h5py
 
 import fourier_space
 from fourier_space import sf_core
-from util import ntracers
+from util import ntracers, plots_dir
 
 _LIK_DIR = Path.home() / "data" / "desi" / "bao_dr1" / "likelihoods"
 _COV_DIR = _LIK_DIR / "covariance"
@@ -412,8 +414,14 @@ def check_cov(tracers: List[str], rotated: bool, thetacut: bool,
     print("  window-convolved estimator P-hat. Applying W on top (--check window)")
     print("  convolves twice and suppresses the variance by ~5/M_eff; do not read")
     print("  its 'windowed' column as the corrected number.")
-    print("  Gaussian-only should sit a little BELOW 1 (non-Gaussian is the rest).")
-    print("  ELG2/QSO do; the three LRG bins sit at 1.77-2.33 and are unexplained.")
+    print("  *** These ratios are NOT interpretable (CHANGELOG S56). Ours is an")
+    print("  UNWINDOWED analytic covariance -- nearly diagonal, off/diag ~ 0.005 --")
+    print("  while DESI's is the covariance of a window-convolved estimator, with")
+    print("  nearest-neighbour correlation ~0.6. Dividing them element-wise divides")
+    print("  two different objects. No correction has ever moved these ratios:")
+    print("  not the window treatment, shot noise, mesh norm, n(z), footprint or")
+    print("  pivots. Use --check compressed, which uses OUR covariance against")
+    print("  DESI's PUBLISHED constraints and never touches this normalization.")
     print("  What IS usable here: the k-trend at fixed tracer (1.0 = our shape")
     print("  matches DESI's), since the window is a milder function of k than of")
     print("  overall normalization.")
@@ -455,7 +463,11 @@ def _plot_cov(results: Dict, label: str) -> None:
             ax.legend(fontsize=7)
     fig.suptitle(f"ShapeFit covariance vs DESI DR1 EZmock ({label})")
     fig.tight_layout()
-    out = f"cov_vs_desi_{label.replace('+', '_')}.png"
+    # plots_dir(), not cwd: this wrote a bare relative filename, so the figure
+    # landed wherever the caller happened to be. `shapefit_` prefix per the
+    # naming rule in util.plots_dir -- "covariance vs DESI" is a concept bao
+    # has too (bao_cov_comparison_*).
+    out = plots_dir() / f"shapefit_cov_vs_desi_{label.replace('+', '_')}.png"
     fig.savefig(out, dpi=140)
     print(f"  wrote {out}")
 

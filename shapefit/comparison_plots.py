@@ -75,7 +75,7 @@ import desi_reference as desi_ref
 import fourier_space
 from compare_to_desi import FID_SAMPLE, our_forecast
 from fourier_space import sf_core
-from util import ntracers
+from util import ntracers, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO"]
 _DISPLAY = {}
@@ -515,22 +515,22 @@ def main() -> int:
     tracers = [t for t in args.tracers if t in data]
 
     if args.plot in ("sigma", "all"):
-        plot_sigma(data, tracers, _HERE / "shapefit_sigma_vs_desi.png")
+        plot_sigma(data, tracers, plots_dir() / "shapefit_sigma_vs_desi.png")
     if args.plot in ("rho", "all"):
-        plot_rho(data, tracers, _HERE / "shapefit_rho_vs_desi.png")
+        plot_rho(data, tracers, plots_dir() / "shapefit_rho_vs_desi.png")
     if args.plot in ("covmat", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
         plot_covar_matrix(data, tracers,
-                          _HERE / "shapefit_covar_matrix_vs_desi.png",
+                          plots_dir() / "shapefit_covar_matrix_vs_desi.png",
                           kind="cov", theory=th)
     if args.plot in ("corrmat", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
         plot_covar_matrix(data, tracers,
-                          _HERE / "shapefit_corr_matrix_vs_desi.png",
+                          plots_dir() / "shapefit_corr_matrix_vs_desi.png",
                           kind="corr", theory=th)
     if args.plot in ("mean", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
-        plot_mean(data, tracers, _HERE / "shapefit_mean_vs_desi.png", theory=th)
+        plot_mean(data, tracers, plots_dir() / "shapefit_mean_vs_desi.png", theory=th)
     return 0
 
 
