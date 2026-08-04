@@ -4259,3 +4259,61 @@ design variable, and `ntracers_range` centres the training box on `passed`
 (`low 0.5`, `high 1.5`). If ELG2's DR1 anchor is 15% low, the entire ELG2 design
 box is centred on the wrong point — not just one evaluation. That is a
 different and worse failure than a mis-scaled forecast.
+
+### §61b — RETRACTION: the ELG2 count is DESI's own, the NX integral is the suspect
+
+§61 and §61a put the ELG2 discrepancy on the `desi_data.csv` side — "whether
+that ELG2 count is after a cut NX does not carry", and a hypothesis that 0.727
+under-counts ELG2. Both are wrong. Our counts are DESI's published values:
+
+| tracer | ours | DESI 2024 V Table 1 | rel |
+|---|---|---|---|
+| BGS | 300017 | 300017 | 0 |
+| LRG1 | 506911 | 506905 | 1.2e-05 |
+| LRG2 | 771894 | 771875 | 2.5e-05 |
+| LRG3 | 859822 | 859824 | −2.3e-06 |
+| **ELG2** | **1415707** | **1415687** | **1.4e-05** |
+| QSO | 856652 | 856652 | 0 |
+
+(also in DESI 2024 II Table 2). Every tracer agrees to ≤2.5e-5. `passed =
+targets × comp × efficiency` reproduces the published counts exactly, ELG2
+included — so the 0.727 shared-efficiency hypothesis in §61a is dead: if it
+mis-split ELG1/ELG2, the ELG2 total would not land on DESI's number to 20
+galaxies.
+
+**The suspect is `∫NX dV`, which over-predicts by 17%.**
+
+### The live hypothesis, with the ordering that supports it
+
+`NX` is `n(z)⟨C_assign⟩` (2411.12020 Eq. 8.3) — already completeness-weighted —
+and `{tracer}_desi_nx.csv` stores a **randoms-weighted mean** of it per slice.
+Recovering N by `Σ NX_i V_i` over the geometric footprint is only exact when
+⟨C_assign⟩ is uniform across that footprint. Sorted by assignment completeness:
+
+| tracer | comp | NX-implied / N |
+|---|---|---|
+| QSO | 0.874 | 0.997 |
+| LRG | 0.693 | 0.980–0.997 |
+| BGS | 0.636 | 0.986 |
+| **ELG** | **0.352** | **0.853** |
+
+Monotonic. ELG's fibre assignment is both the lowest (35.2%, it is the lowest-
+priority target class) and the most spatially variable, so the randoms-weighted
+mean departs furthest from the volume average. The other five sit at 64–87% and
+land within 2%.
+
+### What this changes
+
+* **The training input is not wrong.** `N_tracers` for ELG2 is DESI's published
+  count, so the design box is centred correctly. §61a's closing claim — that the
+  entire ELG2 box is miscentred — is **withdrawn**.
+* **z_eff is what consumes NX**, and it is a ratio, so a uniform 17% scale error
+  in NX largely cancels there. That is consistent with ELG2's z_eff agreeing
+  with DESI's published value to 0.062% (§53) despite this.
+* What remains open is whether the per-slice SHAPE of NX is also affected, which
+  would not cancel in z_eff. Testing that needs the raw randoms, not the
+  aggregated table.
+
+**Nothing about ELG2's tight σ is explained by this**, and the §61 note stands:
+the covariance's n̄ comes from `N_tracers × frac / V`, which uses the correct
+count, not from NX.
