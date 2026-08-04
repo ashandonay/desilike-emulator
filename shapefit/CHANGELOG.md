@@ -4972,6 +4972,33 @@ The `m` panel is scaled to the residual, not to DESI's `sigma(m)`: a +-0.051
 band fills the panel and hides the 1e-5 structure that is the actual content.
 The comparison to `sigma(m)` is annotated instead.
 
+### Why `m` is 1e-5 and not 0
+
+At the fiducial the mean pipeline's `dm` should be exactly zero — the fiducial
+is its own reference. Traced: the two pipelines reach the same cosmology by
+different routes.
+
+```
+covar   _to_shapefit_cosmo_params  -> omega_cdm = 0.12          (direct)
+mean    _to_mean_extractor_params  -> Omega_m   = 0.3151918493  (assembled)
+```
+
+CLASS shoots for `omega_cdm` from `Omega_m` and lands on `0.1200000570`,
+4.8e-7 relative. Handed a cosmology OBJECT instead, the same extractor returns
+`dm = 0.000e+00` at z = 0.2954 / 0.7058 / 1.4902; through the worker's
+parameter-passing path it returns `-4.5e-05`. Removing `w0_fld`, `wa_fld` or
+`logA` from the passed params changes nothing, so it is the `Omega_m` route.
+
+`_to_mean_extractor_params`' docstring says the `Omega_m` assembly exists "to
+keep the mean and covar pipelines on the identical cosmology", and it does — to
+5.7e-8 in `omega_cdm`. What is left is CLASS's shooting tolerance, not a
+mapping error.
+
+Magnitude: 4.5e-05 against DESI's `sigma(m)` of 0.051-0.167 is 0.0003-0.0009
+sigma. Recorded because it is a SYSTEMATIC offset in the `m` labels (all six
+tracers negative, monotone in z) rather than scatter, so anyone who sees it on
+an auto-scaled axis should know it is the shooting tolerance and not physics.
+
 ### What this plot can and cannot say
 
 It is a convention check and nothing more. At the fiducial cosmology the mean
