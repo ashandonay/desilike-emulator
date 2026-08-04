@@ -139,8 +139,8 @@ def _gather(tracers, theories):
 _MEAN_CACHE: dict = {}
 
 
-def _mean_targets(tracer):
-    """Mean-pipeline (qiso, qap, f_sigmar, m) at the DESI fiducial cosmology.
+def _mean_targets(tracer, sample=None):
+    """Mean-pipeline (qiso, qap, f_sigmar, m) at a cosmology (default fiducial).
 
     The actual generator output, not `f_sigmar_fid` read off the covar path's
     info dict. They agree to ~0.02% at the fiducial, but they are different
@@ -148,13 +148,19 @@ def _mean_targets(tracer):
     f_sigmar_fid is f*sigma_r(8) while the mean extractor returns
     f*sigma_r(8s)), and this plot is about the MEAN pipeline.
     """
-    if tracer not in _MEAN_CACHE:
+    if sample is None:
         from compare_to_desi import FID_SAMPLE
-        _, vals, _ = fourier_space._worker_run_mean_targets(
-            (dict(FID_SAMPLE), tracer, None, None,
+        sample = dict(FID_SAMPLE)
+    key = (tracer,) + tuple(sorted((k, round(float(v), 12))
+                                   for k, v in sample.items()))
+    if key not in _MEAN_CACHE:
+        _, vals, err = fourier_space._worker_run_mean_targets(
+            (dict(sample), tracer, None, None,
              tracer_area(tracer, "dr1"), "dr1"))
-        _MEAN_CACHE[tracer] = list(vals)
-    return _MEAN_CACHE[tracer]
+        if vals is None:
+            raise RuntimeError(f"mean pipeline failed for {tracer}: {err}")
+        _MEAN_CACHE[key] = list(vals)
+    return _MEAN_CACHE[key]
 
 
 def _xticks(ax, tracers):
@@ -416,10 +422,10 @@ _MEAN_PANELS = [
     (r"$m$",         "abs",   None,         "best"),
 ]
 
-_REFERENCE_CHOICES = ("fiducial", "dr1")
+_REFERENCE_CHOICES = ("fiducial", "dr1", "dr1_bestfit")
 
 
-def _mean_vectors(tracers, theory, data):
+def _mean_vectors(tracers, theory, data, sample=None):
     """(generator, fiducial, dr1, dr1_sigma) as 4-vectors per tracer.
 
     Basis is DESI's: (D_V/r_d, D_H/D_M, f sigma_r, m).
@@ -431,8 +437,8 @@ def _mean_vectors(tracers, theory, data):
     gen, fid, dr1, sig = [], [], [], []
     for t in tracers:
         z_ours = data[t]["theories"][theory]["z"]
-        dv, dhdm = desi_ref.fiducial_dv_dhdm(z_ours)
-        mt = _mean_targets(t)
+        dv, dhdm = desi_ref.dv_dhdm_at(z_ours, sample)
+        mt = _mean_targets(t, sample)
         gen.append([dv, dhdm, mt[2], mt[3]])
         pf = desi_ref.published_fiducial(t)
         fid.append([pf["DV_over_rd"], pf["DH_over_DM"], pf["f_sigma_s8"], 0.0])
@@ -476,7 +482,9 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
     if reference not in _REFERENCE_CHOICES:
         raise ValueError(f"reference must be one of {_REFERENCE_CHOICES}, "
                          f"got {reference!r}")
-    gen, fid, dr1, dr1_sig = _mean_vectors(tracers, theory, data)
+    sample = (desi_ref.dr1_bestfit_cosmology()
+              if reference == "dr1_bestfit" else None)
+    gen, fid, dr1, dr1_sig = _mean_vectors(tracers, theory, data, sample)
     ref = fid if reference == "fiducial" else dr1
     ref_label = ("DESI fiducial (Table 11)" if reference == "fiducial"
                  else "DESI DR1 (App. A)")
@@ -499,7 +507,7 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
 
         ax.axhline(0.0, color="0.45", lw=1.6, label=ref_label)
         spread = [resid]
-        if reference == "dr1":
+        if reference != "fiducial":
             ax.errorbar(x, np.zeros_like(x, dtype=float), yerr=band, fmt="none",
                         ecolor="0.45", elinewidth=1.2, capsize=4, capthick=1.2,
                         zorder=1, label=r"DESI $1\sigma$")
@@ -543,12 +551,22 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
                "$m=0$ by Eq. 4.9).  At the fiducial cosmology the generator is "
                "1/1/Table 11/0 by construction, so this is a NULL TEST of "
                "conventions, not a measurement comparison.")
-    else:
+    elif reference == "dr1":
         sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A, "
                "ShapeFit-alone), generator evaluated at the FIDUCIAL cosmology.  "
                "This is 'does DR1 agree with Planck-$\\Lambda$CDM' — a DESI "
                "result, not a test of this pipeline.")
-    fig.suptitle(sup, fontsize=10)
+    else:
+        c = desi_ref.dr1_bestfit_cosmology()
+        sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A), "
+               "generator evaluated at DR1's OWN best-fit $\\Lambda$CDM "
+               "(2411.12022 Eq. 3.1: $\\Omega_m$=0.2962, $\\sigma_8$=0.842, "
+               "$H_0$=68.56)\n"
+               rf"$\omega_{{cdm}}$={c['omega_cdm']:.5f}, $h$={c['h']:.4f}, "
+               rf"$\ln(10^{{10}}A_s)$={c['ln10A_s']:.4f}.  "
+               "CLOSURE test — Eq. 3.1 was inferred from these same data, and "
+               "carries BAO the compressed vectors do not.")
+    fig.suptitle(sup, fontsize=9)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"  wrote {out_path}")
@@ -705,7 +723,8 @@ def main() -> int:
         # Distinct filenames so the two references can coexist on disk; plots/
         # has no versioning and a rerun overwrites in place.
         stem = {"fiducial": "shapefit_mean_vs_fiducial",
-                "dr1": "shapefit_mean_vs_dr1"}[args.reference]
+                "dr1": "shapefit_mean_vs_dr1",
+                "dr1_bestfit": "shapefit_mean_vs_dr1_bestfit"}[args.reference]
         plot_mean(data, tracers, plots_dir() / f"{stem}.png", theory=th,
                   reference=args.reference)
     return 0

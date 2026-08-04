@@ -5057,3 +5057,96 @@ cosmology and compare there. That needs DESI's LCDM parameter posterior;
 `desi_reference` carries compressed parameters only (no omega_cdm, h, ln10A_s),
 so it would mean transcribing another table. Not built, and flagged in the
 `plot_mean` docstring so the gap is visible at the call site.
+
+
+## §68 — `--reference dr1_bestfit`: the first mode where the generator predicts
+
+§66/§67 established that neither existing mean-plot mode tests the pipeline:
+`fiducial` is a null test by construction, `dr1` evaluates the generator at the
+fiducial and so asks whether DR1 agrees with Planck-LCDM. This adds the mode
+that actually predicts — generator at DR1's OWN best-fit cosmology, against
+DR1's compressed measurement.
+
+### The cosmology
+
+`desi_reference.dr1_bestfit_cosmology()`, from DESI 2024 VII (arXiv:2411.12022)
+Eq. (3.1), dataset DESI (FS+BAO)+BBN+ns10:
+
+```
+Omega_m = 0.2962 +- 0.0095    sigma8 = 0.842 +- 0.034    H0 = 68.56 +- 0.75
+```
+
+`omega_b` and `n_s` are not measured by DESI full-shape — they are priors, so
+the prior centres are used (BBN 0.02218, ns10 0.9649; 2024 VII Table 1). Those
+are the same numbers as `core.DEFAULT_PRIORS` because our priors came from that
+table.
+
+`ln10A_s` is not published. DESI quote `sigma8`, the mean pipeline takes `A_s`,
+and linear `sigma8` scales exactly as `sqrt(A_s)` — so one Boltzmann call sets
+the normalisation and a second verifies it. Recovers `sigma8 = 0.842000` and
+`Omega_m = 0.296200` to the printed digits.
+
+```
+omega_cdm = 0.116404   (-3.00% vs fiducial)
+h         = 0.6856     (+1.78%)
+ln10A_s   = 3.147949   (+0.1116)
+```
+
+`omega_cdm` is assembled as `Omega_m h^2 - omega_b - omega_ncdm` with
+`omega_ncdm` from the fiducial's single 0.06 eV neutrino — the convention
+`core._to_mean_extractor_params` uses, so this does not open a second cosmology
+definition (§66).
+
+### Result
+
+Residual (generator - DR1) in units of DESI's sigma, and per-tracer chi2 on the
+full 4x4:
+
+```
+                 at fiducial                    at DR1 best-fit
+tracer   DV/rd  DH/DM   fsr     m   chi2 |  DV/rd  DH/DM   fsr     m   chi2
+BGS      +0.77  +0.22 +1.01 +0.19   2.50 |  +0.32  +0.27 +0.95 +0.08   2.01
+LRG1     +1.33  +0.50 -0.63 -0.40   2.14 |  +0.41  +0.61 -0.65 -0.66   0.77
+LRG2     +2.84  -0.43 -0.43 -0.68  11.05 |  +2.00  -0.27 -0.41 -0.94   5.59
+LRG3     +0.19  -0.71 +0.37 +0.42   0.81 |  -0.61  -0.51 +0.44 +0.11   0.62
+ELG2     +1.17  +1.01 +0.47 -0.91   3.91 |  +0.73  +1.18 +0.62 -1.18   5.82
+QSO      +0.58  -0.15 -1.35 -1.26   4.73 |  +0.21  +0.05 -1.21 -1.61   4.19
+TOTAL                              25.12 |                            19.01
+```
+
+24 dof. Moving to DR1's cosmology pulls `D_V/r_d` toward zero on five of six
+tracers — the direction BAO drives the fit — and drops the total from 25.1 to
+19.0.
+
+**LRG2 remains the outlier**, +2.84 -> +2.00 sigma, the largest single chi2
+contributor in both columns. That is the documented DR1 low point at z = 0.706
+(`desi_reference` records measured/fiducial = 0.948 there), not something this
+pipeline introduces.
+
+### What this chi2 is NOT
+
+Not a goodness-of-fit. Eq. (3.1) was inferred from these same compressed
+measurements plus BAO, so the effective dof is well below 24, and the six
+tracers are treated as independent here. Read 25.1 -> 19.0 as a RELATIVE
+improvement, not as a p-value.
+
+Three caveats carried in `desi_reference` at the definition:
+
+  - **Not a joint MAP.** Eq. (3.1) reports marginalised means one parameter at
+    a time; a vector built from them is the posterior's centre of mass, which
+    equals the best-fit POINT only for a Gaussian posterior. DESI publish no
+    LCDM chain here.
+  - **Not independent.** Closure, not validation — see above.
+  - **FS+BAO, not FS-alone.** Our compressed comparison is ShapeFit-alone; this
+    cosmology carries BAO information the compressed vectors do not.
+
+A residual in this mode therefore has three possible owners — our pipeline,
+the marginalised-mean stand-in, or the FS+BAO/FS-alone mismatch — and the plot
+cannot separate them.
+
+### Plumbing
+
+`_mean_targets(tracer, sample=None)` and `_mean_vectors(..., sample=None)` now
+take a cosmology, cached per (tracer, sample) rather than per tracer. New
+`desi_reference.dv_dhdm_at(z, params)` generalises `fiducial_dv_dhdm`, which
+stays as the no-params path. Output: `shapefit_mean_vs_dr1_bestfit.png`.
