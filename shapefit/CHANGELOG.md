@@ -4520,3 +4520,74 @@ three refuted by measurement (§61c, §61c's covariance note, §62). The open it
 from §61c — whether FKP shot noise wants the weighted density rather than the
 volume average — is *not* addressed by this test, which only redistributed
 `frac` at fixed definition. That one is still open.
+
+### §62b — tested in BAO and across N, then rebuilt the tables anyway
+
+§62a's "≤0.15%" was measured on **shapefit Fisher, fiducial cosmology,
+N = N_dr1** and stated as though it covered everything. It did not. Two gaps,
+both fair:
+
+* **BAO config-space uses the slices differently.** There the per-slice n(z)
+  feeds the Gaussian ξ covariance directly (`bao/config_space.py:696`), with no
+  `n_eff` root-find to average over it — so §62a's compression argument, which
+  is the whole reason shapefit was insensitive, does not apply.
+* **Only one N was tested.** `N_tracers` is the design axis and the FKP weight
+  `1/(1+n̄P₀)` is non-linear in n̄, so the error need not wash out equally across
+  the 0.5×–1.5× box.
+
+### Both tested
+
+Swapping `frac` for the DR1 catalogue's weighted n(z):
+
+```
+BAO config-space (sigma_triplet)
+  LRG2  (2.4% shape change)    <0.005%   at N = 0.5, 1.0, 1.5x
+  BGS   (13.6% shape change)   -0.07 .. -0.08%,  flat in N
+
+shapefit Fisher
+  BGS    +0.04% / +0.01% / -0.00%   at N = 0.5 / 1.0 / 1.5x
+  QSO    +0.16% / +0.15% / +0.15%
+```
+
+The `*_rd_fid` columns move by exactly 0.00%, which is the control: they are
+fiducial values, not σ, and confirm the comparison is well-formed rather than
+the patch silently failing.
+
+So the conclusion holds — **≤0.16% in both analyses, flat across the design
+range** — but it needed both tests before it was worth asserting, and the
+non-linearity concern is answered rather than assumed.
+
+### Rebuilt regardless
+
+An input being immaterial is not a reason to leave it wrong.
+`shapefit/make_nz_slices.py` regenerates the tables from the DR1 catalogues.
+Two details that are not free:
+
+* **Slice edges are preserved exactly.** `bao/core._desi_nz_geometry`
+  length-checks `{tracer}_desi_nx.csv` against the post-`>0` slice count and
+  *silently* falls back to `nbar_file` on a mismatch — which would revert z_eff
+  to the pre-§53 convention with nothing raising. Verified after the rebuild:
+  15/10/10/15/25/65 rows, matching the NX tables exactly.
+* **`slice_fraction` is WEIGHT-weighted**, not a raw count fraction. DESI's n(z)
+  is weighted, and for BGS the two differ by 29% (§62).
+
+Installed for the six full-shape bins (backups at `*.prefinal.bak`). Shape change
+vs the shipped tables: BGS 13.6%, QSO 8.0%, ELG2 4.9%, LRG3 3.3%, LRG1 3.0%,
+LRG2 2.4%.
+
+**`LRG3_ELG1` deliberately NOT installed.** It rebuilds to a 69.7% shape change
+with `N_cat = 2898381` against `N_dr1 = 1876187` (1.54×), so the combined
+`LRG+ELG_LOPnotqso` catalogue over 0.8–1.1 is not the selection behind DESI's
+BAO bin count. It is also the one bin with no NX table, making `nbar_file` live
+rather than inert there. BAO-only, so it blocks nothing here; do not swap it in
+without resolving the 1.54× first.
+
+### Verification after install
+
+* z_eff vs DESI 2024 V Table 1: mean |err| **0.062%**, per-tracer values
+  unchanged to four decimals. Expected — z_eff consumes NX, not `frac`.
+* `tests/test_fiducial_identity.py`: 2 passed.
+* Slice row counts match the NX tables for all six.
+
+Training labels move by ≤0.16%, far below the emulator's own error, so this does
+not by itself force a regeneration — but it is in place for the §53–§58 one.
