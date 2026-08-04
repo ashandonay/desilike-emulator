@@ -3851,6 +3851,13 @@ never depended on the disputed normalization.
 
 ## §57 — Projection effects do NOT explain the `m` correlation deficit (`mcmc.py`)
 
+> **PARTLY SUPERSEDED by §63.** This section runs one tracer (LRG2), one seed,
+> 780 iterations. The 6-tracer × 4-seed × 2500-iteration sweep reverses two of
+> its three `m`-correlation results *on LRG2 itself*: ρ(qiso,m) 0.52 → **0.70**
+> (here: 0.28) and ρ(qap,m) 0.27 → **0.26** (here: −0.63). The σ results below
+> hold 6/6. Read §63 for the numbers; this section for the reasoning that
+> motivated the test.
+
 §45–§56 left one open discrepancy that no covariance-level fix has touched:
 against DESI's published 4×4, **every ρ involving `m` is under-predicted**
 (mean |ρ| ratio 0.356) while **every ρ not involving `m` is over-predicted**
@@ -4630,3 +4637,126 @@ Not urgent while the pipeline is DR1-only (`--dataset` is `choices=["dr1"]`),
 and (3) is DR2 work, which the DR1-first rule defers. (1)+(2) are defensive and
 want a deliberate caller audit — signature changes on functions shared by both
 analyses are exactly what produced §30, §58 and §59.
+
+
+## §63 — the projection question, at 6 tracers × 4 seeds (supersedes §57)
+
+§57 tested whether projection effects explain the `m` correlation deficit using
+one tracer, one seed and 780 iterations, and concluded they do not — "the
+fourth explanation is eliminated too". It flagged its own weakness ("the third
+decimal of every MCMC number above is untrusted"). The full sweep shows the
+*first* decimal was untrusted as well, and the real answer is a split rather
+than an elimination.
+
+### The run
+
+`run_mcmc_sweep.sh`, 24 jobs (6 tracers × seeds 42–45), one process each with
+BLAS pinned to 1 thread, 32 walkers × 2500 iterations, 40% burn-in →
+48 000 samples per chain. 409.7 min wall, zero failures, 24/24 JSONs.
+
+Three `mcmc.py` changes made it runnable and auditable:
+
+  - **per-seed chain files.** The sweep loop wrote every seed to the same
+    `--save` path, so a 4-seed run kept one chain. Now `…_seed{N}.npz`.
+  - **progress ticks at iterations 10/25/50 then every 5%**, so a wrong
+    iteration budget shows up in minutes instead of after the first 5% of a
+    multi-hour run.
+  - **`diag` block** (acceptance, `tau_max`, `n_samples`, `niter`, `nwalkers`)
+    serialised to the JSON — which is what exposed the convergence problem
+    below.
+
+### Convergence: these chains are ~5× short
+
+```
+tracer   niter   tau_max      niter/tau     acceptance
+BGS      2500    213-247      10.1-11.8     0.207
+LRG1     2500    224-259       9.6-11.2     0.205
+LRG2     2500    221-240      10.4-11.3     0.196
+LRG3     2500    235-280       8.9-10.6     0.164
+ELG2     2500    226-243      10.3-11.1     0.213
+QSO      2500    234-266       9.4-10.7     0.192
+```
+
+emcee's guidance is `niter > 50τ`. Every chain is at **9–12 τ**. The seed rms
+below (0.03–0.17 in absolute ρ, against ρ values of 0.1–0.4) is the visible
+consequence: individual cells are not resolved. Statements that survive across
+all 24 chains are usable; single cells are not. **A definitive `m`-row result
+needs ≈12 500 iterations** — ~34 h at this throughput, or under 6 h by widening
+to more walkers across the idle cores.
+
+### Result: two of three `m` correlations improve, one gets worse
+
+Ratio to DESI, averaged over the six tracers, signed (so a sign flip shows as a
+negative, not as spurious agreement):
+
+```
+                  F/D   ->   M/D     sign matches DESI
+rho_qiso_m       0.625 ->  0.712      6/6 -> 6/6      improves
+rho_qap_m        0.300 ->  0.551      6/6 -> 6/6      improves (5/6 tracers)
+rho_f_sigmar_m  -0.196 -> -0.115      4/6 -> 1/6      WORSE, sign flips
+```
+
+`ρ(qap,m)` is the clean one: DESI is negative on all six tracers, we are
+negative on all six under both estimators, and marginalising nearly doubles the
+magnitude toward DESI. `ρ(qiso,m)` improves on 4 of 6.
+
+`ρ(fσ_r,m)` moves decisively the wrong way. DESI has it at **+0.23 to +0.37**
+on five tracers; our Fisher has it at ≈0 (+0.00 to +0.07) and marginalising
+drives it *negative* on five of six. Under an absolute-value convention that
+reads as improvement (0.377 → 0.553) because |ρ| grows — but it grows with the
+wrong sign, which is not agreement. **This is why §63 reports signed ratios.**
+
+### A statistic to not use
+
+A first pass at this section quoted "mean ratio to DESI, Fisher 0.243 → MCMC
+0.382" as evidence that projection helps. That is the signed mean over all 18
+`m`-involving ρ, **including BGS `ρ(fσ_r,m)` where DESI's value is −0.0144**.
+Dividing by it gives −1.93 (Fisher) and +1.13 (MCMC): one entry contributing a
+0.17 swing to an aggregate that moved 0.14. The entire "improvement" was that
+denominator.
+
+§57 already named this trap for `ρ(qiso,fσ_r)` ("the ratio column is
+meaningless there ... division by near-zero, not a 13× error") and it was walked
+into anyway one section later. **Any ρ aggregate in this pipeline must exclude
+|ρ_DESI| < 0.05 and must be signed.** Under that rule the m-involving mean is
+0.371 → 0.338 — i.e. flat, and the honest summary is the per-correlation split
+above, not a single number.
+
+### σ: §57's one-tracer result generalises cleanly
+
+```
+sigma_qiso            0.793 -> 0.868      toward DESI
+sigma_qap             0.854 -> 0.911      toward DESI
+sigma_f_sigmar_frac   0.801 -> 0.849      toward DESI
+sigma_m               0.916 -> 0.759      AWAY, 6/6 tracers
+```
+
+Marginalising widens the posterior relative to the peak curvature, so three of
+the four σ move from under-predicting DESI toward agreement — the expected
+projection signature, now confirmed on six tracers rather than one. σ(m) does
+the opposite on every tracer, which is §57's result standing up.
+
+That combination is the sharpest form of the open discrepancy: our `m` is
+**too well determined and too weakly coupled** to the other three, and
+marginalisation makes the first worse while partly fixing the second.
+
+### Status of the four explanations
+
+theory (§22), priors, free `dn`, projection (§57/§63). The first three stay
+eliminated. Projection is now **partial, not eliminated**: it accounts for a
+meaningful share of the `ρ(qap,m)` and `ρ(qiso,m)` deficit and none of
+`ρ(fσ_r,m)`, whose sign we do not reproduce under either estimator.
+
+Unchanged from §57: this does not block the emulator. `m` is a target we
+predict, and under the production Fisher path σ(m) is the best-matching of the
+four σ (0.916). The `m` *row* of the 4×4 is not validated at the ρ level.
+
+### Provenance
+
+The sweep ran against the pre-§62b n(z) tables — all 24 builds finished ~22:19,
+the rebuilt tables installed at 23:16. §62a measured that shape change at
+≤0.16% on shapefit at fixed N, well under the seed rms here, so the numbers
+stand; a rerun would not move them visibly. §58 (per-tracer area) does **not**
+affect these: `mcmc.py:build()` never passes `area`, so it always took the
+`tracer_area()` path, before and after. §60 changes only the `"desi"` reference
+block echoed into the JSONs, not the chains.

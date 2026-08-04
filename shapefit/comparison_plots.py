@@ -552,12 +552,14 @@ def plot_forecast(data, tracers, out_path, theory="rept"):
     """sigma per compressed parameter: DESI published vs Fisher vs MCMC.
 
     Modelled on bao/comparison_plots.py `_plot_forecast`, minus the bundle
-    series -- shapefit has one covariance (ours), so colour carries nothing and
-    only the ESTIMATOR varies: circle = Fisher, diamond = MCMC, cross = DESI.
+    series -- shapefit has one covariance, so what varies is the ESTIMATOR:
+    blue circle = Fisher, orange diamond = MCMC, black cross = DESI. Colour and
+    marker both carry the estimator so the two series stay separable where they
+    overlap (LRG2/QSO sit within a marker width of each other).
     """
     mcmc = _load_mcmc(tracers)
     x = np.arange(len(tracers), dtype=float)
-    c_ours, c_desi = "tab:blue", "black"
+    c_fisher, c_mcmc, c_desi = "tab:blue", "tab:orange", "black"
 
     fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True,
                              constrained_layout=True)
@@ -578,29 +580,29 @@ def plot_forecast(data, tracers, out_path, theory="rept"):
                 xm.append(i); ym.append(mu); em.append(sd)
         ax.scatter(xd, yd, marker="x", s=55, color=c_desi, linewidths=1.6,
                    zorder=5, label="DESI published")
-        ax.scatter(xf, yf, marker="o", s=34, color=c_ours, linewidth=0,
-                   zorder=4, label="Fisher (ours)")
+        ax.scatter(xf, yf, marker="o", s=34, color=c_fisher, linewidth=0,
+                   zorder=4, label="Fisher")
         if xm:
             if any(e > 0 for e in em):
-                ax.errorbar(xm, ym, yerr=em, fmt="none", ecolor=c_ours,
+                ax.errorbar(xm, ym, yerr=em, fmt="none", ecolor=c_mcmc,
                             elinewidth=1.3, capsize=4, capthick=1.3, zorder=3)
-            ax.scatter(xm, ym, marker="D", s=34, color=c_ours, linewidth=0,
-                       zorder=4, label="MCMC (ours)")
+            ax.scatter(xm, ym, marker="D", s=34, color=c_mcmc, linewidth=0,
+                       zorder=4, label="MCMC")
         ax.set_ylabel(ylabel)
         ax.set_ylim(0.0, None)
         ax.grid(alpha=0.25, linestyle="--", linewidth=0.7, axis="y")
 
     handles = [
         Line2D([0], [0], marker="x", linestyle="", markersize=7,
-               markeredgewidth=1.6, color=c_desi, label="DESI published (2411.12021 App. A)"),
+               markeredgewidth=1.6, color=c_desi, label="DESI published, 2411.12021 App. A"),
         Line2D([0], [0], marker="o", linestyle="", markersize=7,
-               markerfacecolor=c_ours, markeredgecolor="none", label="Fisher (ours)"),
+               markerfacecolor=c_fisher, markeredgecolor="none", label="Fisher"),
         Line2D([0], [0], marker="D", linestyle="", markersize=7,
-               markerfacecolor=c_ours, markeredgecolor="none",
-               label="MCMC (ours; error bar = seed rms)"),
+               markerfacecolor=c_mcmc, markeredgecolor="none",
+               label="MCMC, error bar = seed rms"),
     ]
     axes[0].legend(handles=handles, loc="best", frameon=True, fontsize=9)
-    axes[0].set_title(f"ShapeFit forecast vs DESI DR1 published  ({theory.upper()})")
+    axes[0].set_title(f"ShapeFit forecast vs DESI DR1 published  {theory.upper()}")
     _xticks(axes[-1], tracers)
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
