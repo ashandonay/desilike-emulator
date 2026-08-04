@@ -5008,3 +5008,52 @@ a wrong de-wiggling engine. That is worth having (it is how §53/§54's z_eff
 work was verified) but it tests none of the pipeline's actual content, which is
 how the four outputs VARY with cosmology and N_tracers. Nothing in this repo
 currently plots that.
+
+
+## §67 — `--reference fiducial|dr1` on the mean plot
+
+§66 removed DR1 from the mean plot because it was mixed with a null test under
+one title. The DR1 comparison is still worth having; it just has to be its own
+plot, labelled as what it is.
+
+```
+comparison_plots.py mean --reference fiducial   -> shapefit_mean_vs_fiducial.png
+comparison_plots.py mean --reference dr1        -> shapefit_mean_vs_dr1.png
+```
+
+Distinct filenames on purpose: `plots/` has no versioning and a rerun
+overwrites in place, so a single name would make the two modes destroy each
+other. `shapefit_mean_vs_desi.png` is retired — it named neither reference.
+
+`plot_mean` is now one loop over `_MEAN_PANELS` with the reference chosen up
+front, instead of two hand-written AP panels plus two bespoke ones. `_mean_vectors`
+returns (generator, fiducial, dr1, dr1_sigma) as 4-vectors in DESI's basis, so
+adding a third reference later is a fourth return value, not a fourth code path.
+That structure is what §66 was really fixing: the panels diverged because
+nothing forced them through a common shape.
+
+In `dr1` mode each panel draws DESI's 1-sigma band around zero, so consistency
+reads off directly rather than by comparing marker positions.
+
+### On "MAP"
+
+Appendix A publishes a datavector PLUS a Gaussian covariance, i.e. a Gaussian
+summary of the posterior, and for a Gaussian the mean and the MAP coincide. So
+"DR1 MAP values" is a fair label for those centres. The two would separate only
+where the posterior is non-Gaussian — which §63 measured, and found in the `m`
+row. Worth remembering if a future comparison leans on the `m` central value
+rather than its sigma.
+
+### What `dr1` mode is NOT
+
+The generator is still evaluated at the FIDUCIAL cosmology. So the residual is
+"does DR1 agree with Planck-LCDM", a DESI result — the plot's suptitle says so.
+The visible features are DESI's, not ours: LRG2's D_V/r_d sits ~+5% (the
+well-known DR1 low point, `desi_reference` records measured/fiducial = 0.948
+there) and BGS's f_sigmar ~+25% on a ~20% error bar.
+
+A genuine prediction test would evaluate the generator at DR1's OWN best-fit
+cosmology and compare there. That needs DESI's LCDM parameter posterior;
+`desi_reference` carries compressed parameters only (no omega_cdm, h, ln10A_s),
+so it would mean transcribing another table. Not built, and flagged in the
+`plot_mean` docstring so the gap is visible at the call site.

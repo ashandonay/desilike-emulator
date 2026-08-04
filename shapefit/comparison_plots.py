@@ -12,9 +12,13 @@ Three plots, selected by a positional subcommand (default: sigma):
   comparison_plots.py rho       the 6 pairwise correlations vs DESI, 6 panels.
                                 These are 6 of the 10 emulator targets and had
                                 no external check at all before desi_reference.
-  comparison_plots.py mean      mean-pipeline values vs DESI's measurements.
-                                READ THE CAVEAT -- most of this panel does not
-                                test our pipeline (see below).
+  comparison_plots.py mean      mean-pipeline values vs a DESI reference,
+                                chosen with --reference:
+                                  fiducial (default) Table 11 / Appendix C.
+                                    A NULL TEST -- see below.
+                                  dr1                the App. A measurement,
+                                    with its 1-sigma band. A DESI RESULT, not
+                                    a test of this code -- see below.
 
 Reference is desi_reference.py: DESI 2024 V (arXiv:2411.12021) Appendix A,
 ShapeFit-ALONE fits (not the tighter ShapeFit+BAO), transcribed per tracer with
@@ -23,22 +27,28 @@ full 4x4 covariances.
 What the `mean` plot can and cannot say
 ---------------------------------------
 Evaluated at the DESI fiducial cosmology, our mean pipeline returns qiso = 1,
-qap = 1 and dm = 0 **by construction** -- the fiducial is its own reference. So
-for those three, the plot shows whether DESI's DATA is consistent with the
-fiducial cosmology. That is a real and interesting question, but it is a
-statement about DESI, not about us.
+qap = 1, f_sigmar = Table 11 and m = 0 **by construction** -- the fiducial is
+its own reference. NEITHER reference mode tests how the pipeline responds to
+cosmology, which is its actual content.
 
-Because of that, the two AP panels plot D_V/r_d and D_H/D_M rather than qiso and
-qap: the ratio is a flat line at 1, but its numerator (DESI's measurement) and
-denominator (Table 11) are both real numbers worth seeing, and our own value at
-our z_eff can be put on the same axis. See `plot_mean`.
+--reference fiducial is a null test of CONVENTIONS: a wrong r_d, a wrong z_eff
+or a wrong de-wiggling engine shows up, nothing else does. That is how the
+S53/S54 z_eff work was verified, so it earns its keep, but do not read
+agreement there as validation of the emulator.
 
-The one genuinely predictive entry is f_sigmar: f(z) * sigma_r is an absolute
-number our pipeline computes from the input cosmology, comparable to DESI's
-measured f sigma_s8. Since the z_eff convention was corrected to DESI's
-FKP-weighted definition (bao CHANGELOG S36) four of six tracers agree with
-DESI's published z_eff to <0.5%; LRG3 and ELG2 still differ by ~2%, and
-f*sigma8 evolves fast, so the panel labels those two with their Delta z.
+--reference dr1 asks whether DR1 agrees with Planck-LCDM. That is a DESI
+result. It is on the same axes only because the basis is shared; a departure
+there is not a code error. CHANGELOG S66 records the version of this plot that
+mixed the two questions without saying so.
+
+The AP panels plot D_V/r_d and D_H/D_M rather than qiso and qap because the
+ratio is a flat line at 1 on our side, while its numerator and denominator are
+both real numbers worth seeing. Those two entries are DISTANCES recomputed at
+our z_eff; f_sigmar and m are the actual mean-pipeline outputs.
+
+A genuine prediction test -- generator at DR1's own best-fit cosmology, against
+DR1's measurement -- needs DESI's LCDM parameter posterior. desi_reference
+carries compressed parameters only, so it is NOT BUILT.
 
 m needs no conversion: the mean emulator now emits DESI's m -- the Eq. (4.9)
 shape parameter, which multiplies the fiducial template so m = 0 is no shape
@@ -393,126 +403,152 @@ def plot_rho(data, tracers, out_path):
     print(f"  wrote {out_path}")
 
 
-# The two AP panels, as the physical distances rather than the ratios.
-# (index into the DESI 4-vector, sigma key, y label, Table 11 key, q label,
-#  legend corner -- residuals run one-signed in each panel, D_V/r_d negative and
-#  D_H/D_M positive, so the free corner is opposite in each)
-# Legend placement is "best", not a fixed corner, deliberately. These panels
-# plot a residual whose SCALE keeps shrinking as the pipeline improves -- the
-# D_H/D_M range went from +15.9% to -2.97% to -0.90% over three z_eff
-# corrections in one day -- so any hardcoded position is chosen against a
-# layout that no longer exists. "center left" was fine when the panel spanned
-# -3%..+1%; at +-1% it sat on top of the BGS/LRG1/LRG2 markers and read as
-# missing data.
-_DIST_PANELS = [
-    (0, "sigma_qiso", r"$D_V/r_d$", "DV_over_rd", r"$q_{\rm iso}$", "best"),
-    (1, "sigma_qap", r"$D_H/D_M$", "DH_over_DM", r"$q_{\rm ap}$", "best"),
+# The four mean panels. `kind` is how the residual is formed:
+#   "ratio" -> 100 * (generator / reference - 1), in percent
+#   "abs"   -> generator - reference, in the parameter's own units
+# m is "abs" because in fiducial mode its reference is 0 (Eq. 4.9 is a
+# definition, not a table entry), so no ratio exists. Keeping it "abs" in dr1
+# mode too matches DESI's own convention, where m is an additive deviation.
+_MEAN_PANELS = [
+    (r"$D_V/r_d$",   "ratio", "DV_over_rd", "best"),
+    (r"$D_H/D_M$",   "ratio", "DH_over_DM", "best"),
+    (r"$f\sigma_r$", "ratio", "f_sigma_s8", "best"),
+    (r"$m$",         "abs",   None,         "best"),
 ]
 
+_REFERENCE_CHOICES = ("fiducial", "dr1")
 
-def plot_mean(data, tracers, out_path, theory="rept"):
-    """DESI's measured compressed values against our mean-pipeline prediction.
 
-    The AP panels compare the generator against DESI's PUBLISHED FIDUCIAL, not
-    against DESI's DR1 measurement. Two reasons:
+def _mean_vectors(tracers, theory, data):
+    """(generator, fiducial, dr1, dr1_sigma) as 4-vectors per tracer.
 
-      - q = value/fiducial is 1 by construction on our side at the fiducial
-        cosmology, so plotting q draws a flat line at 1 and hides the numbers.
-      - The DR1 measurement is data. Whether the universe matches the fiducial
-        is a statement about DESI, not about this pipeline, and putting it on
-        the same axis invites reading a cosmological result as a code error.
+    Basis is DESI's: (D_V/r_d, D_H/D_M, f sigma_r, m).
 
-    So the y-axis is the residual against Table 11 in percent, with the Table 11
-    value itself annotated. The single generator marker is evaluated at OUR
-    z_eff, so its offset from zero mixes two effects that are not separated
-    here: the distance/r_d convention (cosmoprimo vs the published table,
-    <=0.13%) and our Fisher-weighted z_eff differing from DESI's. An earlier
-    version drew a second open marker at DESI's z_eff to split the two; it was
-    removed on request. Restore it if the residual ever needs attributing.
-
-    Caveat: our distances come from the same cosmoprimo "DESI" cosmology the
-    pipeline uses, so the open marker is a consistency check on conventions
-    rather than an independent implementation.
+    The first two generator entries are DISTANCES recomputed at our z_eff, not
+    the mean pipeline's qiso/qap -- those are 1 to 1e-7 at the fiducial and
+    carry no information. The last two are the actual mean-pipeline outputs.
     """
+    gen, fid, dr1, sig = [], [], [], []
+    for t in tracers:
+        z_ours = data[t]["theories"][theory]["z"]
+        dv, dhdm = desi_ref.fiducial_dv_dhdm(z_ours)
+        mt = _mean_targets(t)
+        gen.append([dv, dhdm, mt[2], mt[3]])
+        pf = desi_ref.published_fiducial(t)
+        fid.append([pf["DV_over_rd"], pf["DH_over_DM"], pf["f_sigma_s8"], 0.0])
+        _z, vec, cov = desi_ref.datavector(t)
+        dr1.append(list(vec))
+        sig.append(list(np.sqrt(np.diag(cov))))
+    return (np.array(gen), np.array(fid), np.array(dr1), np.array(sig))
+
+
+def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
+    """Mean-pipeline values against a chosen DESI reference.
+
+    reference="fiducial" (default)
+        Table 11 / Appendix C, with m = 0 by Eq. (4.9). A NULL TEST: at the
+        fiducial cosmology the generator returns 1, 1, Table 11 and 0 by
+        construction, so the only thing this can detect is a convention or
+        implementation error -- a wrong r_d, a wrong z_eff, a wrong de-wiggling
+        engine. It cannot test the pipeline's actual content, which is how the
+        four outputs VARY with cosmology and N_tracers.
+
+    reference="dr1"
+        DESI's measured compressed values (Appendix A, Eqs. A.1-A.24) with
+        their 1-sigma band. NOT a test of this code: the generator is
+        evaluated at the FIDUCIAL cosmology, so the residual is "does DR1 agree
+        with Planck-LCDM", a DESI result. Appendix A publishes a datavector
+        plus a Gaussian covariance, so its centres are the mean and the MAP
+        alike -- the two would only separate where the posterior is non-
+        Gaussian, which S63 showed is the m row.
+
+    A genuine prediction test would evaluate the generator at DR1's own
+    best-fit cosmology and compare there. That needs DESI's LCDM parameter
+    posterior, which desi_reference does not carry -- it holds compressed
+    parameters only. Not built.
+
+    The generator's AP entries are evaluated at OUR z_eff, so their offset
+    mixes the distance/r_d convention (<=0.13%) with our Fisher-weighted z_eff
+    differing from DESI's. An earlier version drew a second open marker at
+    DESI's z_eff to separate the two; removed on request, restore it if the
+    residual ever needs attributing.
+    """
+    if reference not in _REFERENCE_CHOICES:
+        raise ValueError(f"reference must be one of {_REFERENCE_CHOICES}, "
+                         f"got {reference!r}")
+    gen, fid, dr1, dr1_sig = _mean_vectors(tracers, theory, data)
+    ref = fid if reference == "fiducial" else dr1
+    ref_label = ("DESI fiducial (Table 11)" if reference == "fiducial"
+                 else "DESI DR1 (App. A)")
+
     fig, axes = plt.subplots(1, 4, figsize=(16, 4.2))
     x = np.arange(len(tracers))
     labels = [_DISPLAY.get(t, t) for t in tracers]
 
-    for ax, (idx, key, ylabel, t11, qlab, loc) in zip(axes[:2], _DIST_PANELS):
-        fid = np.array([desi_ref.published_fiducial(t)[t11] for t in tracers])
-        zo = np.array([data[t]["theories"][theory]["z"] for t in tracers])
-        at_z_ours = np.array([desi_ref.fiducial_dv_dhdm(z)[idx] for z in zo])
-        ax.axhline(0.0, color="0.45", lw=1.6, label="DESI fiducial (Table 11)")
-        ax.plot(x, 100 * (at_z_ours / fid - 1), "o", ms=7, color="tab:blue",
+    for j, (ax, (ylabel, kind, _t11key, loc)) in enumerate(zip(axes, _MEAN_PANELS)):
+        r_ref, r_gen, r_sig = ref[:, j], gen[:, j], dr1_sig[:, j]
+        if kind == "ratio":
+            resid = 100.0 * (r_gen / r_ref - 1.0)
+            band = 100.0 * r_sig / np.abs(r_ref)
+            unit = "  [%]"
+            ylab = f"{ylabel}: generator / ref $-1${unit}"
+        else:
+            resid = r_gen - r_ref
+            band = r_sig
+            ylab = f"{ylabel}: generator $-$ ref"
+
+        ax.axhline(0.0, color="0.45", lw=1.6, label=ref_label)
+        spread = [resid]
+        if reference == "dr1":
+            ax.errorbar(x, np.zeros_like(x, dtype=float), yerr=band, fmt="none",
+                        ecolor="0.45", elinewidth=1.2, capsize=4, capthick=1.2,
+                        zorder=1, label=r"DESI $1\sigma$")
+            spread.append(band)
+            spread.append(-band)
+        ax.plot(x, resid, "o", ms=7, color="tab:blue", zorder=3,
                 label="generator")
-        # Table 11 values along the top, in axes coords -- anchoring them to the
-        # y=0 line puts them straight through the markers.
+
+        # Reference values along the top, anchored in axes coords.
         for i in range(len(tracers)):
-            ax.text(i, 0.955, f"{fid[i]:.3g}", transform=ax.get_xaxis_transform(),
+            ax.text(i, 0.955, f"{r_ref[i]:.4g}",
+                    transform=ax.get_xaxis_transform(),
                     ha="center", va="top", fontsize=6.0, color="0.35")
-        r = np.concatenate([at_z_ours / fid - 1, [0.0]]) * 100
-        pad = max(r.ptp(), 1.0)
-        ax.set_ylim(r.min() - 0.15 * pad, r.max() + 0.30 * pad)
-        ax.set_ylabel(f"{ylabel}: generator / Table 11 $-1$  [%]")
-        ax.legend(fontsize=7, loc=loc)
+
+        allv = np.concatenate([np.atleast_1d(v) for v in spread] + [[0.0]])
+        pad = max(allv.ptp(), 1.0 if kind == "ratio" else 1e-12)
+        ax.set_ylim(allv.min() - 0.15 * pad, allv.max() + 0.30 * pad)
+        ax.set_xlim(-0.5, len(tracers) - 0.5)
+        ax.set_ylabel(ylab)
         ax.set_title(ylabel, fontsize=11)
+        ax.legend(fontsize=7, loc=loc)
 
-    # f_sigmar: same null test as the AP panels, against Table 11's fiducial
-    # f sigma_s8. DR1 is deliberately absent -- see the docstring.
-    ax = axes[2]
-    fid_fsr = np.array([desi_ref.published_fiducial(t)["f_sigma_s8"]
-                        for t in tracers])
-    ours_fsr = np.array([_mean_targets(t)[2] for t in tracers])
-    res = 100 * (ours_fsr / fid_fsr - 1)
-    ax.axhline(0.0, color="0.45", lw=1.6, label="DESI fiducial (Table 11)")
-    ax.plot(x, res, "o", ms=7, color="tab:blue", label="generator")
-    for i in range(len(tracers)):
-        ax.text(i, 0.955, f"{fid_fsr[i]:.4g}",
-                transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=6.0, color="0.35")
-    r = np.concatenate([res, [0.0]])
-    pad = max(r.ptp(), 1.0)
-    ax.set_ylim(r.min() - 0.15 * pad, r.max() + 0.30 * pad)
-    ax.set_ylabel(r"$f\sigma_r$: generator / Table 11 $-1$  [%]")
-    ax.set_title(r"$f\sigma_r$", fontsize=11)
-    ax.legend(fontsize=7)
-
-    # m: no ratio is possible -- the fiducial value is 0 by Eq. (4.9), which is
-    # a definition, not a table entry. So this is the absolute residual, and
-    # the y-scale is set by DESI's sigma(m) so that "negligible" is visible as
-    # negligible rather than as a full-height wiggle around zero.
-    ax = axes[3]
-    ours_m = np.array([_mean_targets(t)[3] for t in tracers])
-    desi_sig_m = np.array([data[t]["desi"]["sigma_m"] for t in tracers])
-    ax.axhline(0.0, color="0.45", lw=1.6,
-               label="DESI fiducial ($m=0$, Eq. 4.9)")
-    ax.plot(x, ours_m, "o", ms=7, color="tab:blue", label="generator")
-    # Scale to the residual itself, not to DESI's sigma(m): drawing a +-0.051
-    # band would fill the panel and hide the 1e-5 structure that is the actual
-    # content. The comparison to sigma(m) goes in the annotation instead.
-    r = np.concatenate([ours_m, [0.0]])
-    pad = max(r.ptp(), 1e-12)
-    ax.set_ylim(r.min() - 0.35 * pad, r.max() + 0.55 * pad)
-    ax.set_xlim(-0.5, len(tracers) - 0.5)
-    ax.annotate(rf"$|m| \leq$ {np.abs(ours_m).max():.1e}"
-                "\n"
-                rf"DESI $\sigma(m)$ = {desi_sig_m.min():.3f}–{desi_sig_m.max():.3f}",
-                xy=(0.03, 0.03), xycoords="axes fraction", fontsize=7,
-                color="0.3", va="bottom")
-    ax.set_ylabel(r"$m$: generator $-$ 0")
-    ax.set_title(r"$m$", fontsize=11)
-    ax.legend(fontsize=7)
+    if reference == "fiducial":
+        # m's residual is ~1e-5 (CLASS shooting tolerance on the Omega_m route,
+        # see CHANGELOG S66); state the scale rather than draw a sigma(m) band
+        # that would fill the panel.
+        axes[3].annotate(
+            rf"$|m| \leq$ {np.abs(gen[:, 3] - ref[:, 3]).max():.1e}"
+            "\n"
+            rf"DESI $\sigma(m)$ = {dr1_sig[:, 3].min():.3f}–{dr1_sig[:, 3].max():.3f}",
+            xy=(0.03, 0.03), xycoords="axes fraction", fontsize=7,
+            color="0.3", va="bottom")
 
     for i, ax in enumerate(axes):
         ax.grid(alpha=0.3)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=25, fontsize=8)
         # every panel now places its own legend
-    fig.suptitle("ShapeFit mean values — all four panels: generator vs DESI's "
-                 "FIDUCIAL (Table 11 / Appendix C; $m=0$ by Eq. 4.9).  "
-                 "No DR1 data: at the fiducial cosmology the generator is "
-                 "1/1/Table 11/0 by construction, so this is a null test of "
-                 "conventions, not a measurement comparison.", fontsize=10)
+    if reference == "fiducial":
+        sup = ("ShapeFit mean values vs DESI's FIDUCIAL (Table 11 / Appendix C; "
+               "$m=0$ by Eq. 4.9).  At the fiducial cosmology the generator is "
+               "1/1/Table 11/0 by construction, so this is a NULL TEST of "
+               "conventions, not a measurement comparison.")
+    else:
+        sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A, "
+               "ShapeFit-alone), generator evaluated at the FIDUCIAL cosmology.  "
+               "This is 'does DR1 agree with Planck-$\\Lambda$CDM' — a DESI "
+               "result, not a test of this pipeline.")
+    fig.suptitle(sup, fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"  wrote {out_path}")
@@ -635,6 +671,10 @@ def main() -> int:
     p.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
     p.add_argument("--theory", nargs="+", default=["rept"],
                    choices=["kaiser", "rept"])
+    p.add_argument("--reference", default="fiducial", choices=_REFERENCE_CHOICES,
+                   help="`mean` plot only. fiducial: null test against Table 11 "
+                        "(default). dr1: against DESI's measured compressed "
+                        "values -- a DESI result, not a test of this code.")
     args = p.parse_args()
 
     print(f"Gathering {len(args.tracers)} tracers x {len(args.theory)} theories "
@@ -662,7 +702,12 @@ def main() -> int:
                       plots_dir() / "shapefit_forecast_comparison_dr1.png", theory=th)
     if args.plot in ("mean", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
-        plot_mean(data, tracers, plots_dir() / "shapefit_mean_vs_desi.png", theory=th)
+        # Distinct filenames so the two references can coexist on disk; plots/
+        # has no versioning and a rerun overwrites in place.
+        stem = {"fiducial": "shapefit_mean_vs_fiducial",
+                "dr1": "shapefit_mean_vs_dr1"}[args.reference]
+        plot_mean(data, tracers, plots_dir() / f"{stem}.png", theory=th,
+                  reference=args.reference)
     return 0
 
 
