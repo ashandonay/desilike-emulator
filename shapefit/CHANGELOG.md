@@ -4400,3 +4400,87 @@ shot-noise algebra done properly (§46's Eq. 10.5/10.6 route), not another ratio
 clustering catalogues used here are 460 MB total and downloaded in under a
 minute with no MFA, no tty and no pull-from-entropy. §43's ssh recipe is only
 needed for non-public paths. Filenames use `NGC`/`SGC`, not `N`/`S`.
+
+
+## §62 — `nz_slices` `frac` comes from non-DR1 n(z) tables
+
+Downloading the remaining four catalogues (BGS, QSO — the two skipped when the
+download was scoped to the ELG2 hypothesis) completed the checks and turned up
+something the ELG/LRG pair could not have shown.
+
+### First, two corrections to §61c's method
+
+**NX is correct for all six tracers.** §61c compared NX against *unweighted*
+galaxy counts. DESI's n(z) is weighted, and with `WEIGHT` applied:
+
+| tracer | NX vs count | NX vs weighted count |
+|---|---|---|
+| BGS | 29.3% | **2.1%** |
+| LRG1 | 1.5% | 0.5% |
+| LRG2 | 2.6% | 0.7% |
+| LRG3 | 5.7% | 0.7% |
+| ELG2 | 3.1% | 1.7% |
+| QSO | 5.4% | 0.4% |
+
+(spread of the per-slice shape ratio). BGS's apparent 29% anomaly was an
+artifact of the unweighted comparison — its weights are strongly z-dependent.
+NX matches the weighted galaxy density to ≤2.1% everywhere.
+
+**§58's per-tracer areas are now confirmed for all six**, via `Σ 1/NX = V`:
+
+| tracer | area used | implied | ratio |
+|---|---|---|---|
+| BGS | 7473 | 7489 | 1.002 |
+| LRG1/2/3 | 5740 | 5670–5787 | 0.988–1.008 |
+| ELG2 | 5924 | 6021 | 1.016 |
+| QSO | 7249 | 7303 | 1.008 |
+
+Counts also reproduce §46 exactly, including its two known offsets (BGS +26,
+QSO +179; the other four exact).
+
+### The finding
+
+Our stored per-slice `frac` — which the **covariance** uses to build
+`nbar_i = N_tracers × frac_i / V_i` — does not come from the catalogues. The
+`source_file` column names DESI's published `*_nz.txt` tables, and those
+describe a substantially larger sample than DR1:
+
+| tracer | Σ Nbin (file) | DR1 N | ratio | file_area_deg2 |
+|---|---|---|---|---|
+| BGS | 968857 | 300017 | 3.23 | 24710 |
+| LRG1 | 1209217 | 506911 | 2.39 | 20062 |
+| LRG2 | 1954607 | 771894 | 2.53 | 30092 |
+| LRG3 | 2087501 | 859822 | 2.43 | 20062 |
+| ELG2 | 5837681 | 1415707 | 4.12 | 20704 |
+| QSO | 1548236 | 856652 | 1.81 | 11181 |
+
+1.8–4.1× the DR1 counts over areas of 11k–30k deg², none matching DR1's
+per-tracer footprints. These are final-survey/forecast n(z) tables, not DR1.
+
+Only the *shape* is consumed (`slice_fraction`; the normalisation comes from the
+DR1 `N_tracers`), so this is not a factor-of-3 error. But the shape is not DR1's:
+
+| tracer | `frac` vs DR1 weighted n(z) |
+|---|---|
+| **BGS** | **13.6%** |
+| QSO | 8.0% |
+| ELG2 | 4.9% |
+| LRG3 | 3.3% |
+| LRG1 | 3.0% |
+| LRG2 | 2.4% |
+
+### Status and what it touches
+
+`frac` feeds the covariance's per-slice n̄, hence the FKP weight per slice, hence
+V_eff and σ. It is **not** the z_eff path, which uses NX (confirmed correct).
+
+Worth flagging without asserting a link, given how many hypotheses this thread
+has already burned: BGS has the worst `frac` shape error (13.6%) **and** our
+worst σ agreement (qiso 0.61); QSO is second on both (8.0%, 0.77). LRG2, best on
+shape (2.4%), is also our best-agreeing bin (0.89–0.97). That ordering is
+suggestive and now **testable**, because the DR1 catalogues are local and `frac`
+can be regenerated exactly rather than inherited from a forecast table.
+
+Not done here: regenerating the tables. That changes every training label and
+the golden, so it belongs with the §53–§58 regeneration, not bolted on at the
+end of a session.
