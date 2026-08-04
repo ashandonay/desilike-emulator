@@ -4740,6 +4740,39 @@ That combination is the sharpest form of the open discrepancy: our `m` is
 **too well determined and too weakly coupled** to the other three, and
 marginalisation makes the first worse while partly fixing the second.
 
+#### Correction: the `sigma_f_sigmar_frac` row used a stale DESI denominator
+
+The tables above were aggregated from the sweep JSONs, whose `"desi"` block was
+written by worker processes that had imported `desi_reference` **before** §60
+landed. Checked key by key, exactly one differs from the live module:
+
+```
+  sigma_f_sigmar_frac      max |JSON - live| / live = 25.22 %
+  the other nine keys                                  0.00 %
+```
+
+— §60 changed only that denominator (measured -> fiducial). Per tracer:
+
+```
+tracer   DESI in JSON  DESI live  F/D old  F/D new  M/D old  M/D new
+BGS            0.2494     0.1992    0.670    0.839    0.663    0.830
+LRG1           0.1251     0.1358    1.105    1.018    1.100    1.014
+LRG2           0.1096     0.1151    0.979    0.933    1.035    0.986
+LRG3           0.1120     0.1075    0.769    0.801    0.911    0.949
+ELG2           0.0993     0.0949    0.540    0.565    0.587    0.614
+QSO            0.1023     0.1186    0.743    0.641    0.799    0.689
+mean                                0.801    0.800    0.849    0.847
+```
+
+Individual cells move by up to 25% (BGS 0.670 -> 0.839, QSO 0.743 -> 0.641),
+**the mean does not**: 0.801 -> 0.800 Fisher, 0.849 -> 0.847 MCMC. So the
+`sigma_f_sigmar_frac` line in the σ summary above stands as written, and the
+projection conclusion is untouched — but the per-tracer DESI column for that one
+row is stale and the corrected values are the ones here.
+
+The forecast PLOT was never affected: it reads DESI from the live module.
+Only the JSON-derived tables in this section carried the old value.
+
 ### Status of the four explanations
 
 theory (§22), priors, free `dn`, projection (§57/§63). The first three stay
