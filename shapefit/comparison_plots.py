@@ -222,11 +222,6 @@ def _cov_matrix(targets, desi=False):
 # diagonal (rho = 1) is never masked.
 _PCT_RHO_FLOOR = 0.05
 
-# Minimum |z_eff/z_DESI - 1| worth labelling on the f sigma_r panel. Below this
-# the two conventions agree and the label is clutter; above it the label is the
-# explanation for a visible residual. See `plot_mean`.
-_Z_EFF_LABEL_FLOOR = 0.005
-
 
 def _pct_matrix(Mo, Md, Rd, floor=_PCT_RHO_FLOOR):
     """100 * (generator - DESI) / |DESI|, elementwise.
@@ -407,10 +402,12 @@ def plot_mean(data, tracers, out_path, theory="rept"):
         the same axis invites reading a cosmological result as a code error.
 
     So the y-axis is the residual against Table 11 in percent, with the Table 11
-    value itself annotated. Two generator markers separate the two effects: at
-    DESI's z_eff the only difference is the distance/r_d convention (cosmoprimo
-    vs the published table, <=0.13%); at our own z_eff the Fisher-weighted
-    z_eff enters on top of that.
+    value itself annotated. The single generator marker is evaluated at OUR
+    z_eff, so its offset from zero mixes two effects that are not separated
+    here: the distance/r_d convention (cosmoprimo vs the published table,
+    <=0.13%) and our Fisher-weighted z_eff differing from DESI's. An earlier
+    version drew a second open marker at DESI's z_eff to split the two; it was
+    removed on request. Restore it if the residual ever needs attributing.
 
     Caveat: our distances come from the same cosmoprimo "DESI" cosmology the
     pipeline uses, so the open marker is a consistency check on conventions
@@ -422,58 +419,40 @@ def plot_mean(data, tracers, out_path, theory="rept"):
 
     for ax, (idx, key, ylabel, t11, qlab, loc) in zip(axes[:2], _DIST_PANELS):
         fid = np.array([desi_ref.published_fiducial(t)[t11] for t in tracers])
-        zf = np.array([data[t]["z_desi"] for t in tracers])
         zo = np.array([data[t]["theories"][theory]["z"] for t in tracers])
-        # Two generator evaluations, which separates the two things that can
-        # move us off the published fiducial:
-        #   at DESI's z_eff  -> distance/r_d convention only (cosmoprimo vs T11)
-        #   at our z_eff     -> that, plus our Fisher-weighted z_eff
-        at_z_desi = np.array([desi_ref.fiducial_dv_dhdm(z)[idx] for z in zf])
         at_z_ours = np.array([desi_ref.fiducial_dv_dhdm(z)[idx] for z in zo])
         ax.axhline(0.0, color="0.45", lw=1.6, label="DESI fiducial (Table 11)")
-        ax.plot(x, 100 * (at_z_desi / fid - 1), "o", ms=8, mfc="none", mew=1.4,
-                color="tab:blue", label="generator @ DESI $z_{\\rm eff}$")
-        ax.plot(x, 100 * (at_z_ours / fid - 1), "o", ms=6, color="tab:blue",
-                label="generator @ own $z_{\\rm eff}$")
+        ax.plot(x, 100 * (at_z_ours / fid - 1), "o", ms=7, color="tab:blue",
+                label="generator")
         # Table 11 values along the top, in axes coords -- anchoring them to the
         # y=0 line puts them straight through the markers.
         for i in range(len(tracers)):
             ax.text(i, 0.955, f"{fid[i]:.3g}", transform=ax.get_xaxis_transform(),
                     ha="center", va="top", fontsize=6.0, color="0.35")
-        r = np.concatenate([at_z_desi / fid - 1, at_z_ours / fid - 1, [0.0]]) * 100
+        r = np.concatenate([at_z_ours / fid - 1, [0.0]]) * 100
         pad = max(r.ptp(), 1.0)
         ax.set_ylim(r.min() - 0.15 * pad, r.max() + 0.30 * pad)
         ax.set_ylabel(f"{ylabel}: generator / Table 11 $-1$  [%]")
         ax.legend(fontsize=7, loc=loc)
-        ax.set_title(f"{ylabel} — the quantity behind {qlab}, against the "
-                     "fiducial\nit is divided by (labels: Table 11 value)",
-                     fontsize=9)
+        ax.set_title(ylabel, fontsize=11)
 
     # f_sigmar: the one genuinely predictive panel.
     ax = axes[2]
     meas = [data[t]["desi_vec"][2] for t in tracers]
-    err = [data[t]["desi"]["sigma_f_sigmar_frac"] * m for m, t in zip(meas, tracers)]
+    # De-normalise with the FIDUCIAL f sigma_s8, which is what S60 made
+    # sigma_f_sigmar_frac's denominator. Multiplying by the MEASURED value
+    # instead (as this line did) puts back the measured/fiducial factor S60
+    # removed, and that factor is not small: 0.799 (BGS) to 1.160 (QSO), so the
+    # bar was 20% short on BGS and 16% long on QSO.
+    err = [data[t]["desi"]["sigma_f_sigmar_frac"]
+           * desi_ref.published_fiducial(t)["f_sigma_s8"] for t in tracers]
     ours = [float(data[t]["theories"][theory]["info"]["f_sigmar_fid"])
             for t in tracers]
     ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
                 capsize=3, label="DESI DR1")
     ax.plot(x, ours, "o", ms=7, color="tab:blue", label="generator (predicted)")
-    # Under the DESI FKP z_eff convention four of six tracers now agree with
-    # DESI's published z_eff to <0.5%, so annotating every point is noise.
-    # Label only the two that still differ: f*sigma8 evolves fast enough that a
-    # 2% shift in z is ~1.5% in f sigma_r, comparable to the residual plotted.
-    for i, t in enumerate(tracers):
-        dz = data[t]["theories"][theory]["z"] / data[t]["z_desi"] - 1.0
-        if abs(dz) < _Z_EFF_LABEL_FLOOR:
-            continue
-        side = -1 if i == len(tracers) - 1 else 1     # last one points inward
-        ax.annotate(rf"$\Delta z$ {100 * dz:+.1f}%", (i, ours[i]),
-                    textcoords="offset points", xytext=(8 * side, -3),
-                    ha="left" if side > 0 else "right", fontsize=6, color="0.3")
     ax.set_ylabel(r"$f\sigma_r$")
-    ax.set_title(r"$f\sigma_r$ — PREDICTIVE." "\n"
-                 r"$\Delta z$ vs DESI labelled where $>$0.5%",
-                 fontsize=9)
+    ax.set_title(r"$f\sigma_r$", fontsize=11)
 
     # m: deviation on both sides.
     ax = axes[3]
@@ -483,8 +462,7 @@ def plot_mean(data, tracers, out_path, theory="rept"):
                 capsize=3, label="DESI DR1")
     ax.axhline(0.0, color="tab:blue", lw=1.6, label="generator (dm = 0 by constr.)")
     ax.set_ylabel(r"$m$")
-    ax.set_title("m (DESI Eq. 4.9 convention)\nsame on both sides — no offset",
-                 fontsize=9)
+    ax.set_title(r"$m$", fontsize=11)
 
     for i, ax in enumerate(axes):
         ax.grid(alpha=0.3)

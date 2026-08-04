@@ -4846,3 +4846,48 @@ cleaner, but it changes the trained target set, so not a unilateral change.
 
 Same class as §58 (a fallback that never fired) and §59 (a caller never
 updated): two paths, one definitional mismatch, nothing checking the seam.
+
+
+## §65 — §60's caller, in the mean plot's `f_sigmar` error bar
+
+Found while answering where the mean plot's error bars come from. Plot-only; no
+target, dataset or forecast number is touched.
+
+Both error bars on that plot are DESI's, not ours — the mean pipeline emits
+point predictions with no uncertainty. `m` reads `sigma_m` straight off the
+published 4×4 diagonal and is correct. `f_sigmar` de-normalised the fractional
+target back to absolute units and used the wrong denominator:
+
+```python
+err = [data[t]["desi"]["sigma_f_sigmar_frac"] * m for m, t in zip(meas, tracers)]
+#                                               ^ the MEASURED value
+```
+
+§60 changed `sigma_f_sigmar_frac` from `sig[2]/vec[2]` (measured) to
+`sig[2]/fid["f_sigma_s8"]` (fiducial). Multiplying by `meas` puts the
+measured/fiducial factor straight back:
+
+```
+tracer   sig[2] (pub)  plotted err   ratio  meas/fid
+BGS           0.09408      0.07513  0.7986    0.7986
+LRG1          0.06426      0.06974  1.0852    1.0852
+LRG2          0.05303      0.05565  1.0495    1.0495
+LRG3          0.04730      0.04540  0.9599    0.9599
+ELG2          0.03741      0.03574  0.9552    0.9552
+QSO           0.04448      0.05158  1.1596    1.1596
+```
+
+`ratio == meas/fid` to every digit, which is the signature. The bar was 20%
+short on BGS and 16% long on QSO — enough to change whether a residual reads as
+consistent. Fixed to multiply by `published_fiducial(t)["f_sigma_s8"]`.
+
+Third instance of one pattern (§58 a fallback that never fired, §59 a caller
+never updated, §64 a fiducial set two ways, this one a denominator changed in
+one place). None was found by a test. The seam check floated after §64 would
+have caught §60's callers too.
+
+Same commit, on request: the mean plot's AP panels drop the "@ DESI z_eff"
+open marker (the remaining point is at our z_eff, so its offset no longer
+attributes between the r_d convention and z_eff — noted in the docstring), the
+f_sigmar panel drops its per-tracer Delta z annotations, and every subplot
+title is now just the parameter name.
