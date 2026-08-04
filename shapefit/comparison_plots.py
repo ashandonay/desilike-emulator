@@ -65,6 +65,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -499,11 +500,103 @@ def plot_mean(data, tracers, out_path, theory="rept"):
     print(f"  wrote {out_path}")
 
 
+
+_FORECAST_PANELS = [
+    ("sigma_qiso",        r"$\sigma(q_\mathrm{iso})$"),
+    ("sigma_qap",         r"$\sigma(q_\mathrm{AP})$"),
+    ("sigma_f_sigmar_frac", r"$\sigma(f\sigma_r)/f\sigma_r$"),
+    ("sigma_m",           r"$\sigma(m)$"),
+]
+
+
+def _load_mcmc(tracers):
+    """{tracer: summary} from shapefit/mcmc.py --json, if present.
+
+    Absent tracers simply get no MCMC marker; the run is expensive (~1.8 h for
+    one tracer at 32x780) so the file is usually partial.
+    """
+    from util import logs_dir
+    path = Path(logs_dir("shapefit")) / "shapefit_mcmc_LRG2.json"
+    if not path.exists():
+        return {}
+    import json
+    raw = json.loads(path.read_text())
+    out = {}
+    for t, v in raw.items():
+        if t not in tracers:
+            continue
+        runs = list(v["mcmc"].values())
+        keys = runs[0].keys()
+        out[t] = {k: (float(np.mean([r[k] for r in runs])),
+                      float(np.std([r[k] for r in runs])) if len(runs) > 1 else 0.0)
+                  for k in keys}
+    return out
+
+
+def plot_forecast(data, tracers, out_path, theory="rept"):
+    """sigma per compressed parameter: DESI published vs Fisher vs MCMC.
+
+    Modelled on bao/comparison_plots.py `_plot_forecast`, minus the bundle
+    series -- shapefit has one covariance (ours), so colour carries nothing and
+    only the ESTIMATOR varies: circle = Fisher, diamond = MCMC, cross = DESI.
+    """
+    mcmc = _load_mcmc(tracers)
+    x = np.arange(len(tracers), dtype=float)
+    c_ours, c_desi = "tab:blue", "black"
+
+    fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True,
+                             constrained_layout=True)
+    for ax, (key, ylabel) in zip(axes, _FORECAST_PANELS):
+        for xi in x:
+            ax.axvline(xi, color="gray", alpha=0.25, linewidth=0.6)
+        xd, yd, xf, yf, xm, ym, em = [], [], [], [], [], [], []
+        for i, t in enumerate(tracers):
+            d = data[t]["desi"].get(key, np.nan)
+            if np.isfinite(d):
+                xd.append(i); yd.append(d)
+            tg = data[t]["theories"][theory]["targets"]
+            f = tg["fsr_frac"] if key == "sigma_f_sigmar_frac" else tg.get(key, np.nan)
+            if np.isfinite(f):
+                xf.append(i); yf.append(f)
+            if t in mcmc and key in mcmc[t]:
+                mu, sd = mcmc[t][key]
+                xm.append(i); ym.append(mu); em.append(sd)
+        ax.scatter(xd, yd, marker="x", s=55, color=c_desi, linewidths=1.6,
+                   zorder=5, label="DESI published")
+        ax.scatter(xf, yf, marker="o", s=34, color=c_ours, linewidth=0,
+                   zorder=4, label="Fisher (ours)")
+        if xm:
+            if any(e > 0 for e in em):
+                ax.errorbar(xm, ym, yerr=em, fmt="none", ecolor=c_ours,
+                            elinewidth=1.3, capsize=4, capthick=1.3, zorder=3)
+            ax.scatter(xm, ym, marker="D", s=34, color=c_ours, linewidth=0,
+                       zorder=4, label="MCMC (ours)")
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(0.0, None)
+        ax.grid(alpha=0.25, linestyle="--", linewidth=0.7, axis="y")
+
+    handles = [
+        Line2D([0], [0], marker="x", linestyle="", markersize=7,
+               markeredgewidth=1.6, color=c_desi, label="DESI published (2411.12021 App. A)"),
+        Line2D([0], [0], marker="o", linestyle="", markersize=7,
+               markerfacecolor=c_ours, markeredgecolor="none", label="Fisher (ours)"),
+        Line2D([0], [0], marker="D", linestyle="", markersize=7,
+               markerfacecolor=c_ours, markeredgecolor="none",
+               label="MCMC (ours; error bar = seed rms)"),
+    ]
+    axes[0].legend(handles=handles, loc="best", frameon=True, fontsize=9)
+    axes[0].set_title(f"ShapeFit forecast vs DESI DR1 published  ({theory.upper()})")
+    _xticks(axes[-1], tracers)
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+    print(f"  wrote {out_path}")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("plot", nargs="?", default="sigma",
-                   choices=["sigma", "rho", "covmat", "corrmat", "mean", "all"])
+                   choices=["sigma", "rho", "covmat", "corrmat", "mean", "forecast", "all"])
     p.add_argument("--tracers", nargs="+", default=_TRACERS, choices=_TRACERS)
     p.add_argument("--theory", nargs="+", default=["rept"],
                    choices=["kaiser", "rept"])
@@ -528,6 +621,10 @@ def main() -> int:
         plot_covar_matrix(data, tracers,
                           plots_dir() / "shapefit_corr_matrix_vs_desi.png",
                           kind="corr", theory=th)
+    if args.plot in ("forecast", "all"):
+        th = "rept" if "rept" in args.theory else args.theory[0]
+        plot_forecast(data, tracers,
+                      plots_dir() / "shapefit_forecast_comparison_dr1.png", theory=th)
     if args.plot in ("mean", "all"):
         th = "rept" if "rept" in args.theory else args.theory[0]
         plot_mean(data, tracers, plots_dir() / "shapefit_mean_vs_desi.png", theory=th)
