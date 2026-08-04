@@ -16,9 +16,10 @@ Three plots, selected by a positional subcommand (default: sigma):
                                 chosen with --reference:
                                   fiducial (default) Table 11 / Appendix C.
                                     A NULL TEST -- see below.
-                                  dr1                the App. A measurement,
-                                    with its 1-sigma band. A DESI RESULT, not
-                                    a test of this code -- see below.
+                                  dr1                generator at DR1's own
+                                    best-fit LCDM vs the App. A measurement,
+                                    with its 1-sigma band. The one PREDICTIVE
+                                    mode -- see below.
 
 Reference is desi_reference.py: DESI 2024 V (arXiv:2411.12021) Appendix A,
 ShapeFit-ALONE fits (not the tighter ShapeFit+BAO), transcribed per tracer with
@@ -36,10 +37,15 @@ or a wrong de-wiggling engine shows up, nothing else does. That is how the
 S53/S54 z_eff work was verified, so it earns its keep, but do not read
 agreement there as validation of the emulator.
 
---reference dr1 asks whether DR1 agrees with Planck-LCDM. That is a DESI
-result. It is on the same axes only because the basis is shared; a departure
-there is not a code error. CHANGELOG S66 records the version of this plot that
-mixed the two questions without saying so.
+--reference dr1 is the predictive one: the generator runs at DR1's own best-fit
+LCDM (2411.12022 Eq. 3.1) and is compared to DR1's measurement. It is a CLOSURE
+test -- that cosmology was inferred from these same vectors -- so the chi2 floor
+is not zero and errors shared with DESI's pipeline are invisible. See S68.
+
+CHANGELOG S66 records the version of this plot that mixed a null test and a
+DESI result without saying so; S69 removed the mode that compared the FIDUCIAL
+generator against the DR1 measurement, which only ever asked whether DR1 agrees
+with Planck-LCDM.
 
 The AP panels plot D_V/r_d and D_H/D_M rather than qiso and qap because the
 ratio is a flat line at 1 on our side, while its numerator and denominator are
@@ -422,7 +428,7 @@ _MEAN_PANELS = [
     (r"$m$",         "abs",   None,         "best"),
 ]
 
-_REFERENCE_CHOICES = ("fiducial", "dr1", "dr1_bestfit")
+_REFERENCE_CHOICES = ("fiducial", "dr1")
 
 
 def _mean_vectors(tracers, theory, data, sample=None):
@@ -460,18 +466,26 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
         four outputs VARY with cosmology and N_tracers.
 
     reference="dr1"
-        DESI's measured compressed values (Appendix A, Eqs. A.1-A.24) with
-        their 1-sigma band. NOT a test of this code: the generator is
-        evaluated at the FIDUCIAL cosmology, so the residual is "does DR1 agree
-        with Planck-LCDM", a DESI result. Appendix A publishes a datavector
-        plus a Gaussian covariance, so its centres are the mean and the MAP
-        alike -- the two would only separate where the posterior is non-
-        Gaussian, which S63 showed is the m row.
+        The generator at DR1's OWN best-fit LCDM (desi_reference.
+        dr1_bestfit_cosmology, from 2411.12022 Eq. 3.1) against DR1's measured
+        compressed values (Appendix A, Eqs. A.1-A.24) with their 1-sigma band.
+        The one mode where the pipeline PREDICTS rather than reproducing a
+        definition.
 
-    A genuine prediction test would evaluate the generator at DR1's own
-    best-fit cosmology and compare there. That needs DESI's LCDM parameter
-    posterior, which desi_reference does not carry -- it holds compressed
-    parameters only. Not built.
+        A CLOSURE test in the loop-closing sense, not DESI's mock-recovery
+        sense: Eq. (3.1) was inferred from these same vectors plus BAO, so the
+        data sits on both sides. Two consequences (CHANGELOG S68) -- the chi2
+        floor is not zero, because even an identical forward model recovers the
+        residual DESI's own fit left; and errors we share with DESI's pipeline
+        close perfectly and are invisible.
+
+        Appendix A publishes a datavector plus a Gaussian covariance, so its
+        centres are the mean and the MAP alike. The two separate only where the
+        posterior is non-Gaussian -- which S63 measured, and found in the m row.
+
+    An earlier third mode put the generator at the FIDUCIAL cosmology against
+    the DR1 measurement. That asks whether DR1 agrees with Planck-LCDM, which
+    is a DESI result and not a statement about this code; removed (S69).
 
     The generator's AP entries are evaluated at OUR z_eff, so their offset
     mixes the distance/r_d convention (<=0.13%) with our Fisher-weighted z_eff
@@ -482,8 +496,7 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
     if reference not in _REFERENCE_CHOICES:
         raise ValueError(f"reference must be one of {_REFERENCE_CHOICES}, "
                          f"got {reference!r}")
-    sample = (desi_ref.dr1_bestfit_cosmology()
-              if reference == "dr1_bestfit" else None)
+    sample = desi_ref.dr1_bestfit_cosmology() if reference == "dr1" else None
     gen, fid, dr1, dr1_sig = _mean_vectors(tracers, theory, data, sample)
     ref = fid if reference == "fiducial" else dr1
     ref_label = ("DESI fiducial (Table 11)" if reference == "fiducial"
@@ -551,11 +564,6 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
                "$m=0$ by Eq. 4.9).  At the fiducial cosmology the generator is "
                "1/1/Table 11/0 by construction, so this is a NULL TEST of "
                "conventions, not a measurement comparison.")
-    elif reference == "dr1":
-        sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A, "
-               "ShapeFit-alone), generator evaluated at the FIDUCIAL cosmology.  "
-               "This is 'does DR1 agree with Planck-$\\Lambda$CDM' — a DESI "
-               "result, not a test of this pipeline.")
     else:
         c = desi_ref.dr1_bestfit_cosmology()
         sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A), "
@@ -691,8 +699,8 @@ def main() -> int:
                    choices=["kaiser", "rept"])
     p.add_argument("--reference", default="fiducial", choices=_REFERENCE_CHOICES,
                    help="`mean` plot only. fiducial: null test against Table 11 "
-                        "(default). dr1: against DESI's measured compressed "
-                        "values -- a DESI result, not a test of this code.")
+                        "(default). dr1: generator at DR1's own best-fit LCDM "
+                        "against DESI's measured compressed values.")
     args = p.parse_args()
 
     print(f"Gathering {len(args.tracers)} tracers x {len(args.theory)} theories "
@@ -723,8 +731,7 @@ def main() -> int:
         # Distinct filenames so the two references can coexist on disk; plots/
         # has no versioning and a rerun overwrites in place.
         stem = {"fiducial": "shapefit_mean_vs_fiducial",
-                "dr1": "shapefit_mean_vs_dr1",
-                "dr1_bestfit": "shapefit_mean_vs_dr1_bestfit"}[args.reference]
+                "dr1": "shapefit_mean_vs_dr1"}[args.reference]
         plot_mean(data, tracers, plots_dir() / f"{stem}.png", theory=th,
                   reference=args.reference)
     return 0

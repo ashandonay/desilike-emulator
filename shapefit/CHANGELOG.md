@@ -5177,3 +5177,32 @@ cannot separate them.
 take a cosmology, cached per (tracer, sample) rather than per tracer. New
 `desi_reference.dv_dhdm_at(z, params)` generalises `fiducial_dv_dhdm`, which
 stays as the no-params path. Output: `shapefit_mean_vs_dr1_bestfit.png`.
+
+
+## §69 — one DR1 mode, not two
+
+§67 added `--reference dr1` (generator at the FIDUCIAL cosmology, against DR1's
+measurement) and §68 added `--reference dr1_bestfit` (generator at DR1's own
+best-fit LCDM, against the same measurement). Only the second is about this
+pipeline. The first asks whether DR1 agrees with Planck-LCDM — a DESI result
+that happens to share a basis with our outputs, which is exactly the confusion
+§66 was written to end.
+
+Keeping it as a named mode invited someone to run it, see a 2.8-sigma LRG2
+residual, and file a bug against this repo. Removed.
+
+`dr1_bestfit` is now simply `dr1`:
+
+```
+comparison_plots.py mean --reference fiducial   -> shapefit_mean_vs_fiducial.png
+comparison_plots.py mean --reference dr1        -> shapefit_mean_vs_dr1.png
+```
+
+`shapefit_mean_vs_dr1.png` is now the §68 plot; the old file of that name (the
+fiducial-cosmology comparison) is deleted rather than left to be mistaken for
+the new one, and `shapefit_mean_vs_dr1_bestfit.png` is gone with the mode name.
+
+Nothing about the §68 result changes — same cosmology, same chi2 25.1 -> 19.0,
+same caveats. This is a naming and surface change only. The fiducial-cosmology
+numbers survive in the §68 table as the comparison column, which is where they
+belong: context for the improvement, not a mode anyone has to select.
