@@ -5123,6 +5123,33 @@ contributor in both columns. That is the documented DR1 low point at z = 0.706
 (`desi_reference` records measured/fiducial = 0.948 there), not something this
 pipeline introduces.
 
+### "Closure" here means the loop closes, not DESI's mock-recovery sense
+
+⚠ Terminology. In DESI's own papers a "closure test" is usually MOCK RECOVERY:
+fit simulations with a known truth and check the truth comes back (their
+Fig. 6, which `desi_reference` already cites for the m_fid != 0 caveat). The
+sense used here is different — the same DATA appears on both sides:
+
+```
+DR1 spectra --[DESI]--> App. A vectors --[DESI LCDM fit + BAO]--> Eq. (3.1)
+                             ^                                       |
+                             +---------- compare ----[OUR model]-----+
+```
+
+Consequences, both of which bound what the number above can mean:
+
+  - **The floor is not zero.** Even a byte-identical forward model would
+    recover the residual DESI's own fit left behind — one cosmology cannot
+    pass exactly through 6 tracers x 4 parameters. 19.0/24 is roughly that
+    scatter, not 19 units of our error.
+  - **Shared errors are invisible.** Anything we get wrong the same way DESI
+    does — the same de-wiggling convention, the same z_eff definition —
+    closes perfectly. The test has power against a forward model that DIFFERS
+    from theirs, and none against one that agrees with theirs and is wrong.
+
+A blind test needs a cosmology from outside the loop (Planck alone, or DR2)
+predicting DR1's compressed values. Not built.
+
 ### What this chi2 is NOT
 
 Not a goodness-of-fit. Eq. (3.1) was inferred from these same compressed
