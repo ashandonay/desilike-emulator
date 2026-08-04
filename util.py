@@ -503,26 +503,38 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
                 return sf_fs.run_fisher(sample, tracer_bin=_tracer)
             return priors, target_names, ground_truth_fn, None
 
-        # quantity == "mean": per-tracer extractor at the fiducial-derived z_eff
-        # (matches generate_mean_data.py's convention).
-        gen_mean = _load_module(
-            "shapefit_gen_mean", os.path.join(_here, "shapefit", "generate_mean_data.py"))
+        # quantity == "mean": per-tracer extractor, z_eff derived PER SAMPLE.
         target_names = list(sf_core.MEAN_TARGET_NAMES)
         varied = [str(p) for p in param_names] if param_names is not None \
             else list(sf_core.COSMO_MODELS["base"])
         priors = {p: dict(sf_core.DEFAULT_PRIORS[p])
                   for p in varied if p != "N_tracers"}
-        # The area must match the one generate_mean_data.py used, or eval scores
-        # the emulator against a z_eff it was never trained on. This read 14000
-        # -- the DR2 footprint -- while the generator resolves
-        # dataset_area(args.dataset) = 7500 for DR1: the same footprint bug
-        # shapefit CHANGELOG S18 fixed in core.py, surviving at this call site.
-        # shapefit is DR1-only (generate_covar_data.py restricts --dataset), so
-        # pin DR1 rather than thread a dataset argument through get_pipeline.
-        z_eff = gen_mean._fiducial_z_eff(tracer_bin, sf_core.dataset_area("dr1"))
+        # This call site had drifted twice out of step with the worker it calls,
+        # and the second one made shapefit mean eval raise on every sample:
+        #
+        #   1. the task tuple is 6 fields (sample, tracer, z_eff,
+        #      param_defaults, area, dataset). It was passing 4, so
+        #      _worker_run_mean_targets died on the unpack -- which happens
+        #      BEFORE its try/except, so the failure was a hard ValueError, not
+        #      the (None, None, traceback) the contract promises. Verified:
+        #      "not enough values to unpack (expected 6, got 4)".
+        #
+        #   2. it pinned z_eff to a single fiducial value. S42 made z_eff depend
+        #      on the sampled cosmology AND on N_tracers, and the generator
+        #      passes z_eff=None so the worker derives it per sample. Pinning it
+        #      here would score the emulator against labels evaluated at a
+        #      different redshift from the ones it was trained on -- reviving
+        #      exactly the frozen-z_eff bug S42 removed.
+        #
+        # The area is this TRACER's footprint (S54/S58), not the release's; it
+        # is the argument the worker hands to _fs_compute_z_eff. shapefit is
+        # DR1-only (generate_covar_data.py restricts --dataset), so pin DR1
+        # rather than thread a dataset argument through get_pipeline.
+        _area = tracer_area(tracer_bin, "dr1")
 
-        def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _z=z_eff):
-            _s, vals, tb = sf_fs._worker_run_mean_targets((sample, _tracer, _z, None))
+        def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _area=_area):
+            _s, vals, tb = sf_fs._worker_run_mean_targets(
+                (sample, _tracer, None, None, _area, "dr1"))
             if vals is None:
                 raise RuntimeError(f"mean extractor failed:\n{tb}")
             return dict(zip(target_names, vals))

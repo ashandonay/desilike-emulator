@@ -46,7 +46,7 @@ import numpy as np
 import fourier_space
 from fourier_space import sf_core
 from util import (TRACER_TYPE_CHOICES, get_tracer_config, ntracers,
-                  ntracers_range, plots_dir)
+                  ntracers_range, plots_dir, tracer_area)
 
 TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
@@ -383,7 +383,7 @@ def check_mean_ap(tracers) -> None:
     def _run(sample, tracer, z):
         _s, vals, err = fourier_space._worker_run_mean_targets(
             (sample, tracer, z, sf_core.PARAM_DEFAULTS,
-             float(sf_core.dataset_area("dr1")), "dr1"))
+             float(tracer_area(tracer, "dr1")), "dr1"))
         if vals is None:
             raise RuntimeError(f"{tracer}: mean worker failed\n{err}")
         return float(vals[0]), float(vals[1])
@@ -400,7 +400,7 @@ def check_mean_ap(tracers) -> None:
         # to be the z the worker would derive for that same sample.
         z = sf_core._fs_compute_z_eff(
             tracer_bin=t, cosmo=cosmo, fo=cosmo.get_fourier(),
-            area_deg2=float(sf_core.dataset_area("dr1")),
+            area_deg2=float(tracer_area(t, "dr1")),
             b1=float(cfg.get("bias_recon", 2.0)),
             n_tracers=ntracers(t, "dr1"), dataset="dr1")
 
@@ -513,13 +513,21 @@ def check_zeff_consistency(tracers) -> None:
               None (the generator default -- --z-eff still pins it).
 
     Note `area` is deliberately NOT passed to run_fisher: the covar path
-    defaults it to dataset_area(dataset) internally, while the mean worker
-    receives it as an explicit task field. Forcing them equal here would
-    hide a drift between those two routes to the footprint.
+    defaults it internally (to tracer_area(tracer_bin, dataset) since S54),
+    while the mean worker receives it as an explicit task field. Forcing them
+    equal here would hide a drift between those two routes to the footprint.
+
+    That is the intent, and until now it did not work. The explicit field said
+    dataset_area("dr1") = 7500 while the covar default said tracer_area = 5740
+    on LRG -- a 1.31x drift, precisely the thing this check exists to catch --
+    and it passed anyway, because under Z_EFF_CONVENTION "desi_eq21" the area
+    cancels out of z_eff entirely (slice weight over V_bin). So the check was
+    blind by construction: it compares the one quantity the footprint does not
+    reach. Both sides now say tracer_area; the check is still worth running for
+    the N_tracers and cosmology dependences it does test, but it is NOT a test
+    of the footprint and must not be read as one.
     """
     print("\n=== z_eff consistency (covar pipeline vs mean pipeline) ===")
-    # The mean worker is handed an explicit area; mirror generate_mean_data.py.
-    area = float(sf_core.dataset_area("dr1"))
     cases = [("N x 0.50", {}, 0.5),
              ("N x 1.00", {}, 1.0),
              ("N x 1.50", {}, 1.5),
@@ -529,6 +537,9 @@ def check_zeff_consistency(tracers) -> None:
     print(f"{'tracer':>8s} {'case':>15s} {'z_eff covar':>14s} "
           f"{'z_eff mean':>14s} {'rel dev':>10s}")
     for t in tracers:
+        # Per tracer, inside the loop: the mean worker is handed an explicit
+        # area and generate_mean_data.py now resolves it from the tracer.
+        area = float(tracer_area(t, "dr1"))
         z_grid = []
         for i, (name, pert, n_factor) in enumerate(cases):
             # N_tracers via _fid_sample_for -> util.ntracers; never hardcoded.

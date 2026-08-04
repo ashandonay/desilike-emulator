@@ -3936,3 +3936,161 @@ shapefit validation, with four explanations eliminated: theory (§22), priors,
 `dn`, and projection (here). It does not block the emulator — `m` is a target we
 predict and σ(m) matches DESI to 0.968 under the production Fisher path — but it
 means our 4×4's `m` row should not be treated as validated at the ρ level.
+
+
+## §58 — the per-tracer footprint never reached the generators
+
+§54 replaced the uniform 7500 deg² footprint with DESI 2024 II Table 2's
+per-tracer areas (BGS 7473, LRG 5740, ELG 5924, QSO 7249). The fix went into
+`core.build_shapefit_likelihood`, which resolves
+
+```python
+area = float(area) if area is not None else tracer_area(tracer_bin, dataset)
+```
+
+— a **fallback**, applied only when the caller passes nothing. Six call sites
+were passing something: `dataset_area("dr1")` = 7500. They therefore overrode
+the correction and went on running the old geometry.
+
+### The split
+
+| path | area used | affected |
+|---|---|---|
+| `our_forecast` (`--check compressed`, every comparison plot) | `tracer_area` | no |
+| `mcmc.py` (§57 and the seed sweep) | `tracer_area` | no |
+| `benchmark_desi.py` | `tracer_area` | no |
+| **`generate_covar_data.py`** | 7500 | **yes** |
+| **`generate_mean_data.py`** | 7500 | **yes** |
+| **`regress_sigmas.py`** (`_AREA`) | 7500 | **yes** |
+| `validate_forecast.py` (3 sites) | 7500 | yes |
+| `compare_to_desi.py` (analytic-cov sites) | 7500 | yes |
+
+So **the pipeline we validate was not the pipeline we generate training data
+with**. Every number quoted against DESI in §54–§57 came from the corrected
+path; every training label came from the uncorrected one.
+
+### Cost, measured
+
+Kaiser Fisher at the DESI fiducial and the DR1 count, area 7500 vs per-tracer,
+everything else fixed:
+
+```
+LRG2   7500 -> 5740     sigma_qiso   -8.4%   sigma_qap   -8.7%
+                        sigma_f_sr   -6.2%   sigma_m    -10.3%
+ELG2   7500 -> 5924     sigma_qiso   -1.2%   sigma_qap   -1.9%
+                        sigma_f_sr   -0.4%   sigma_m     -4.5%
+QSO    7500 -> 7249     all four     <0.5%
+```
+
+**The sign is the one that matters and it is not the obvious one.** A bigger
+area dilutes n̄ = N/V at fixed N, which raises shot noise — but it also buys
+volume, and the volume wins. So the 7500 made the forecast *tighter*: the
+emulator was being taught that DESI is **more** constraining than it is, by
+6–10% on the three LRG bins, ~2–5% on ELG2, and negligibly on BGS/QSO.
+
+That per-tracer pattern is the same one that ran through §46–§51, where BGS and
+QSO kept behaving differently from LRG and ELG. Their areas were already nearly
+right (0.996 and 0.967 of 7500); LRG's and ELG's were not.
+
+### z_eff is untouched, and that is why this survived §53
+
+Under `Z_EFF_CONVENTION = "desi_eq21"` the area **cancels** out of z_eff: the
+per-slice weight carries `1/V_bin` and `V_bin ∝ area`, so it divides out of the
+ratio. Measured z_eff is identical to eight decimals at either area. §53's
+0.062% agreement was therefore never evidence that the footprint was right
+anywhere — it could not have been.
+
+### The consistency check was blind by construction
+
+`validate_forecast.py`'s z_eff covar-vs-mean check carried this rationale:
+
+> Note `area` is deliberately NOT passed to run_fisher [...] Forcing them equal
+> here would hide a drift between those two routes to the footprint.
+
+The intent is right and it did not work. The two routes *were* drifted — 5740
+on the covar side, 7500 on the mean side, a factor 1.31 — and the check passed,
+because the only quantity it compares is the one the area cancels out of. A
+test that watches for drift in a variable its observable is independent of
+cannot fail. Both sides now resolve `tracer_area`, and the docstring says
+plainly that this is not a footprint test.
+
+### Fix
+
+All six call sites resolve `util.tracer_area(tracer, dataset)`; `--area` still
+overrides. `regress_sigmas._AREA` became `_area(tracer)` — a per-tracer
+footprint cannot be a module constant, and freezing one was the same mistake as
+the bao golden pinning z_eff (commit 19dc4b3): a harness that freezes an input
+stops testing the code that derives it.
+
+### Consequence
+
+The golden baseline must be regenerated, and both v2 training sets were already
+invalidated by §53–§55 — this adds a reason and does not change that verdict.
+**Regenerate with the fix in, or the regeneration inherits the bug.**
+
+Nothing in §54–§57 is retracted: those numbers all came from `our_forecast` or
+`mcmc.py`, both of which were already correct.
+
+
+## §59 — shapefit mean eval was raising on every sample
+
+`util.get_pipeline(analysis="shapefit", quantity="mean")` builds the ground
+truth `eval.py` scores the mean emulator against. It called
+
+```python
+sf_fs._worker_run_mean_targets((sample, _tracer, _z, None))
+```
+
+with a **4-tuple**, against a worker whose task contract is **6 fields**:
+
+```python
+(sample, tracer_bin, z_eff, param_defaults, area_deg2, dataset) = args_tuple
+```
+
+Verified by calling it:
+
+```
+target_names: ['qiso', 'qap', 'f_sigmar', 'm']
+CRASH: ValueError not enough values to unpack (expected 6, got 4)
+```
+
+So `eval.py --analysis shapefit --quantity mean` could not have scored a single
+sample. And it failed in the worst available way: the unpack sits *above* the
+worker's `try`, so instead of the `(None, None, traceback)` its contract
+promises — which the caller checks for and turns into a clean RuntimeError —
+it raised a bare `ValueError` out of the worker.
+
+### How it drifted
+
+The worker grew `area_deg2` and `dataset` when §42 made z_eff depend on the
+sampled cosmology and on N_tracers. Every other caller was updated;
+`get_pipeline` was not. The plan's step-8 round trip (`train.py` → `eval.py`
+for `--quantity mean`) predates §42, so nothing re-exercised it afterwards.
+This is the third instance of the same failure mode, after §30 ("changing a
+default broke callers of the old one") and §58 — a shared contract changing
+under a caller that no test covers.
+
+### The second bug underneath it
+
+The call also pinned `z_eff` to one fiducial value, computed once per tracer:
+
+```python
+z_eff = gen_mean._fiducial_z_eff(tracer_bin, sf_core.dataset_area("dr1"))
+```
+
+That is the pre-§42 convention. `generate_mean_data.py` passes `z_eff=None` so
+the worker derives it *per sample*. Fixing only the arity would have produced a
+silently wrong answer instead of a crash: eval would score the emulator against
+labels evaluated at a different redshift from the ones it was trained on. The
+crash was, in this one respect, lucky.
+
+Its area argument was `dataset_area("dr1")` = 7500, the §58 bug again.
+
+### Fix
+
+Pass the full 6-tuple with `z_eff=None` (derive per sample, as the generator
+does) and `tracer_area(tracer_bin, "dr1")`. The `generate_mean_data` module
+load exists only for `_fiducial_z_eff` and is dropped.
+
+Verified after the fix: `qiso = qap = 1` and `m = 0` at the DESI fiducial (the
+identity §38–§41 pin), and all four move under `omega_cdm +5%`.

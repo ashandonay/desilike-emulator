@@ -45,6 +45,7 @@ from util import (
     ntracers_range,
     parse_priors,
     save_dataset,
+    tracer_area,
 )
 
 COSMO_MODELS = sf_core.COSMO_MODELS
@@ -104,7 +105,8 @@ def main() -> None:
                         "DESI fiducial cosmology with the FS Fisher weight.")
     p.add_argument("--area", type=float, default=None,
                    help="Effective survey area in deg^2 (z_eff volume weights). "
-                        "Default: the dataset footprint (dr1 7500, dr2 14000).")
+                        "Default: this TRACER's footprint (util.tracer_area) -- "
+                        "BGS 7473, LRG 5740, ELG 5924, QSO 7249.")
     p.add_argument("--name", type=str, default=None,
                    help="Tracer name prefix for saved files. Defaults to "
                         "--tracer-bin.")
@@ -156,8 +158,14 @@ def main() -> None:
         if all(p in model_params for p in spec["params"])
     }
 
+    # Per TRACER, not per release (S54, and see generate_covar_data.py for the
+    # measured cost). Only reaches z_eff on this path, and under the production
+    # Z_EFF_CONVENTION ("desi_eq21") z_eff is area-INDEPENDENT -- the area
+    # cancels between the slice weight and V_bin -- so the mean labels do not
+    # move. It is corrected anyway so the two generators cannot disagree about
+    # the geometry, which is how S42's mu/C mismatch happened.
     area = (float(args.area) if args.area is not None
-            else sf_core.dataset_area(args.dataset))
+            else tracer_area(args.tracer_bin, args.dataset))
     # z_eff is NOT resolved here any more. It is derived per sample inside the
     # worker from that sample's cosmology AND N_tracers, because neither
     # dependence cancels (shapefit CHANGELOG S42). --z-eff still pins it for

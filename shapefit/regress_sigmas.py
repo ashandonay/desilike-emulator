@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 
 import fourier_space
 from fourier_space import sf_core
-from util import ntracers
+from util import ntracers, tracer_area
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +65,18 @@ COSMO_GRID: Tuple[Tuple[str, float, float, float, float, float, float, float, fl
     ("w0wa",    0.1200, 0.02237, 0.6736, 3.036394, 0.9649, -0.80, -0.60, 1.45),
 )
 
-# The grid is DR1, so the area must be DR1's. Pinning 14000 here kept the
-# harness validating the DR2 footprint even after core.py was corrected.
-_AREA = fourier_space.sf_core.dataset_area("dr1")
+# The footprint is per TRACER, not per release (S54), so this cannot be a
+# module constant at all. It was `dataset_area("dr1")` = 7500 for every tracer,
+# which is 1.31x the true LRG area and 1.27x the ELG area -- and because
+# build_shapefit_likelihood only falls back to tracer_area when `area is None`,
+# passing it explicitly OVERRODE the corrected geometry. The golden was
+# therefore pinning a footprint production does not use, and would have gone on
+# passing while the real path changed underneath it.
+#
+# Same failure as the bao golden pinning z_eff (commit 19dc4b3): a harness that
+# freezes an input stops testing the code that derives it.
+def _area(tracer: str) -> float:
+    return tracer_area(tracer, "dr1")
 
 
 def _sample_for(row) -> Dict[str, float]:
@@ -98,7 +107,7 @@ def _dump_covar(out: Dict[str, np.ndarray], tracer: str) -> None:
             N_tracers=N_factor * N_fid,
             theta_cosmo=theta,
             tracer_bin=tracer,
-            area=_AREA,
+            area=_area(tracer),
         )
         pfx = f"covar/{tracer}/{label}"
 
@@ -145,7 +154,7 @@ def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
     try:
         z_eff = sf_core._fs_compute_z_eff(
             tracer_bin=tracer, cosmo=cosmo_fid, fo=fo_fid,
-            area_deg2=_AREA, b1=float(cfg.get("bias_recon", 2.0)),
+            area_deg2=_area(tracer), b1=float(cfg.get("bias_recon", 2.0)),
             n_tracers=ntracers(tracer, "dr1"), dataset="dr1",
         )
     except (FileNotFoundError, ValueError):
@@ -160,7 +169,7 @@ def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
         # the golden pins a dependence it never exercises.
         sample = {**_sample_for(row), "N_tracers": N_factor * N_fid}
         _s, vals, tb = fourier_space._worker_run_mean_targets(
-            (sample, tracer, None, None, _AREA, "dr1")
+            (sample, tracer, None, None, _area(tracer), "dr1")
         )
         if vals is None:
             raise RuntimeError(f"mean extractor failed for {tracer}/{label}:\n{tb}")

@@ -48,6 +48,7 @@ from util import (
     ntracers_range,
     parse_priors,
     save_dataset,
+    tracer_area,
 )
 
 CONSTRAINTS = sf_core.CONSTRAINTS
@@ -124,7 +125,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--area", type=float, default=None,
         help="Effective survey area in deg^2 used by CutskyFootprint. "
-             "Default: the dataset footprint (dr1 7500, dr2 14000).",
+             "Default: this TRACER's footprint (util.tracer_area), not the "
+             "release's -- BGS 7473, LRG 5740, ELG 5924, QSO 7249.",
     )
     return p
 
@@ -168,14 +170,23 @@ def main() -> None:
                               cosmo_model=cosmo_model, dataset=args.dataset)
     )
 
-    # Resolve the survey footprint from the dataset unless overridden. dr1 is
-    # 7500 deg^2, not 14000 -- see sf_core.DATASET_AREAS.
+    # Footprint for THIS tracer, not for the release. S54 established the area
+    # is per tracer class (DESI 2024 II Table 2: BGS 7473, LRG 5740, ELG 5924,
+    # QSO 7249) because priority and imaging vetoes remove different sky from
+    # different samples. This used to resolve DATASET_AREAS[dataset] = 7500 and
+    # pass it in explicitly, which OVERRODE the per-tracer default that
+    # build_shapefit_likelihood only applies when area is None -- so the S54 fix
+    # reached every validation path (our_forecast, mcmc.py, benchmark_desi.py)
+    # but never the training data. Measured cost on the generated sigma, at
+    # fixed N: LRG -6..-10%, ELG2 -0.4..-4.5%, QSO/BGS <0.5%. The larger area
+    # wins over the diluted nbar, so the emulator was being taught that DESI is
+    # MORE constraining than it is, worst exactly on the LRG bins.
     area = (float(args.area) if args.area is not None
-            else sf_core.DATASET_AREAS[args.dataset])
+            else tracer_area(args.tracer_bin, args.dataset))
 
     worker_fn = fourier_space._worker_run_fisher_targets
     make_task = lambda s: (  # noqa: E731
-        s, args.tracer_bin, zrange, z_eff, param_defaults, area,
+        s, args.tracer_bin, zrange, z_eff, param_defaults, area, args.dataset,
     )
 
     target_names = sf_core.emulator_target_names(args.tracer_bin, args.dataset)

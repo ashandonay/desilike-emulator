@@ -207,7 +207,13 @@ def run_fisher(
 # tb_str); sample None signals failure.
 # ===========================================================================
 def _worker_run_fisher_targets(args_tuple):
-    sample, tracer_bin, zrange, z_eff, param_defaults, area = args_tuple
+    """Covar worker. The task tuple carries `dataset` (as the mean worker's
+    always has): without it this fell back to run_fisher's dataset="dr1"
+    default, so a dr2 run would have been saved under dr2/ by
+    get_default_save_path while being generated from dr1 n(z) slices and the
+    dr1 z_eff. Harmless today only because --dataset is choices=["dr1"]."""
+    (sample, tracer_bin, zrange, z_eff, param_defaults, area,
+     dataset) = args_tuple
     try:
         targets = run_fisher(
             sample,
@@ -216,6 +222,7 @@ def _worker_run_fisher_targets(args_tuple):
             z_eff=z_eff,
             param_defaults=param_defaults,
             area=area,
+            dataset=dataset,
         )
         target_vals = [targets[t] for t in TARGET_NAMES]
         if not all(np.isfinite(v) for v in target_vals):

@@ -525,8 +525,16 @@ def _load_mcmc(tracers):
 
     seeds = {}
     for path in sorted(Path(logs_dir("shapefit")).glob("shapefit_mcmc_*.json")):
-        for t, v in json.loads(path.read_text()).items():
-            if t in tracers:
+        try:
+            raw = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            # A sweep writes these from 24 processes that finish at different
+            # times, so plotting mid-sweep will meet a half-written file. Skip
+            # it rather than take the whole figure down over one unfinished job.
+            print(f"  [mcmc] skipping unreadable {path.name}")
+            continue
+        for t, v in raw.items():
+            if t in tracers and v.get("mcmc"):
                 seeds.setdefault(t, {}).update(v["mcmc"])
 
     out = {}
@@ -535,6 +543,8 @@ def _load_mcmc(tracers):
         out[t] = {k: (float(np.mean([r[k] for r in vals])),
                       float(np.std([r[k] for r in vals])) if len(vals) > 1 else 0.0)
                   for k in vals[0]}
+        if len(vals) > 1:
+            print(f"  [mcmc] {t}: {len(vals)} seeds")
     return out
 
 
