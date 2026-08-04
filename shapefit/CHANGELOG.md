@@ -4199,3 +4199,63 @@ cut `NX` does not carry. That needs the catalogue, not more arithmetic.
 worst σ agreement (fσ_r 0.57, qap 0.59). Raising N to the randoms-implied 1.66M
 raises n̄ by 17%, which *lowers* our σ and makes the ratio worse, not better.
 Whatever is behind ELG2's tightness, this is not it.
+
+### §61a — where ELG2's 1.416M comes from, and what it is not
+
+`ntracers("ELG2", "dr1")` is a literal table lookup. ELG2 declares no
+`components` in tracers.yaml, so `util.ntracers` falls through to the `passed`
+column of `~/data/desi/bao_dr1/desi_data.csv`:
+
+```
+tracer,passed,observed,z,efficiency,...
+ELG2,1415707.0,1947327.372764787,1.317,0.727,...
+```
+
+and `1947327 × 0.727 = 1415707` exactly — `passed = observed × efficiency`,
+with 0.727 the ELG redshift-success rate (DESI 2024 II Table 2).
+
+**The obvious hypothesis is wrong.** If DESI's `NX` came from randoms matched to
+the successful-redshift catalogue, applying the efficiency again would
+under-count. QSO refutes it: its efficiency is 0.668, *lower* than ELG's, and
+
+```
+tracer   passed     observed    eff     NX implied   NX/passed   NX/observed
+BGS      3.000e5    3.034e5    0.989    3.042e5        0.986        0.997
+LRG1     5.069e5    5.115e5    0.991    5.082e5        0.997        1.007
+LRG2     7.719e5    7.789e5    0.991    7.876e5        0.980        0.989
+LRG3     8.598e5    (components)   -    8.749e5        0.983          -
+ELG2     1.416e6    1.947e6    0.727    1.660e6        0.853        1.173
+QSO      8.567e5    1.282e6    0.668    8.591e5        0.997        1.493
+```
+
+QSO's `NX/passed = 0.997` and `NX/observed = 1.493`: the efficiency is applied
+exactly once, correctly, at an efficiency as low as ELG's. So this is not a
+convention error in the pipeline — it is specific to ELG2, which matches
+*neither* column (0.853 of `passed`, 1.173 of `observed`).
+
+**The live hypothesis: a z-independent efficiency on a z-dependent quantity.**
+Inverting, DESI's randoms imply an effective ELG2 success of 1.660/1.947 =
+**85.3%** against the 72.7% applied. And `desi_tracers.csv` gives ELG1 and ELG2
+the *same* efficiency and completeness:
+
+```
+ELG1,ELG,0.727,0.352,...
+ELG2,ELG,0.727,0.352,...
+```
+
+0.727 is the ELG **sample average**, applied uniformly to both bins. ELG
+redshift success is strongly z-dependent ([OII] moving through the sky-line
+forest), so a shared average necessarily under-counts one bin and over-counts
+the other. An ELG2 true success near 85% with ELG1 correspondingly worse
+reproduces the measurement exactly.
+
+**Not tested, and not testable locally.** Confirming it needs `∫NX dV` over
+ELG1's 0.8–1.1 range, and no `ELG1_desi_nx.csv` exists — only ELG2's. The ELG
+randoms over that range would have to come from CFS (§43's recipe). Until then
+this is a hypothesis with one supporting coincidence, not a result.
+
+**Why it matters beyond a bookkeeping error.** `N_tracers` is the emulator's
+design variable, and `ntracers_range` centres the training box on `passed`
+(`low 0.5`, `high 1.5`). If ELG2's DR1 anchor is 15% low, the entire ELG2 design
+box is centred on the wrong point — not just one evaluation. That is a
+different and worse failure than a mis-scaled forecast.
