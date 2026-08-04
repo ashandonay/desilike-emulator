@@ -510,26 +510,31 @@ _FORECAST_PANELS = [
 
 
 def _load_mcmc(tracers):
-    """{tracer: summary} from shapefit/mcmc.py --json, if present.
+    """{tracer: {key: (mean, rms)}} merged over every mcmc.py --json output.
 
-    Absent tracers simply get no MCMC marker; the run is expensive (~1.8 h for
-    one tracer at 32x780) so the file is usually partial.
+    The sweep runs one process per (tracer, seed) -- the log_prob closure is
+    not picklable, so parallelism has to be across processes -- and each writes
+    its own JSON. Seeds for the same tracer are therefore spread over files and
+    must be unioned here before the rms means anything.
+
+    Absent tracers simply get no MCMC marker; the run is expensive (hours per
+    tracer) so the set on disk is often partial.
     """
-    from util import logs_dir
-    path = Path(logs_dir("shapefit")) / "shapefit_mcmc_LRG2.json"
-    if not path.exists():
-        return {}
     import json
-    raw = json.loads(path.read_text())
+    from util import logs_dir
+
+    seeds = {}
+    for path in sorted(Path(logs_dir("shapefit")).glob("shapefit_mcmc_*.json")):
+        for t, v in json.loads(path.read_text()).items():
+            if t in tracers:
+                seeds.setdefault(t, {}).update(v["mcmc"])
+
     out = {}
-    for t, v in raw.items():
-        if t not in tracers:
-            continue
-        runs = list(v["mcmc"].values())
-        keys = runs[0].keys()
-        out[t] = {k: (float(np.mean([r[k] for r in runs])),
-                      float(np.std([r[k] for r in runs])) if len(runs) > 1 else 0.0)
-                  for k in keys}
+    for t, runs in seeds.items():
+        vals = list(runs.values())
+        out[t] = {k: (float(np.mean([r[k] for r in vals])),
+                      float(np.std([r[k] for r in vals])) if len(vals) > 1 else 0.0)
+                  for k in vals[0]}
     return out
 
 

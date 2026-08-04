@@ -41,6 +41,7 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import argparse
 import sys
+import time
 import warnings
 from pathlib import Path
 from typing import Dict, List, Sequence
@@ -121,6 +122,14 @@ def make_log_prob(likelihood):
 
 
 def run_emcee(log_prob, names, fid, seed, nwalkers, niter, burn):
+    """Returns (chain, acceptance, tau_max).
+
+    `tau_max` is the worst integrated autocorrelation time over the varied
+    parameters, computed with tol=0 so it is returned even when the chain is
+    too short to trust it. Compare it against niter: emcee's own rule of thumb
+    is niter > 50*tau. It is the only convergence handle here, and an overnight
+    run that turns out to be 10 tau long is worth knowing about.
+    """
     import emcee
     ndim = len(names)
     rng = np.random.default_rng(seed)
@@ -129,10 +138,28 @@ def run_emcee(log_prob, names, fid, seed, nwalkers, niter, burn):
     for i, nm in enumerate(names):
         s = scale.get(nm, 0.1)
         p0[:, i] = fid[nm] + s * rng.standard_normal(nwalkers)
-    s = emcee.EnsembleSampler(nwalkers, ndim, log_prob)
-    s.run_mcmc(p0, niter, progress=False)
-    chain = s.get_chain()[int(burn * niter):].reshape(-1, ndim)
-    return chain, float(np.mean(s.acceptance_fraction))
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_prob)
+
+    # Heartbeat: a multi-hour run with no output is indistinguishable from a
+    # hung one. Every 5% is cheap and makes the log auditable after the fact.
+    t0 = time.time()
+    every = max(1, niter // 20)
+    for i, _ in enumerate(sampler.sample(p0, iterations=niter), start=1):
+        # The early ticks exist so a wrong iteration budget shows up in minutes
+        # rather than after the first 5% of a multi-hour run.
+        if i in (10, 25, 50) or i % every == 0 or i == niter:
+            el = time.time() - t0
+            print(f"    seed {seed}: {i}/{niter} ({i / niter:.0%})  "
+                  f"{el / 60:.1f} min elapsed, {el / i * (niter - i) / 60:.1f} "
+                  f"min left, acc {np.mean(sampler.acceptance_fraction):.3f}",
+                  flush=True)
+
+    chain = sampler.get_chain()[int(burn * niter):].reshape(-1, ndim)
+    try:
+        tau = float(np.max(sampler.get_autocorr_time(tol=0)))
+    except Exception:
+        tau = float("nan")
+    return chain, float(np.mean(sampler.acceptance_fraction)), tau
 
 
 def compress(chain, names, info):
@@ -181,15 +208,25 @@ def sweep(tracer, seeds, nwalkers, niter, burn, theory="rept", save=None):
           f"{nw} walkers x {niter} iters, burn {burn:.0%})\n{'=' * 72}")
     print(f"  varied: {', '.join(names)}")
 
-    runs = {}
+    runs, diag = {}, {}
     for seed in seeds:
-        chain, acc = run_emcee(log_prob, names, fid, seed, nw, niter, burn)
+        chain, acc, tau = run_emcee(log_prob, names, fid, seed, nw, niter, burn)
         samp = compress(chain, names, info)
         runs[seed] = summarize(samp, fsr)
-        print(f"  seed {seed}: {len(chain)} samples, acceptance {acc:.2f}")
+        diag[seed] = {"acceptance": acc, "tau_max": tau,
+                      "n_samples": len(chain), "niter": niter,
+                      "nwalkers": nw, "iter_per_tau": niter / tau if tau else np.nan}
+        print(f"  seed {seed}: {len(chain)} samples, acceptance {acc:.2f}, "
+              f"tau_max {tau:.1f} ({niter / tau:.0f} tau of chain)"
+              if np.isfinite(tau) else
+              f"  seed {seed}: {len(chain)} samples, acceptance {acc:.2f}")
         if save:
-            np.savez(save, chain=chain, names=np.array(names), samples=samp)
-            print(f"    wrote {save}")
+            # One file per seed. The loop previously wrote every seed to the
+            # same path, so a sweep kept only the last chain.
+            p = Path(save)
+            p = p.with_name(f"{p.stem}_seed{seed}{p.suffix}")
+            np.savez(p, chain=chain, names=np.array(names), samples=samp)
+            print(f"    wrote {p}")
 
     ref = dr.sigma_targets(tracer)
     keys = ([f"sigma_{p}" for p in ("qiso", "qap")] + ["sigma_f_sigmar_frac",
@@ -203,7 +240,7 @@ def sweep(tracer, seeds, nwalkers, niter, burn, theory="rept", save=None):
         star = " *" if k.endswith("_m") and k.startswith("rho") else ""
         print(f"  {k:22s} {fisher[k]:9.4f} {m:9.4f} {sd:9.4f} {d:9.4f} "
               f"{fisher[k]/d:8.3f} {m/d:8.3f}{star}")
-    return {"fisher": fisher, "mcmc": runs, "desi": ref}
+    return {"fisher": fisher, "mcmc": runs, "desi": ref, "diag": diag}
 
 
 def main():
@@ -227,7 +264,9 @@ def main():
         import json
         ser = {t: {"fisher": v["fisher"],
                    "mcmc": {str(s): d for s, d in v["mcmc"].items()},
-                   "desi": v["desi"]} for t, v in out.items()}
+                   "desi": v["desi"],
+                   "diag": {str(s): d for s, d in v["diag"].items()}}
+               for t, v in out.items()}
         a.json.write_text(json.dumps(ser, indent=2, default=float))
         print(f"\nwrote {a.json}")
     return 0
