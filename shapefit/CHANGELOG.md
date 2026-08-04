@@ -4591,3 +4591,42 @@ without resolving the 1.54× first.
 
 Training labels move by ≤0.16%, far below the emulator's own error, so this does
 not by itself force a regeneration — but it is in place for the §53–§58 one.
+
+### §62c — OPEN: the n(z) layer is not release-scoped
+
+Deferred deliberately, recorded so it is not lost.
+
+Every other part of the geometry stack takes a `dataset`: `util.ntracers`,
+`tracer_area`, `ntracers_range`, `get_default_save_path`, `tracers.yaml`'s
+per-release overrides (§32), even `bao/core._nz_scale_factor`. The n(z) tables
+do not:
+
+```
+_NZ_SLICES_DIR = ~/data/desi/nz_slices        # flat, no dataset segment
+  {tracer}_nz_slices.csv   {tracer}_desi_nx.csv
+
+_load_nz_slice_fractions(tracer_bin)          # no dataset arg
+_desi_nz_geometry(tracer_bin, nbar_file)      # no dataset arg
+load_nz_slices(..., nz_slices_dir=None)       # dir override only
+```
+
+`make_nz_slices.py` (§62b) does not fix this — it is hardcoded DR1 in the
+catalogue dir, the areas, the counts and the download URL (`public/dr1/.../
+iron/LSScats/v1.5/`).
+
+**Risk.** With DR2 present, `ntracers` and `tracer_area` would switch release
+while `_load_nz_slice_fractions` silently returned DR1 shapes — a mixed-release
+covariance with nothing raising. Same class as §58 (a fallback that never fired)
+and §59 (a caller never updated).
+
+**Fix when picked up:** (1) path convention
+`~/data/desi/nz_slices/{dataset}/{tracer}_*.csv`, flat layout as a deprecation
+fallback; (2) thread `dataset` through the three functions above and their ~6
+call sites in `bao/` and `shapefit/`; (3) `make_nz_slices.py --dataset` with a
+release → (catalogue dir, LSS version) map, **stubbed to fail loudly** rather
+than silently return DR1.
+
+Not urgent while the pipeline is DR1-only (`--dataset` is `choices=["dr1"]`),
+and (3) is DR2 work, which the DR1-first rule defers. (1)+(2) are defensive and
+want a deliberate caller audit — signature changes on functions shared by both
+analyses are exactly what produced §30, §58 and §59.
