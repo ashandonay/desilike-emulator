@@ -76,7 +76,7 @@ import desi_reference as desi_ref
 import fourier_space
 from compare_to_desi import FID_SAMPLE, our_forecast
 from fourier_space import sf_core
-from util import ntracers, plots_dir
+from util import ntracers, plots_dir, tracer_area
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO"]
 _DISPLAY = {}
@@ -124,6 +124,27 @@ def _gather(tracers, theories):
                                      "z": o["z_eff"]}
         out[t] = entry
     return out
+
+
+_MEAN_CACHE: dict = {}
+
+
+def _mean_targets(tracer):
+    """Mean-pipeline (qiso, qap, f_sigmar, m) at the DESI fiducial cosmology.
+
+    The actual generator output, not `f_sigmar_fid` read off the covar path's
+    info dict. They agree to ~0.02% at the fiducial, but they are different
+    objects (S64: the covar template's fiducial IS the sample, so its
+    f_sigmar_fid is f*sigma_r(8) while the mean extractor returns
+    f*sigma_r(8s)), and this plot is about the MEAN pipeline.
+    """
+    if tracer not in _MEAN_CACHE:
+        from compare_to_desi import FID_SAMPLE
+        _, vals, _ = fourier_space._worker_run_mean_targets(
+            (dict(FID_SAMPLE), tracer, None, None,
+             tracer_area(tracer, "dr1"), "dr1"))
+        _MEAN_CACHE[tracer] = list(vals)
+    return _MEAN_CACHE[tracer]
 
 
 def _xticks(ax, tracers):
@@ -436,43 +457,62 @@ def plot_mean(data, tracers, out_path, theory="rept"):
         ax.legend(fontsize=7, loc=loc)
         ax.set_title(ylabel, fontsize=11)
 
-    # f_sigmar: the one genuinely predictive panel.
+    # f_sigmar: same null test as the AP panels, against Table 11's fiducial
+    # f sigma_s8. DR1 is deliberately absent -- see the docstring.
     ax = axes[2]
-    meas = [data[t]["desi_vec"][2] for t in tracers]
-    # De-normalise with the FIDUCIAL f sigma_s8, which is what S60 made
-    # sigma_f_sigmar_frac's denominator. Multiplying by the MEASURED value
-    # instead (as this line did) puts back the measured/fiducial factor S60
-    # removed, and that factor is not small: 0.799 (BGS) to 1.160 (QSO), so the
-    # bar was 20% short on BGS and 16% long on QSO.
-    err = [data[t]["desi"]["sigma_f_sigmar_frac"]
-           * desi_ref.published_fiducial(t)["f_sigma_s8"] for t in tracers]
-    ours = [float(data[t]["theories"][theory]["info"]["f_sigmar_fid"])
-            for t in tracers]
-    ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
-                capsize=3, label="DESI DR1")
-    ax.plot(x, ours, "o", ms=7, color="tab:blue", label="generator (predicted)")
-    ax.set_ylabel(r"$f\sigma_r$")
+    fid_fsr = np.array([desi_ref.published_fiducial(t)["f_sigma_s8"]
+                        for t in tracers])
+    ours_fsr = np.array([_mean_targets(t)[2] for t in tracers])
+    res = 100 * (ours_fsr / fid_fsr - 1)
+    ax.axhline(0.0, color="0.45", lw=1.6, label="DESI fiducial (Table 11)")
+    ax.plot(x, res, "o", ms=7, color="tab:blue", label="generator")
+    for i in range(len(tracers)):
+        ax.text(i, 0.955, f"{fid_fsr[i]:.4g}",
+                transform=ax.get_xaxis_transform(),
+                ha="center", va="top", fontsize=6.0, color="0.35")
+    r = np.concatenate([res, [0.0]])
+    pad = max(r.ptp(), 1.0)
+    ax.set_ylim(r.min() - 0.15 * pad, r.max() + 0.30 * pad)
+    ax.set_ylabel(r"$f\sigma_r$: generator / Table 11 $-1$  [%]")
     ax.set_title(r"$f\sigma_r$", fontsize=11)
+    ax.legend(fontsize=7)
 
-    # m: deviation on both sides.
+    # m: no ratio is possible -- the fiducial value is 0 by Eq. (4.9), which is
+    # a definition, not a table entry. So this is the absolute residual, and
+    # the y-scale is set by DESI's sigma(m) so that "negligible" is visible as
+    # negligible rather than as a full-height wiggle around zero.
     ax = axes[3]
-    meas = [data[t]["desi_vec"][3] for t in tracers]
-    err = [data[t]["desi"]["sigma_m"] for t in tracers]
-    ax.errorbar(x, meas, yerr=err, fmt="s", ms=8, mfc="none", color="k",
-                capsize=3, label="DESI DR1")
-    ax.axhline(0.0, color="tab:blue", lw=1.6, label="generator (dm = 0 by constr.)")
-    ax.set_ylabel(r"$m$")
+    ours_m = np.array([_mean_targets(t)[3] for t in tracers])
+    desi_sig_m = np.array([data[t]["desi"]["sigma_m"] for t in tracers])
+    ax.axhline(0.0, color="0.45", lw=1.6,
+               label="DESI fiducial ($m=0$, Eq. 4.9)")
+    ax.plot(x, ours_m, "o", ms=7, color="tab:blue", label="generator")
+    # Scale to the residual itself, not to DESI's sigma(m): drawing a +-0.051
+    # band would fill the panel and hide the 1e-5 structure that is the actual
+    # content. The comparison to sigma(m) goes in the annotation instead.
+    r = np.concatenate([ours_m, [0.0]])
+    pad = max(r.ptp(), 1e-12)
+    ax.set_ylim(r.min() - 0.35 * pad, r.max() + 0.55 * pad)
+    ax.set_xlim(-0.5, len(tracers) - 0.5)
+    ax.annotate(rf"$|m| \leq$ {np.abs(ours_m).max():.1e}"
+                "\n"
+                rf"DESI $\sigma(m)$ = {desi_sig_m.min():.3f}–{desi_sig_m.max():.3f}",
+                xy=(0.03, 0.03), xycoords="axes fraction", fontsize=7,
+                color="0.3", va="bottom")
+    ax.set_ylabel(r"$m$: generator $-$ 0")
     ax.set_title(r"$m$", fontsize=11)
+    ax.legend(fontsize=7)
 
     for i, ax in enumerate(axes):
         ax.grid(alpha=0.3)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=25, fontsize=8)
-        if i >= 2:                 # AP panels place their own legend (_DIST_PANELS)
-            ax.legend(fontsize=7)
-    fig.suptitle("ShapeFit mean values — AP panels: generator vs DESI's Table 11 "
-                 "FIDUCIAL (no DR1 data; the ratio to it is 1 by construction).  "
-                 "$f\\sigma_r$ and $m$: vs the DR1 measurement", fontsize=11)
+        # every panel now places its own legend
+    fig.suptitle("ShapeFit mean values — all four panels: generator vs DESI's "
+                 "FIDUCIAL (Table 11 / Appendix C; $m=0$ by Eq. 4.9).  "
+                 "No DR1 data: at the fiducial cosmology the generator is "
+                 "1/1/Table 11/0 by construction, so this is a null test of "
+                 "conventions, not a measurement comparison.", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"  wrote {out_path}")

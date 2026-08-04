@@ -4924,3 +4924,60 @@ open marker (the remaining point is at our z_eff, so its offset no longer
 attributes between the r_d convention and z_eff — noted in the docstring), the
 f_sigmar panel drops its per-tracer Delta z annotations, and every subplot
 title is now just the parameter name.
+
+
+## §66 — the mean plot was two different plots wearing one title
+
+`plot_mean`'s own docstring states the rule: DR1 data does not go on the axis,
+because "whether the universe matches the fiducial is a statement about DESI,
+not about this pipeline, and putting it on the same axis invites reading a
+cosmological result as a code error." The AP panels obeyed it. The `f_sigmar`
+and `m` panels plotted the DR1 measurement with its error bars.
+
+So the left half asked "do we reproduce DESI's fiducial?" and the right half
+asked "does DR1 agree with DESI's fiducial?" — a null test of our conventions
+next to a DESI result, under one title, with no marking of which was which.
+
+The `f_sigmar` panel was the worse of the two, because it LOOKED predictive
+while being nothing of the kind. Our value there agrees with Table 11 to
++0.02% uniformly across all six tracers, so the panel was, numerically,
+Table 11 vs Appendix A. Our contribution was reproducing Table 11 to two parts
+in ten thousand; the visible ~1 sigma scatter was DR1 against Planck-LCDM.
+
+### Now
+
+All four panels are the same null test: generator vs DESI's FIDUCIAL, DR1
+absent. `f_sigmar` is a percent residual against Table 11's `f sigma_s8`; `m`
+is the absolute residual against 0 (Eq. 4.9 is a definition, so there is no
+table entry and no ratio to form).
+
+The `f_sigmar` and `m` points now come from `_mean_targets`, which calls
+`_worker_run_mean_targets` at `FID_SAMPLE` — the ACTUAL mean-pipeline output.
+The panel previously read `f_sigmar_fid` off the covar path's info dict. Those
+agree to ~0.02% at the fiducial but they are not the same object (§64: the
+covar template's fiducial is the sample, so its `f_sigmar_fid` is
+`f sigma_r(8)`, while the mean extractor returns `f sigma_r(8s)`), and this
+plot is about the mean pipeline.
+
+Result, all six tracers:
+
+```
+D_V/r_d      -0.028% .. -0.005%
+D_H/D_M      -0.003% .. +0.033%
+f sigma_r    -0.015% .. +0.004%
+m            -7.8e-05 .. -2.3e-05   (DESI sigma(m) = 0.051-0.167)
+```
+
+The `m` panel is scaled to the residual, not to DESI's `sigma(m)`: a +-0.051
+band fills the panel and hides the 1e-5 structure that is the actual content.
+The comparison to `sigma(m)` is annotated instead.
+
+### What this plot can and cannot say
+
+It is a convention check and nothing more. At the fiducial cosmology the mean
+pipeline returns 1, 1, Table 11 and 0 BY CONSTRUCTION, so the only thing it can
+detect is a convention or implementation error — a wrong `r_d`, a wrong z_eff,
+a wrong de-wiggling engine. That is worth having (it is how §53/§54's z_eff
+work was verified) but it tests none of the pipeline's actual content, which is
+how the four outputs VARY with cosmology and N_tracers. Nothing in this repo
+currently plots that.
