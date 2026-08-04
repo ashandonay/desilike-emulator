@@ -3847,3 +3847,92 @@ mock covariance's units.
 OUR covariance (`our_forecast` with no `cov_override`) against DESI's published
 constraints — not DESI's covariance. It is the only comparison here that has
 never depended on the disputed normalization.
+
+
+## §57 — Projection effects do NOT explain the `m` correlation deficit (`mcmc.py`)
+
+§45–§56 left one open discrepancy that no covariance-level fix has touched:
+against DESI's published 4×4, **every ρ involving `m` is under-predicted**
+(mean |ρ| ratio 0.356) while **every ρ not involving `m` is over-predicted**
+(1.399) — and σ(m) itself is the best-matching of the four σ. Three
+explanations were checked and eliminated before this section:
+
+1. the velocileptors swap — already done (§22), we run REPT in production;
+2. counterterm prior widths — ours are DESI's N(0, 12.5) exactly (2411.12021);
+3. a free `dn` — already fixed, as DESI fix it.
+
+That left **projection effects**. Our targets come from a Fisher matrix, the
+Gaussian approximation of the likelihood *at the peak*. DESI's published 4×4
+(2411.12021 App. A) is a Gaussian *fit to an MCMC marginal posterior*, and DESI
+name both mechanisms that make those different objects (§4.5): the **prior
+weight effect** and the **prior volume effect**, the latter explicitly able to
+"shift the peak of the marginal posterior away from the most-likely value". A
+Fisher matrix can produce neither. If the `m` row is where our likelihood is
+most non-Gaussian, marginalisation was the obvious candidate.
+
+### The test
+
+`shapefit/mcmc.py` — emcee over the *same* likelihood and the *same* priors the
+Fisher linearises (priors read off the parameter objects, so the comparison
+measures the Gaussian approximation and not a prior change), compressed through
+the same reduction as `_sf_fisher_reduction`: `f_sigmar = df·f_sigmar_fid`,
+`m = dm` (§35), unit Jacobian.
+
+LRG2, REPT, 32 walkers × 780 iterations, 40% burn-in, acceptance 0.24, ~1.8 h.
+
+```
+                       Fisher      MCMC      DESI     F/D     M/D
+sigma_qiso             0.0150    0.0179    0.0168   0.893   1.067
+sigma_qap              0.0497    0.0559    0.0529   0.939   1.056
+sigma_f_sigmar_frac    0.1073    0.1078    0.1096   0.979   0.983
+sigma_m                0.0668    0.0568    0.0690   0.968   0.823
+rho_qiso_qap           0.2789    0.3484    0.2390   1.167   1.458
+rho_qiso_f_sigmar      0.0568   -0.1675   -0.0129  -4.390  12.934
+rho_qiso_m            -0.1705   -0.0930   -0.3296   0.517   0.282
+rho_qap_f_sigmar      -0.6901   -0.7712   -0.5425   1.272   1.422
+rho_qap_m             -0.0536    0.1251   -0.2003   0.267  -0.625
+rho_f_sigmar_m         0.0746   -0.0297    0.2423   0.308  -0.123
+```
+
+### Result: the fourth explanation is eliminated too
+
+**The σ behave as projection effects predict.** Marginalising widens the
+posterior relative to the peak curvature, and σ(qiso) and σ(qap) move from
+under-predicting DESI to slightly over-predicting (0.893 → 1.067, 0.939 →
+1.056); σ(fσ_r) was already right and stays right (0.979 → 0.983). That is the
+expected signature, and it confirms the machinery works.
+
+**The `m` row does the opposite.** σ(m) moves *away* from DESI (0.968 → 0.823),
+and every ρ involving `m` gets *worse*, two of the three flipping sign:
+
+  - ρ(qiso, m)   −0.171 → −0.093   vs DESI −0.330   (0.517 → 0.282)
+  - ρ(qap, m)    −0.054 → **+0.125**  vs DESI −0.200   (0.267 → −0.625)
+  - ρ(fσ_r, m)   +0.075 → **−0.030**  vs DESI +0.242   (0.308 → −0.123)
+
+So marginalisation is not the missing ingredient. Whatever couples `m` to the
+other three in DESI's posterior is absent from our likelihood *before*
+projection, and projection moves us further from it, not closer.
+
+`ρ(qiso, fσ_r)` is worth flagging separately: DESI's is ≈0 (−0.013), so the
+ratio column is meaningless there (−4.39, 12.93 are division by near-zero, not
+a 13× error). The absolute values are 0.057 → −0.168 against −0.013; small
+numbers, but the MCMC does move it well past DESI's.
+
+### Caveats
+
+**One seed.** `feedback_mcmc_chain_noise_sparse_tracers` and the bao CHANGELOG
+both record that per-seed scatter is what bites, worst for the sparse tracers.
+No seed sweep has been run, so the third decimal of every MCMC number above is
+untrusted. The *sign flips* in ρ(qap, m) and ρ(fσ_r, m) are large enough that
+seed noise is unlikely to be the whole story, but that has not been shown.
+
+**One tracer.** LRG2 only, because the run is ~1.8 h and the log-prob closure is
+not picklable, so there is no multiprocessing pool yet.
+
+### Status
+
+The `m` correlation deficit is now the one substantive open discrepancy in the
+shapefit validation, with four explanations eliminated: theory (§22), priors,
+`dn`, and projection (here). It does not block the emulator — `m` is a target we
+predict and σ(m) matches DESI to 0.968 under the production Fisher path — but it
+means our 4×4's `m` row should not be treated as validated at the ρ level.
