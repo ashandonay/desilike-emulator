@@ -4317,3 +4317,86 @@ land within 2%.
 **Nothing about ELG2's tight σ is explained by this**, and the §61 note stands:
 the covariance's n̄ comes from `N_tracers × frac / V`, which uses the correct
 count, not from NX.
+
+### §61c — RESOLVED: there is no ELG2 bug; two different densities were being compared
+
+The DR1 LSS clustering catalogues are on the **public** server, so this needed
+no NERSC access at all (see the note at the end). With them local, the ELG2
+question closes completely — and not in favour of any of §61/§61a/§61b.
+
+### Three measurements
+
+**1. The counts are exact, for the third time.** Catalogue rows in range:
+ELG2 **1415707** against `util.ntracers` 1415707; LRG2 **771894** against
+771894. Paper (§61b), CFS read (§46), and now the local catalogue all agree.
+
+**2. The per-slice SHAPE of NX is correct.** §61b left this as the open item.
+Comparing NX against the galaxy counts slice by slice, on the same objects:
+
+```
+ELG2  NX/count shape ratio: min 0.9931  max 1.0099  spread 1.7%
+LRG2                        min 0.9948  max 1.0022  spread 0.7%
+```
+
+`frac(csv)`, `frac(count)` and `frac(NX)` agree column for column. The ~9% tilt
+seen in the aggregated table is not in NX itself. **z_eff is not distorted.**
+
+**3. The footprint is right, measured without randoms.** Galaxies sample volume
+with density NX, so `Σ_gal 1/NX = ∫(1/NX)·NX dV = V` — the catalogue measures
+its own effective volume:
+
+| tracer | area used | V_NX/V_geom | implied area |
+|---|---|---|---|
+| ELG2 | 5924 | 1.0163 | 6021 |
+| LRG2 | 5740 | 0.9878 | 5670 |
+| LRG1 | 5740 | 1.0082 | 5787 |
+| LRG3 | 5740 | 1.0076 | 5784 |
+
+All within 1.6%. §58's per-tracer areas are independently confirmed, ELG2's
+included.
+
+### The resolution
+
+`∫NX dV = N_gal` **by definition** if NX is the galaxy density, so the CSV's
+1.66M was never a physical prediction to be reconciled — it is what a
+*randoms-weighted mean* of NX integrates to, which is not the volume average.
+The two differ by the within-slice variance of NX, largest where completeness is
+most variable:
+
+```
+csv/(N_slice/V_slice):   ELG2 mean 1.1759 (1.150-1.214)
+                         LRG2 mean 1.0197 (1.010-1.034)
+```
+
+**But the randoms-weighted quantity is the correct one for z_eff.** DESI 2024 III
+Eq. (2.1) weights by the *squared weighted random density*, not by a volume
+average. Swapping in the volume average degrades z_eff against DESI's published
+values:
+
+```
+mean |err| vs DESI:   NX (current) 0.062%     N*frac/V  0.273%
+                      (BGS is the driver: +0.121% -> +1.346%)
+```
+
+So both quantities are right in their place, and the 0.850 ratio §61 opened with
+was comparing two things that were never supposed to be equal. **No code change
+is warranted.** §61's "ELG2 is 15% low", §61a's efficiency hypothesis and
+§61b's "the NX integral is the suspect" are all withdrawn.
+
+### What is actually open
+
+The **covariance** takes its shot-noise n̄ from the volume average
+(`N_tracers × frac / V`). For an FKP-weighted estimator on a variably-complete
+sample, the density entering the shot-noise floor is plausibly the *weighted*
+one, which for ELG2 is 17.6% higher. ELG2 is also our worst σ agreement (fσ_r
+0.57, qap 0.59), and raising shot noise raises σ — the right direction. This is
+a hypothesis with a suggestive direction, not a result; it needs the FKP
+shot-noise algebra done properly (§46's Eq. 10.5/10.6 route), not another ratio.
+
+### Operational note
+
+`/global/cfs/cdirs/desi/public/dr1/...` is mirrored at
+`https://data.desi.lbl.gov/public/dr1/...` and is directly `curl`-able. The four
+clustering catalogues used here are 460 MB total and downloaded in under a
+minute with no MFA, no tty and no pull-from-entropy. §43's ssh recipe is only
+needed for non-public paths. Filenames use `NGC`/`SGC`, not `N`/`S`.
