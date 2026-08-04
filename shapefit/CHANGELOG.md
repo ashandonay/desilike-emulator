@@ -4484,3 +4484,39 @@ can be regenerated exactly rather than inherited from a forecast table.
 Not done here: regenerating the tables. That changes every training label and
 the golden, so it belongs with the §53–§58 regeneration, not bolted on at the
 end of a session.
+
+### §62a — measured: the `frac` shape error costs ≤0.15% in σ
+
+§62 flagged the ordering "BGS worst on `frac` shape (13.6%) and worst on σ
+(qiso 0.61)" as suggestive and testable. Tested, by swapping `frac` for the DR1
+catalogue's weighted n(z) and rerunning the Kaiser Fisher:
+
+```
+BGS    z_eff 0.2954 -> 0.2954     sigma_qiso/qap/f_sigmar/m   all +0.01%
+QSO    z_eff 1.4902 -> 1.4902                                 +0.12 .. +0.15%
+LRG2   z_eff 0.7058 -> 0.7058                                 +0.04 .. +0.09%
+```
+
+**The correlation is a coincidence.** A 13.6% shape error on BGS moves its σ by
+0.01% — three orders below the 0.39 it would need to explain qiso 0.61.
+
+The reason is structural: the slice n̄ is not used directly. It drives per-slice
+HOD b1 and the band-averaged FKP² weight, which the Brent root-find then maps
+back onto a *single* `n_eff` at z_eff (core.py's V_eff block). A redistribution
+across slices that preserves the total is exactly what that mapping averages
+over. z_eff is untouched for the separate reason that it consumes NX, not
+`frac`.
+
+### Consequence
+
+`nz_slices` regeneration is **not** required for accuracy. §62's provenance
+finding stands as a description — the tables really do come from final-survey
+n(z) — but it is a tidiness issue, not a correctness one, and it should not be
+bundled into the §53–§58 regeneration as if it mattered. If it is ever done, the
+recipe is now trivial: the DR1 catalogues are local and public.
+
+This closes the third hypothesis this thread produced about ELG2/BGS n(z), all
+three refuted by measurement (§61c, §61c's covariance note, §62). The open item
+from §61c — whether FKP shot noise wants the weighted density rather than the
+volume average — is *not* addressed by this test, which only redistributed
+`frac` at fixed definition. That one is still open.
