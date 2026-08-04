@@ -177,68 +177,74 @@ def dv_dhdm_at(z: float, params: Dict[str, float] | None = None) -> Tuple[float,
 
 
 # ---------------------------------------------------------------------------
-# DESI DR1's OWN best-fit LCDM cosmology.
+# DESI DR1's OWN best-fit LCDM cosmology — the published MAP, not a stitched
+# summary.
 #
-# DESI 2024 VII (arXiv:2411.12022) Eq. (3.1), dataset DESI (FS+BAO)+BBN+ns10:
-#     Omega_m = 0.2962 +- 0.0095
-#     sigma8  = 0.842  +- 0.034
-#     H0      = 68.56  +- 0.75  km/s/Mpc
+# Source: DESI DR1 full-shape cosmology VAC v1.0, iminuit (posterior
+# maximization), model `base`, dataset
+#   desi-shapefit-all-nolya_schoneberg2024-bbn_planck2018-ns10
+# file `bestfit.minimum.txt`, mirrored at
+#   ~/data/desi/dr1_fs_cosmo/shapefit_all_nolya.bestfit.minimum.txt
+#   https://data.desi.lbl.gov/public/dr1/vac/dr1/full-shape-cosmo-params/v1.0/
+#     iminuit/base/desi-shapefit-all-nolya_schoneberg2024-bbn_planck2018-ns10/
 #
-# omega_b and n_s are NOT measured by DESI full-shape; they are priors, so the
-# prior centres are used: BBN omega_b = 0.02218, ns10 n_s = 0.9649 (2024 VII
-# Table 1). Those are the same numbers as core.DEFAULT_PRIORS, by construction
-# -- our priors were taken from that table.
+# This dataset is the right one for this module, on three counts:
+#   - ShapeFit, not the direct velocileptors fit — the same compression the
+#     Appendix A vectors are in;
+#   - full-shape ALONE, no BAO — the compressed vectors carry no BAO either;
+#   - `-nolya`, so exactly the six tracers transcribed here.
 #
-# ⚠ THIS IS NOT A JOINT MAP. Eq. (3.1) reports MARGINALISED means, one
-# parameter at a time. Assembling a vector from them lands on the posterior's
-# centre-of-mass, which coincides with the best-fit POINT only for a Gaussian
-# posterior. DESI does not publish a full LCDM chain here, so this is the best
-# available stand-in, not the true maximum-likelihood cosmology.
+# It supersedes an earlier version of this block that assembled a cosmology
+# from DESI 2024 VII Eq. (3.1) (Omega_m, sigma8, H0 as separate 1D marginals,
+# FS+BAO). That was a stand-in for want of the chains; two of its three
+# caveats are now gone (CHANGELOG S70):
+#   - it is a genuine joint MAP, not a centre-of-mass of 1D marginals;
+#   - ln10A_s is published (`logA`), not inverted from sigma8;
+#   - FS+BAO vs FS-alone is resolved.
+# What remains: this is still CLOSURE, not validation — the MAP was fitted to
+# the same compressed vectors we compare against.
 #
-# ⚠ NOT INDEPENDENT DATA. Eq. (3.1) was inferred FROM the same compressed
-# measurements this module transcribes (plus BAO). Comparing our prediction at
-# this cosmology against those measurements is a CLOSURE test -- does the
-# cosmology DESI extracted reproduce the per-tracer numbers it was extracted
-# from -- not an independent validation.
+# NB omega_b and n_s are priored (BBN, ns10) but NOT frozen: the MAP moves
+# them off the prior centres (n_s 0.9649 -> 0.97267, omega_b 0.02218 ->
+# 0.021976). Do not substitute the prior centres.
 #
-# ⚠ FS+BAO, not FS-alone. Our compressed comparison is ShapeFit-ALONE. DESI do
-# not quote an FS-alone LCDM constraint in this equation, so the cosmology
-# carries BAO information the compressed vectors do not.
+# `omch2` is CDM-only, excluding neutrinos: ombh2 + omch2 = 0.144133 against
+# omegamh2 = 0.144778, and the 0.000645 difference is the single 0.06 eV
+# species. So it maps straight onto our `omega_cdm` with no reassembly, and
+# none of the S66 Omega_m round-trip applies.
 # ---------------------------------------------------------------------------
-DR1_BESTFIT_INPUTS = {"Omega_m": 0.2962, "sigma8": 0.842, "H0": 68.56,
-                      "omega_b": 0.02218, "n_s": 0.9649,
-                      "source": "DESI 2024 VII (2411.12022) Eq. (3.1), "
-                                "FS+BAO+BBN+ns10"}
-_DR1_BESTFIT_CACHE: Dict[str, float] = {}
+DR1_BESTFIT = {
+    "omega_cdm": 0.12215781,     # omch2
+    "omega_b": 0.021975539,      # ombh2
+    "h": 0.69875343,             # H0 / 100
+    "ln10A_s": 3.0282331,        # logA
+    "n_s": 0.97266507,           # ns
+}
+
+# Derived quantities printed in the same file, for cross-checks.
+DR1_BESTFIT_DERIVED = {"Omega_m": 0.2965209, "sigma8": 0.82566855,
+                       "rdrag": 146.97452, "A_s": 2.0660694e-09}
+
+# DESI's OWN chi2 at that MAP against these same compressed vectors — i.e. the
+# FLOOR of the closure test. A forward model identical to DESI's, run at this
+# cosmology, would reproduce these numbers exactly; anything above is our
+# model differing from theirs. Per tracer this is 2 * (-loglikelihood) from the
+# file; they sum to chi2__..._shapefit_all_nolya = 15.224566 over 24 numbers.
+DR1_BESTFIT_CHI2 = {
+    "BGS": 2 * 0.9177085, "LRG1": 2 * 0.31774379, "LRG2": 2 * 1.710589,
+    "LRG3": 2 * 1.0570558, "ELG2": 2 * 2.1205099, "QSO": 2 * 1.4886761,
+}
+DR1_BESTFIT_CHI2_TOTAL = 15.224566
 
 
 def dr1_bestfit_cosmology() -> Dict[str, float]:
-    """DR1's best-fit LCDM as an omega-basis sample. See the caveats above.
+    """DR1's ShapeFit-alone best-fit LCDM as an omega-basis sample.
 
-    ln10A_s is solved for, not published: DESI quote sigma8, and the mean
-    pipeline takes A_s. Linear sigma8 scales exactly as sqrt(A_s), so one
-    Boltzmann call fixes the normalisation and a second verifies it (agreement
-    is exact to the printed digits).
-
-    omega_cdm is assembled as Omega_m h^2 - omega_b - omega_ncdm, with
-    omega_ncdm from the DESI fiducial's single 0.06 eV neutrino -- the same
-    convention core._to_mean_extractor_params uses, so the mean and covar
-    pipelines stay on one definition (CHANGELOG S66).
+    Transcribed from the published MAP; see the provenance and the closure
+    caveat above. Nothing is solved or assembled — every entry is a column of
+    `bestfit.minimum.txt`.
     """
-    if not _DR1_BESTFIT_CACHE:
-        from desilike.theories.primordial_cosmology import get_cosmo
-        d = DR1_BESTFIT_INPUTS
-        h = float(d["H0"]) / 100.0
-        fid = get_cosmo(("DESI", {}))
-        omega_ncdm = float(np.sum(np.atleast_1d(fid.Omega_ncdm(0.0)))) * fid.h ** 2
-        omega_cdm = float(d["Omega_m"]) * h ** 2 - float(d["omega_b"]) - omega_ncdm
-        base = {"omega_cdm": omega_cdm, "omega_b": float(d["omega_b"]),
-                "h": h, "n_s": float(d["n_s"])}
-        s8_ref = float(get_cosmo(("DESI", {**base, "logA": 3.0}))
-                       .get_fourier().sigma8_z(0.0, of="delta_m"))
-        ln10A_s = 3.0 + 2.0 * np.log(float(d["sigma8"]) / s8_ref)
-        _DR1_BESTFIT_CACHE.update({**base, "ln10A_s": float(ln10A_s)})
-    return dict(_DR1_BESTFIT_CACHE)
+    return dict(DR1_BESTFIT)
 
 
 # Order of the DESI 4-vector, and the emulator target each entry maps to.

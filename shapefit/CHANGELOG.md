@@ -5206,3 +5206,91 @@ Nothing about the §68 result changes — same cosmology, same chi2 25.1 -> 19.0
 same caveats. This is a naming and surface change only. The fiducial-cosmology
 numbers survive in the §68 table as the comparison column, which is where they
 belong: context for the improvement, not a mode anyone has to select.
+
+
+## §70 — DESI publish the MAP, and their own chi2 at it
+
+§68 built the DR1 cosmology by hand from DESI 2024 VII Eq. (3.1) — `Omega_m`,
+`sigma8`, `H0` as three separate 1D marginals — because the chains were assumed
+unavailable. They are not. The DR1 full-shape cosmology VAC is public, over the
+same HTTPS route as the LSS catalogues (§62b), and it ships not just chains but
+`iminuit/` posterior maximisations.
+
+```
+https://data.desi.lbl.gov/public/dr1/vac/dr1/full-shape-cosmo-params/v1.0/
+  iminuit/base/desi-shapefit-all-nolya_schoneberg2024-bbn_planck2018-ns10/
+    bestfit.minimum.txt
+```
+
+mirrored at `~/data/desi/dr1_fs_cosmo/shapefit_all_nolya.bestfit.minimum.txt`.
+
+That dataset is the right one on three counts: **ShapeFit**, not the direct
+velocileptors fit — the compression Appendix A is in; **full-shape alone**, no
+BAO — the compressed vectors carry none either; **`-nolya`** — exactly the six
+tracers this module transcribes.
+
+Read straight off, nothing assembled or inverted:
+
+```
+omega_cdm = 0.12215781   omega_b = 0.021975539   h = 0.69875343
+ln10A_s   = 3.0282331    n_s     = 0.97266507
+```
+
+Two of §68's three caveats die: it is a genuine joint MAP rather than a
+centre-of-mass of 1D marginals, and `ln10A_s` is published (`logA`) rather than
+inverted from `sigma8`. The FS+BAO-vs-FS-alone mismatch dies with the dataset
+choice. **Closure remains** — the MAP was fitted to these same vectors.
+
+`omch2` is CDM-only: `ombh2 + omch2 = 0.144133` against `omegamh2 = 0.144778`,
+the 0.000645 difference being the single 0.06 eV species. So it maps directly
+onto our `omega_cdm`, and none of §66's `Omega_m` round-trip applies here.
+
+### Correction to §68
+
+§68 said `omega_b` and `n_s` are "priors, so the prior centres are used" and
+that their posteriors are essentially the priors. The MAP disagrees: `n_s`
+0.9649 -> **0.97267**, `omega_b` 0.02218 -> **0.021976**. They are priored, not
+frozen, and the fit pulls them. Do not substitute prior centres.
+
+### The floor is now measured, not described
+
+§68 argued the closure chi2 has a non-zero floor — even an identical forward
+model recovers the residual DESI's own fit leaves. The file publishes it: the
+per-tracer log-likelihoods at that MAP sum to
+`chi2__..._shapefit_all_nolya = 15.224566` over the same 24 numbers.
+
+So the excess over that floor is the part attributable to our forward model
+differing from DESI's:
+
+```
+tracer   our chi2   DESI chi2   excess
+BGS          2.39        1.84    +0.55
+LRG1         0.54        0.64    -0.10
+LRG2         3.03        3.42    -0.39
+LRG3         2.20        2.11    +0.09
+ELG2         5.02        4.24    +0.78
+QSO          2.38        2.98    -0.60
+TOTAL       15.57       15.22    +0.34
+```
+
+**+0.34 in chi2 over 24 numbers**, per-tracer excess scattering both signs
+between -0.60 and +0.78. Our cosmology -> compressed-parameter map agrees with
+DESI's to well inside the noise of their own fit. The progression across this
+section and §68: 25.1 at the fiducial -> 19.0 at the stitched Eq. (3.1)
+cosmology -> **15.57 at the published MAP, floor 15.22**.
+
+This is the strongest validation the MEAN pipeline has had. Note what it does
+NOT cover: the covar pipeline (§63's open `m`-row question is untouched), and
+anything we get wrong the same way DESI does, which closes perfectly and stays
+invisible.
+
+`DR1_BESTFIT_CHI2` / `DR1_BESTFIT_CHI2_TOTAL` carry the floor so the excess is
+computed rather than eyeballed; the plot's suptitle prints all three numbers.
+
+### Not yet used
+
+The VAC also holds `cobaya/` chains and `iminuit/` MAPs for `base_w`,
+`base_w_wa`, `base_mnu`, `base_mu_sigma`, and per-tracer datasets
+(`fs-bao-bgs`, `fs-bao-lrg-z0`, ...). The per-tracer MAPs would allow a
+tracer-by-tracer closure test; `base_w_wa` would exercise the `w0`/`wa` cosmo
+models the emulator supports but nothing has validated against data.

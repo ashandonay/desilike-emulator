@@ -466,18 +466,19 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
         four outputs VARY with cosmology and N_tracers.
 
     reference="dr1"
-        The generator at DR1's OWN best-fit LCDM (desi_reference.
-        dr1_bestfit_cosmology, from 2411.12022 Eq. 3.1) against DR1's measured
-        compressed values (Appendix A, Eqs. A.1-A.24) with their 1-sigma band.
-        The one mode where the pipeline PREDICTS rather than reproducing a
-        definition.
+        The generator at DR1's OWN best-fit LCDM -- DESI's PUBLISHED
+        ShapeFit-alone MAP (desi_reference.dr1_bestfit_cosmology) -- against
+        DR1's measured compressed values (Appendix A, Eqs. A.1-A.24) with their
+        1-sigma band. The one mode where the pipeline PREDICTS rather than
+        reproducing a definition.
 
         A CLOSURE test in the loop-closing sense, not DESI's mock-recovery
-        sense: Eq. (3.1) was inferred from these same vectors plus BAO, so the
-        data sits on both sides. Two consequences (CHANGELOG S68) -- the chi2
-        floor is not zero, because even an identical forward model recovers the
-        residual DESI's own fit left; and errors we share with DESI's pipeline
-        close perfectly and are invisible.
+        sense: that MAP was fitted to these same vectors, so the data sits on
+        both sides. Two consequences (CHANGELOG S68/S70) -- the chi2 floor is
+        not zero, and it is KNOWN: DESI publish their own chi2 at this point
+        (DR1_BESTFIT_CHI2, 15.224566 over 24 numbers), so the excess over it is
+        the part attributable to our forward model differing from theirs. And
+        errors we share with DESI's pipeline close perfectly and are invisible.
 
         Appendix A publishes a datavector plus a Gaussian covariance, so its
         centres are the mean and the MAP alike. The two separate only where the
@@ -566,14 +567,20 @@ def plot_mean(data, tracers, out_path, theory="rept", reference="fiducial"):
                "conventions, not a measurement comparison.")
     else:
         c = desi_ref.dr1_bestfit_cosmology()
-        sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A), "
-               "generator evaluated at DR1's OWN best-fit $\\Lambda$CDM "
-               "(2411.12022 Eq. 3.1: $\\Omega_m$=0.2962, $\\sigma_8$=0.842, "
-               "$H_0$=68.56)\n"
-               rf"$\omega_{{cdm}}$={c['omega_cdm']:.5f}, $h$={c['h']:.4f}, "
-               rf"$\ln(10^{{10}}A_s)$={c['ln10A_s']:.4f}.  "
-               "CLOSURE test — Eq. 3.1 was inferred from these same data, and "
-               "carries BAO the compressed vectors do not.")
+        chi2_ours = 0.0
+        for i, t in enumerate(tracers):
+            _z, vec, cov = desi_ref.datavector(t)
+            d = gen[i] - np.asarray(vec)
+            chi2_ours += float(d @ np.linalg.solve(cov, d))
+        chi2_desi = sum(desi_ref.DR1_BESTFIT_CHI2[t] for t in tracers)
+        sup = ("ShapeFit mean values vs DESI's DR1 MEASUREMENT (App. A), generator at "
+               "DESI's published ShapeFit-alone MAP (DR1 full-shape cosmo VAC, iminuit)\n"
+               rf"$\omega_{{cdm}}$={c['omega_cdm']:.5f}, $\omega_b$={c['omega_b']:.6f}, "
+               rf"$h$={c['h']:.5f}, $\ln(10^{{10}}A_s)$={c['ln10A_s']:.5f}, "
+               rf"$n_s$={c['n_s']:.5f}" "\n"
+               rf"$\chi^2$ = {chi2_ours:.2f} vs DESI's own {chi2_desi:.2f} at the same "
+               rf"point (excess {chi2_ours - chi2_desi:+.2f} over {4 * len(tracers)} "
+               "numbers) — CLOSURE: the MAP was fitted to these same vectors")
     fig.suptitle(sup, fontsize=9)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
