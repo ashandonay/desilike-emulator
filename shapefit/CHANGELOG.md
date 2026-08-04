@@ -4760,3 +4760,89 @@ stand; a rerun would not move them visibly. §58 (per-tracer area) does **not**
 affect these: `mcmc.py:build()` never passes `area`, so it always took the
 `tracer_area()` path, before and after. §60 changes only the `"desi"` reference
 block echoed into the JSONs, not the chains.
+
+
+## §64 — the covar and mean pipelines define `f_sigmar` at different radii
+
+Found while tracing what `r` means in `f σ_r`. Not a bug in anything that
+currently runs; a trap sitting precisely where the bedcosmo integration lands.
+
+### The two frames
+
+`ShapeFit` measures every scale in units of the standard ruler, via
+`s = r_d(cosmo) / r_d(fid)` (`power_template.py:664`). The sphere radius is
+`r·s`, the pivot is `kp/s`, `Ap` carries `1/s³`. The two pipelines set
+`fiducial` differently, so `s` behaves differently in each:
+
+| | `fiducial` | `s` | `f_sigmar` is |
+|---|---|---|---|
+| covar (`core.py:744`) | `("DESI", theta_cosmo)` — the sample | ≡ 1 | `f σ_r(8)` |
+| mean (`fourier_space.py:337`) | `"DESI"` — fixed | varies | `f σ_r(8s)` · tilt |
+
+The covar template's fiducial *is* the sample, so `cosmo.rs_drag /
+fiducial.rs_drag` is a number over itself. That is deliberate — it is what makes
+`q ≡ 1` there so the Fisher curvature is the only meaningful content — but it
+also means the two sides label different quantities with the same name.
+
+Measured at z = 0.706:
+
+```
+case                  s   covar f_sigmar_fid   mean f_sigmar    ratio
+fiducial          1.000             0.460725        0.460725   1.0000
+omega_cdm=0.08    1.082             0.334282        0.250719   0.7500
+omega_cdm=0.20    0.884             0.632717        0.915489   1.4469
+omega_cdm=0.50    0.666             0.845678        2.450082   2.8972
+h=0.55            0.817             0.449451        0.520607   1.1583
+h=0.85            1.262             0.451208        0.391600   0.8679
+```
+
+`s` spans 0.17–1.84 over the `base` box (200 draws), so the sphere the mean
+pipeline integrates runs 1.4–14.7 Mpc/h while the covar pipeline is pinned at 8.
+
+### What is unaffected
+
+The Fisher determines the FRACTIONAL error. With `J = diag(1, 1,
+f_sigmar_fid, 1)` (`fourier_space.py:130`),
+
+```
+sigma(f_sigmar) / f_sigmar_fid == sigma(df)      exactly, by construction
+```
+
+and `sigma(df)` does not depend on which fiducial the template references. So
+every DESI comparison is clean: `fsr_frac` (`comparison_plots.py:121`,
+`compare_to_desi.py:706`) divides by `f_sigmar_fid` and recovers `sigma(df)`,
+cancelling the radius. §45–§57 and §63, and every forecast plot, stand.
+
+### What is exposed
+
+The absolute `sigma_f_sigmar` emulator target carries the `r=8` scale, so it is
+NOT in the same units as the mean emulator's `f_sigmar` label. A Gaussian
+likelihood built as `(d - mu)^T C^-1 (d - mu)` with `mu` from the mean emulator
+and `C` from the covar emulator mis-sizes that entry by the ratio column above.
+
+`qiso`/`qap` have the same structure for a different reason: they are identically
+1 in the covar frame, so `sigma_qiso` is already fractional, while the mean
+pipeline's `qiso` is a real AP ratio against the fixed DESI fiducial. The
+conversion is `sigma_abs = sigma_qiso * qiso_mean(theta)`.
+
+`m` is the one clean entry — an additive dimensionless offset in both frames.
+
+### Fix at assembly time
+
+Work in fractional units throughout and multiply by the mean emulator's own
+prediction, i.e. per sample
+
+```
+sigma_abs(f_sigmar) = sigma_f_sigmar / f_sigmar_fid * f_sigmar_mean
+sigma_abs(qiso)     = sigma_qiso  * qiso_mean
+sigma_abs(qap)      = sigma_qap   * qap_mean
+sigma_abs(m)        = sigma_m
+```
+
+This needs `f_sigmar_fid` per sample, which the covar generator already records
+(`fourier_space.py:199`) but does not currently ship as a target. Decide at
+integration time whether to emit the fractional targets directly instead —
+cleaner, but it changes the trained target set, so not a unilateral change.
+
+Same class as §58 (a fallback that never fired) and §59 (a caller never
+updated): two paths, one definitional mismatch, nothing checking the seam.
