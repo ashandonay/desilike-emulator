@@ -229,9 +229,11 @@ def sigma_targets(tracer_bin: str, variant: str = "sf") -> Dict[str, float]:
     sigma_qiso and sigma_qap are divided by the FIDUCIAL D_V/r_d and D_H/D_M
     as published in Table 11 (see published_fiducial), which is what the
     definitions of qiso and qap require. sigma_f_sigmar is returned as a
-    FRACTION of f sigma_s8,
-    since our f_sigmar and DESI's f sigma_s8 share a definition but are
-    evaluated at slightly different z_eff. sigma_m is absolute.
+    FRACTION of the FIDUCIAL f sigma_s8 (Table 11) for the same reason -- our
+    f_sigmar and DESI's f sigma_s8 share a definition but are evaluated at
+    slightly different z_eff, and normalising each side by its own fiducial
+    absorbs that offset without importing DR1's data fluctuation. sigma_m is
+    absolute.
     """
     z, vec, C = datavector(tracer_bin, variant)
     sig = np.sqrt(np.diag(C))
@@ -240,7 +242,22 @@ def sigma_targets(tracer_bin: str, variant: str = "sf") -> Dict[str, float]:
     out = {
         "sigma_qiso": float(sig[0] / fid_dv),
         "sigma_qap": float(sig[1] / fid_dhdm),
-        "sigma_f_sigmar_frac": float(sig[2] / vec[2]),
+        # FIDUCIAL f sigma_s8 (Table 11), not the measured central value.
+        # S17 moved qiso and qap off the measurement and left this one on it,
+        # so the fractional f_sigmar comparison stayed skewed by exactly the
+        # error S17 diagnosed -- and by more than it was for q: measured/fiducial
+        # runs 0.799 (BGS) to 1.160 (QSO), against 0.94-1.04 there.
+        #
+        # Our side divides by OUR f_sigmar_fid (compare_to_desi.py), so the two
+        # denominators have to be the same KIND of quantity or the ratio carries
+        # a data fluctuation. They are also numerically the same quantity: our
+        # mean pipeline returns f_sigmar = 0.460725 at the LRG2 fiducial against
+        # Table 11's 0.4608, agreeing to 0.02%. Dividing each side by its own
+        # fiducial therefore compares sigma against sigma, and additionally
+        # absorbs the small z_eff difference in a controlled way -- which
+        # dividing by the measurement does not, since that mixes the z offset
+        # with DR1's fluctuation.
+        "sigma_f_sigmar_frac": float(sig[2] / fid["f_sigma_s8"]),
         "sigma_m": float(sig[3]),
     }
     names = TARGET_ORDER

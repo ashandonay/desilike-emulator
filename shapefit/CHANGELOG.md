@@ -4094,3 +4094,108 @@ load exists only for `_fiducial_z_eff` and is dropped.
 
 Verified after the fix: `qiso = qap = 1` and `m = 0` at the DESI fiducial (the
 identity §38–§41 pin), and all four move under `omega_cdm +5%`.
+
+
+## §60 — §17's correction never reached `f_sigmar`
+
+§17 established that DESI's σ must be divided by the **fiducial**, not by the
+measured central value, because DR1's measurement sits up to 5–6% off its
+fiducial and using it "inflated DESI's σ and so deflated every ratio". It fixed
+`sigma_qiso` and `sigma_qap`. It left the third parameter on the measurement:
+
+```python
+"sigma_f_sigmar_frac": float(sig[2] / vec[2]),   # vec[2] = MEASURED f sigma_s8
+```
+
+Our side has always divided by our own fiducial (`compare_to_desi.py`,
+`f_sigmar_fid`), so the comparison carried a tracer-dependent skew of
+measured/fiducial — and here that factor is **larger** than the one §17 fixed,
+because fσ8 is measured far less precisely than D_V/r_d:
+
+| tracer | measured fσ8 | fiducial (Table 11) | meas/fid |
+|---|---|---|---|
+| BGS | 0.3772 | 0.4723 | **0.799** |
+| LRG1 | 0.5136 | 0.4733 | 1.085 |
+| LRG2 | 0.4836 | 0.4608 | 1.049 |
+| LRG3 | 0.4222 | 0.4398 | 0.960 |
+| ELG2 | 0.3767 | 0.3944 | 0.955 |
+| QSO | 0.4349 | 0.3750 | **1.160** |
+
+−20% to +16%, against 0.94–1.04 for q.
+
+### Why the fiducial is the right denominator here too
+
+Not merely by analogy with §17. Our mean pipeline returns **f_sigmar = 0.460725
+at the LRG2 fiducial** against Table 11's **0.4608** — the same number to 0.02%.
+So "our fiducial" and "DESI's fiducial" are not two conventions, they are one
+quantity, and dividing each side by it compares σ against σ directly. It also
+absorbs the small z_eff offset between the two sides in a controlled way, which
+dividing by the measurement does not: that mixes the z offset with DR1's
+fluctuation.
+
+### Effect on the reported agreement
+
+`--check compressed`, REPT, ours/DESI on the fσ_r column:
+
+| tracer | before | after |
+|---|---|---|
+| BGS | 0.67 | **0.84** |
+| LRG1 | 1.11 | 1.02 |
+| LRG2 | 0.98 | 0.93 |
+| LRG3 | 0.77 | 0.80 |
+| ELG2 | 0.54 | 0.57 |
+| QSO | 0.74 | **0.64** |
+
+Mixed, not uniformly favourable: BGS improves sharply, QSO degrades sharply.
+That is the expected signature of removing a data fluctuation rather than of
+tuning. The six ρ are untouched — a ratio to a constant leaves ρ invariant,
+verified (`rho_qiso_m` LRG2 = −0.329629 before and after).
+
+Note the MCMC sweep's JSON files carry a `"desi"` block computed before this
+change, so their printed `M/DESI` for f_sigmar is stale by the factors above.
+The plots read `desi_reference` live and are correct.
+
+
+## §61 — the pipeline's two n(z) definitions, and ELG2's 15%
+
+With §58's per-tracer footprint in, the two independent n(z) the pipeline
+carries can finally be compared without the area confounding them:
+
+* the **covariance** builds `nbar_i = N_tracers × frac_i / V_i` — the design
+  count over slice fractions over comoving shell volume. This is the one
+  `N_tracers` acts on, so it is the design axis.
+* **z_eff** uses DESI's `NX` column from their randoms (§51–§53),
+  `n(z)⟨C_assign⟩`, the density their own `WEIGHT_FKP` is built from.
+
+Nothing in the code forces these to agree. Per-slice ratio of the first to the
+second, and the same statement as an implied galaxy count (∫NX dV over the
+slices, against the count we feed in from `desi_data.csv`):
+
+| tracer | per-slice mean | N (desi_data.csv) | N implied by NX | ratio |
+|---|---|---|---|---|
+| BGS | 1.003 | 3.000e5 | 3.042e5 | 0.986 |
+| LRG1 | 0.997 | 5.069e5 | 5.082e5 | 0.997 |
+| LRG2 | 0.980 | 7.719e5 | 7.876e5 | 0.980 |
+| LRG3 | 0.979 | 8.598e5 | 8.749e5 | 0.983 |
+| **ELG2** | **0.850** | **1.416e6** | **1.660e6** | **0.853** |
+| QSO | 0.998 | 8.567e5 | 8.591e5 | 0.997 |
+
+Five of six agree to within 2%. ELG2 is 15% low: DESI's randoms imply 1.66M
+ELG2 galaxies in 1.1 < z < 1.6, and we feed the pipeline 1.416M.
+
+This is the same discrepancy as the old `∫NX dV/N` check's 1.173 (= 1/0.853),
+now isolated to one tracer because the footprint is no longer confounding it.
+
+Two candidate causes are eliminated:
+
+* **not fraction normalisation** — every tracer's `frac` sums to exactly 1.0000.
+* **not an ELG1/ELG2 slice mixup** — ELG2's slices span 1.100–1.600, the right
+  bin (§31/§32).
+
+What remains is on the `desi_data.csv` side: whether that ELG2 count is after a
+cut `NX` does not carry. That needs the catalogue, not more arithmetic.
+
+**It does not explain ELG2's tight σ, and points the wrong way.** ELG2 is our
+worst σ agreement (fσ_r 0.57, qap 0.59). Raising N to the randoms-implied 1.66M
+raises n̄ by 17%, which *lowers* our σ and makes the ratio worse, not better.
+Whatever is behind ELG2's tightness, this is not it.
