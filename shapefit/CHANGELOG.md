@@ -6140,3 +6140,86 @@ the pre-§80 code in memory. `rm -rf ~/data/desi/nz_slices` after that.
 LRG3_ELG1` will build it once the `LRG+ELG` randoms are fetched (~3.3 GB at
 nran=1, ~6.6 GB at the nran=2 the other tables use). That is the last thing
 keeping `nbar_file` alive.
+
+
+## §81 — LRG3_ELG1: the n(z) was the last final-survey table, and the vendored files were never committed
+
+### The `.gitignore` bug — §79/§80's vendoring did not actually ship
+
+`.gitignore` carries `*.csv`, so `git add -A` silently skipped every vendored
+table. Only `PROVENANCE.md` was committed. A fresh clone would have had NO n(z)
+tables and NO `N_tracers` box.
+
+The fresh-machine test in §79 passed anyway, because it mocked `Path.home()`
+while the files sat in the working tree as untracked. It verified the RESOLUTION
+LOGIC and not that anything ships. `git ls-files data/` was the check that
+mattered and it was not run.
+
+Fixed with a `!data/**/*.csv` negation (plus `data/**/*.bak` to keep
+`--install`'s backups out). 16 files now tracked, confirmed by checking out the
+index into a clean directory.
+
+### LRG3_ELG1's n(z) was still the final-survey shape
+
+The other six regenerate byte-identically from the DR1 catalogues, i.e. they had
+already been rebuilt. LRG3_ELG1 had not: it still came from
+`make_lrg3_nz_slices.py` reading the published `*_nz.txt`, which describes the
+FINAL-SURVEY sample. It was the last table carrying the §62 problem, and the
+only one where BAO and full shape were on different footing.
+
+The 69.7% "shape change" that made this look risky is real but is the fix, not
+the damage — monotonic across the bin, 1.253 at z=0.81 to 0.738 at z=1.09.
+
+**What the diagnostic settled.** The combined catalogue looked like a different
+sample (2,898,381 weighted vs `util.ntracers`' 1,876,187). It is not:
+
+```
+LRG+ELG_LOPnotqso   raw N 1,876,187   sum(WEIGHT) 2,898,381   <W> 1.545
+LRG                 raw N   859,822   sum(WEIGHT)   861,324   <W> 1.002
+ELG_LOPnotqso       raw N 1,016,365   sum(WEIGHT)   986,954   <W> 0.971
+
+combined raw N == LRG raw + ELG raw == 1,876,187 exactly
+TARGETIDs in combined but not in the separate pair: 0   (and 0 the other way)
+```
+
+Identical objects. `util.ntracers` is exactly the combined catalogue's raw
+count, so the normalisation was never inconsistent — the combined sample simply
+carries its own weight scheme (<W> = 1.545), which is what DESI's BAO
+measurement for this bin uses. So the combined catalogue's WEIGHT-weighted shape
+is the right one, and `make_nz_slices.py` already computes exactly that.
+
+Rebuilt. z_eff for the bin, at the DESI fiducial, both shapes on identical
+footing:
+
+```
+OLD (published *_nz.txt, final-survey)   0.9537   +2.549% vs DESI's 0.930
+NEW (DR1 LRG+ELG catalogue)              0.9483   +1.970%
+```
+
+Better, and still far off the <=0.12% every other bin reaches — because
+LRG3_ELG1 is the one tracer with no `_desi_nx.csv`, so `_desi_nz_geometry` falls
+back to `nbar_file`, the pre-§53 convention that runs high. Closing that is
+predicted to take it to ~0.1%; that prediction is the test.
+
+### `nersc_make_desi_nx.py`
+
+The missing table needs the `LRG+ELG` randoms, 6.6 GB, and repeated HTTPS
+resumes truncated (the files are 1-2 GB each and `curl -C -` kept returning
+short; the size guard deleted them rather than leaving them to look complete).
+Since the randoms already live on CFS, the reduction belongs there: 6.6 GB of
+reading turned into 5 KB of transfer.
+
+Self-contained by design — no repo imports, no desilike, no cosmoprimo, one file
+to copy. It accumulates with `np.bincount` per file rather than concatenating,
+so it never holds more than one catalogue.
+
+**Validated before it touches CFS**: it carries an LRG2 entry purely so it can
+be run against a tracer that already has a committed table. Against local LRG
+randoms it gives max|dNX| 0.055%, max|dS1| 0.279% — digit-identical to
+`make_desi_nx.py --check`, so the two implementations agree.
+
+### Open
+
+Run it on NERSC for LRG3_ELG1, drop the CSV into `data/dr1/nz_slices/`, and
+re-check the bin's z_eff against the ~0.1% prediction. That removes the last
+`nbar_file` fallback in the pipeline.

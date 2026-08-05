@@ -2,6 +2,13 @@
 # all diagnostic figures land here (util.plots_dir); regenerable
 plots/
 *.csv
+# ...except the vendored DESI reference tables, which are INPUTS, not outputs
+# (S79/S80). Without this negation `git add -A` silently skips them and a fresh
+# clone has no n(z) tables and no N_tracers box at all -- which is exactly what
+# happened, and was invisible because the files existed locally as untracked.
+!data/**/*.csv
+# but not make_nz_slices.py --install's backups
+data/**/*.bak
 __pycache__/
 *.egg-info/
 *.log
