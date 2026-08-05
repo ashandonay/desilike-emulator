@@ -2,9 +2,10 @@
 """Plot n(z) per tracer bin -- the density the pipeline actually uses.
 
 Not the raw table columns: this calls `bao_core.cov_nbar_per_slice`, so what is
-drawn is what the covariance consumes, including the S85 split between DESI's
-`NX` (single-tracer bins) and `N*frac/V` (the mixed LRG3_ELG1 bin, where <NX>
-averages the two parents instead of summing them).
+drawn is what the covariance consumes. Since S87 that is one path for every bin
+-- the `nbar_total` column, which sums a combined bin's parents rather than
+FKP-averaging them, and is identical to `nbar_desi_nx` where there is only one
+parent. The `N*frac/V` fallback is drawn dashed if it ever fires; it should not.
 
     python plot_nz.py                    # -> plots/nz_by_tracer.png
     python plot_nz.py --n-factor 0.5     # the design axis at half DR1
@@ -38,9 +39,14 @@ bao_core = sf_core.bao_core
 # dataviz reference palette, categorical light slots 1-7, IN ORDER. Assigned by
 # entity (fixed per tracer), never by rank, so a filtered rerun does not repaint.
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
-           "#e87ba4", "#008300", "#4a3aa7"]
+           "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 BINS = ["BGS", "LRG1", "LRG2", "LRG3", "LRG3_ELG1", "ELG2", "QSO"]
-COLOR = dict(zip(BINS, PALETTE))
+# ELG1 is NOT a DR1 analysis bin -- 0.8<z<1.1 is fit as the combined LRG3_ELG1,
+# and tracers.yaml has no ELG1 entry -- so it never reaches a covariance and
+# cannot go through cov_nbar_per_slice. It is drawn as a parent decomposition
+# (S88) so the combined bin's `nbar_total` is visibly the sum of its two halves.
+PARENTS = ["ELG1"]
+COLOR = dict(zip(BINS + PARENTS, PALETTE))
 
 INK, INK_2, INK_3 = "#0b0b0b", "#52514e", "#8a8880"
 
@@ -51,10 +57,12 @@ _LABEL_AT = {
     "BGS":       (0.30, 0, 8),
     "LRG1":      (0.55, 0, 8),
     "LRG2":      (0.60, -14, 8),
-    "LRG3":      (0.45, 16, 4),
+    "LRG3":      (0.28, 20, -1),
     "LRG3_ELG1": (0.05, 8, 8),
     "ELG2":      (0.10, 6, 6),
     "QSO":       (0.42, 0, 8),
+    # ELG1 peaks under LRG3's descent, so anchor it at its own left end instead.
+    "ELG1":      (0.03, 4, -15),
 }
 SURFACE = "#fcfcfb"
 
@@ -75,6 +83,28 @@ def gather(n_factor: float):
         nbar, src = bao_core.cov_nbar_per_slice(t, frac, V, N, dataset="dr1")
         out[t] = dict(z_lo=z_edges[:, 0], z_hi=z_edges[:, 1], z_mid=z_mid,
                       nbar=np.asarray(nbar, float), src=src, area=area, N=N)
+
+    # Parent curves. Read straight from the table -- there is no ntracers entry
+    # to drive cov_nbar_per_slice -- then carry the SAME alpha(N) the combined
+    # bin got, recovered from the bin itself rather than recomputed, so the
+    # decomposition keeps summing correctly at any --n-factor.
+    import pandas as pd
+    from util import nz_slices_path
+    comb = pd.read_csv(nz_slices_path("LRG3_ELG1_desi_nx.csv", "dr1"))
+    alpha = float(np.median(out["LRG3_ELG1"]["nbar"]
+                            / comb["nbar_total"].to_numpy(dtype=np.float64)))
+    for t in PARENTS:
+        p = nz_slices_path(f"{t}_desi_nx.csv", "dr1")
+        if not Path(p).exists():
+            print(f"note: {t} table absent, skipping the parent curve "
+                  f"(build it with make_desi_nx.py --tracers {t} --install)")
+            continue
+        df = pd.read_csv(p)
+        out[t] = dict(z_lo=df["zlow"].to_numpy(dtype=np.float64),
+                      z_hi=df["zhigh"].to_numpy(dtype=np.float64),
+                      z_mid=df["zmid"].to_numpy(dtype=np.float64),
+                      nbar=df["nbar_desi_nx"].to_numpy(dtype=np.float64) * alpha,
+                      src=f"parent x{alpha:.3f}", area=float("nan"), N=float("nan"))
     return out
 
 
@@ -97,7 +127,7 @@ def main() -> int:
     })
     fig, ax = plt.subplots(figsize=(11, 6.2))
 
-    for t in BINS:
+    for t in [b for b in BINS + PARENTS if b in data]:
         d = data[t]
         # Piecewise-constant by construction -- draw it as steps rather than
         # implying an interpolation the pipeline never uses.
@@ -105,10 +135,12 @@ def main() -> int:
         z[0::2], z[1::2] = d["z_lo"], d["z_hi"]
         y[0::2], y[1::2] = d["nbar"], d["nbar"]
         mixed = d["src"].startswith("N*frac/V")
-        ax.plot(z, y, color=COLOR[t], lw=2.0,
-                ls="--" if mixed else "-",
-                label=f"{t}" + ("  (mixed bin: N·frac/V)" if mixed else ""),
-                zorder=3, solid_capstyle="round")
+        parent = t in PARENTS
+        ax.plot(z, y, color=COLOR[t], lw=1.6 if parent else 2.0,
+                ls=":" if parent else ("--" if mixed else "-"),
+                label=(f"{t}  (parent of LRG3_ELG1, not a fit bin)" if parent
+                       else f"{t}" + ("  (mixed bin: N·frac/V)" if mixed else "")),
+                zorder=2 if parent else 3, solid_capstyle="round")
         # Direct labels: the bins tile z, so each lands in its own space and
         # identity never rests on colour alone.
         f, dx, dy = _LABEL_AT[t]
@@ -122,7 +154,11 @@ def main() -> int:
     ax.yaxis.set_major_locator(mpl.ticker.LogLocator(base=10, numticks=12))
     ax.yaxis.set_minor_locator(
         mpl.ticker.LogLocator(base=10, subs=tuple(np.arange(2, 10) * 0.1), numticks=12))
-    ax.yaxis.set_minor_formatter(mpl.ticker.NullFormatter())
+    # Only one decade boundary (1e-4) falls inside the drawn range, so without
+    # labelled minors the axis is unreadable everywhere except one line.
+    ax.yaxis.set_minor_formatter(mpl.ticker.LogFormatterSciNotation(
+        labelOnlyBase=False, minor_thresholds=(4, 1)))
+    ax.tick_params(axis="y", which="minor", labelsize=8.5, colors=INK_3)
     ax.set_xlabel("redshift  $z$")
     ax.set_ylabel(r"$\bar{n}(z)$   [$h^3\,\mathrm{Mpc}^{-3}$]")
     ttl = "DESI DR1 n(z) per tracer bin — the density the covariance uses"
@@ -137,17 +173,19 @@ def main() -> int:
     ax.legend(frameon=False, fontsize=9.5, ncol=2, labelcolor=INK_2,
               loc="lower left")
 
-    src_note = ("solid = DESI NX·α(N)   ·   dashed = N·frac/V, used where ⟨NX⟩ "
-                "averages a combined bin's parents instead of summing them (S85)")
-    fig.text(0.008, 0.012, src_note, fontsize=8.5, color=INK_3)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    # Two lines: one pass at this ran off the right edge of the canvas.
+    src_note = (
+        "solid = analysis bin — DESI nbar_total · α(N), parents summed not FKP-averaged (S87)\n"
+        "dotted = parent decomposition, so LRG3_ELG1 reads as LRG3 + ELG1 (S88); ELG1 alone is never fit")
+    fig.text(0.008, 0.010, src_note, fontsize=8.5, color=INK_3, linespacing=1.5)
+    fig.tight_layout(rect=(0, 0.065, 1, 1))
     a.out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(a.out, dpi=170)
     print(f"wrote {a.out}")
 
     print(f"\n{'bin':11s} {'z range':>13s} {'slices':>7s} {'n̄ min':>10s} "
           f"{'n̄ max':>10s} {'source':>22s}")
-    for t in BINS:
+    for t in [b for b in BINS + PARENTS if b in data]:
         d = data[t]
         print(f"{t:11s} {d['z_lo'][0]:5.2f}-{d['z_hi'][-1]:<7.2f} "
               f"{len(d['nbar']):7d} {d['nbar'].min():10.3e} "

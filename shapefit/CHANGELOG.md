@@ -6652,3 +6652,54 @@ which is what made this a ten-minute loop rather than a NERSC round-trip. The
 reduction definition changed four times today (`w_fkp_mean`, `p0_eff`,
 `nbar_total`, plus §84's estimator fix); that is the argument for holding the
 randoms rather than fetching per-change.
+
+## §88 — ELG1 gets a curve: parent decomposition of the combined bin
+
+Asked why the n(z) plot has no ELG1, the honest first answer was "it is not an
+analysis bin" -- DR1 fits 0.8<z<1.1 as the combined `LRG3_ELG1` and
+`tracers.yaml` has no `ELG1` entry, so nothing can call `cov_nbar_per_slice` for
+it. That is an explanation, not a defence of the plot: §87's `WEIGHT_RF` split
+already separates the two populations, so ELG1's n(z) was one mask away.
+
+`make_desi_nx.PARENT` adds parent pseudo-tracers that borrow the combined bin's
+catalogue and slice edges and keep one population: `ELG1` (tag 1, vendored) and
+`LRG3p` (tag 0, on demand). `plot_nz.py` draws parents dotted, scaled by the
+same alpha(N) the combined bin got -- recovered from the bin rather than
+recomputed, so the decomposition keeps summing at any `--n-factor`.
+
+### Verification -- and it validates §87 rather than merely illustrating it
+
+Each parent also lives in a standalone catalogue, which makes the split
+falsifiable against files it was not built from:
+
+  - LRG half vs `LRG`, ELG half vs `ELG_LOPnotqso` over 0.8<z<1.1: unweighted
+    `<NX>` and row counts agree at **0.00000000**. The split recovers the
+    populations exactly -- so §87's `nbar_total` sums the right two things;
+  - parents sum to `nbar_total` at 0.000000%;
+  - ELG1 carries 35.4% of the combined bin at z=0.81 rising to 81.8% at z=1.09,
+    which is the LRG-to-ELG handover §83 measured through the pivot.
+
+Two differences appeared and were chased down rather than tolerated:
+
+  - `S1` ratio is a constant 1.9900 (LRG) / 1.6176 (ELG) between combined and
+    standalone. Identical rows cannot have different weight sums unless `WEIGHT`
+    differs: the combined catalogue carries Eq. (4.14a)'s per-tracer bias `b_t`.
+    We inherit it, which is *why* LRG3_ELG1's z_eff lands at -0.077%;
+  - the LRG half's `nbar_desi_nx` sits up to 2.1% below `LRG3_desi_nx.csv`,
+    entirely from FKP re-weighting: the combined file's `WEIGHT_FKP` uses the
+    combined n_eff (Eq. 4.13, P0=6000), so the same LRG rows back-solve to
+    11298->51652 across the bin instead of the flat 10000 they carry in the LRG
+    file. Same objects, different weights, both tables internally consistent.
+    They are not interchangeable, which is why no code substitutes one for the
+    other.
+
+### Documentation debt cleared
+
+`data/dr1/PROVENANCE.md` still carried a "Known gap: `LRG3_ELG1_desi_nx.csv`
+does not exist" section -- stale since §81 -- claimed `~/data/desi` "still wins
+when present" when util.py:214 deliberately removed that path, and quoted
+regeneration as non-bit-exact at 0.06-0.10%. All three corrected, checksums
+refreshed to 17 entries.
+
+Nothing here changes a forecast number: no analysis bin's density moved, and
+`ELG1_desi_nx.csv` has no consumer outside the plot.

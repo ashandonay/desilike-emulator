@@ -73,6 +73,21 @@ STEM = {
     "LRG3_ELG1": "LRG+ELG_LOPnotqso",
 }
 
+# S88: parent decompositions of a combined bin. NOT analysis bins -- DR1 fits
+# 0.8<z<1.1 as the single combined LRG3_ELG1 -- but each parent's own n(z) is
+# precisely what `nbar_total` sums, so materialising them makes that column
+# auditable and gives ELG1 a curve it otherwise never gets.
+#   value = (catalogue key, parent tag)   tag 1 = ELG (WEIGHT_RF finite), 0 = LRG
+# Both inherit LRG3_ELG1's slice edges, being cut from the same catalogue.
+PARENT = {
+    "ELG1": ("LRG3_ELG1", 1),
+    # The LRG half, reachable via `--tracers LRG3p`. Not vendored: it exists to
+    # be diffed against LRG3_desi_nx.csv, which is built from the LRG randoms --
+    # a different set of files -- so agreement is an independent check that the
+    # WEIGHT_RF split really separates the populations.
+    "LRG3p": ("LRG3_ELG1", 0),
+}
+
 _CACHE: dict = {}
 
 
@@ -127,12 +142,21 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
     against the slice count and silently falls back to `nbar_file` on a
     mismatch, which would quietly revert z_eff to the pre-S53 convention.
     """
-    sl = pd.read_csv(nz_slices_path(f"{tracer}_nz_slices.csv", dataset))
+    # A parent pseudo-tracer borrows its combined bin's catalogue and edges,
+    # then keeps only its own population (S88).
+    base, tag = PARENT.get(tracer, (tracer, None))
+    sl = pd.read_csv(nz_slices_path(f"{base}_nz_slices.csv", dataset))
     sl = sl[sl["slice_fraction"] > 0.0].reset_index(drop=True)
     z_lo = sl["zlow"].to_numpy(dtype=np.float64)
     z_hi = sl["zhigh"].to_numpy(dtype=np.float64)
 
-    z, w, nx, wf, par = _load(STEM[tracer], source, nran)
+    z, w, nx, wf, par = _load(STEM[base], source, nran)
+    if tag is not None:
+        keep = par == tag
+        if not keep.any():
+            raise ValueError(f"{tracer}: no rows with parent tag {tag} in "
+                             f"{STEM[base]} -- WEIGHT_RF absent or all one class")
+        z, w, nx, wf, par = z[keep], w[keep], nx[keep], wf[keep], par[keep]
     edges = np.append(z_lo, z_hi[-1])
     idx = np.digitize(z, edges) - 1
     ok = (idx >= 0) & (idx < len(z_lo))
@@ -188,7 +212,9 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tracers", nargs="+", default=sorted(STEM))
+    ap.add_argument("--tracers", nargs="+", default=sorted(STEM) + ["ELG1"],
+                    help="analysis bins plus ELG1; LRG3p is the LRG-parent "
+                         "cross-check and must be asked for by name")
     ap.add_argument("--dataset", default="dr1", choices=["dr1"])
     ap.add_argument("--source", choices=["randoms", "data"], default="randoms",
                     help="randoms (default) reproduces the committed tables; "
