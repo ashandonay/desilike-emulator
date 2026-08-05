@@ -5423,3 +5423,80 @@ for sigma and rho at the 1-2% level — and 40% burn-in of 20000 is 20-27 tau,
 which is ample burn-in even if the 50-tau reliability rule for the tau ESTIMATE
 is not met. Report `converged` honestly either way; do not describe a
 ceiling-limited run as converged.
+
+
+## §73 — §64 resolved from DESI's source: the `Ap` convention, and our `J` is right
+
+§64 flagged that desilike implements two ShapeFit amplitude conventions and we
+did not know which DESI's published 4x4 is in:
+
+```
+'Ap'       df = f*sqrt(Ap) / (f*sqrt(Ap))_fid      <- what our J assumes
+'fsigmar'  df = f_sigmar / f_sigmar_fid            <- adds a dm-dependent term
+```
+
+They differ by up to 22% at |dm| ~ 0.1, and the difference feeds exactly
+`sigma(f_sigmar)` and `rho(f_sigmar, m)` — the two entries §57/§63 could not
+reproduce. §64 could not settle it and warned that tuning the coefficient to
+close the gap would be the §33r error-cancellation trap.
+
+**Settled by reading DESI's likelihood**, `cosmodesi/desi-kp-cosmological-
+likelihoods`, `dr1/cobaya/desi_shapefit_bao_all.py`:
+
+```python
+elif param == 'df':
+    flattheory[iparam] = shapefit['f_sqrt_Ap'][idx] / self._template['f_sqrt_Ap_fid'][idx]
+elif param == 'dm':
+    flattheory[iparam] = shapefit['m'][idx] - self._template['m_fid'][idx]
+```
+
+```python
+Ap = 1. / s**3 * pk_dd_interpolator(kp)
+f  = pk_tt_interpolator.sigma8() / pk_dd_interpolator.sigma8()
+f_sqrt_Ap = f * Ap**0.5
+```
+
+DESI's compressed parameters ARE `(qiso, qap, df, dm)` in the **`Ap`
+convention**. No `sigma_r`, no `exp(dm/2a)` correction. So `f_sigmar = df *
+f_sigmar_fid` is a pure rescaling by a constant, `J = diag(1, 1, f_sigmar_fid,
+1)` is correct, and **there is no missing off-diagonal term**. §64's concern is
+withdrawn.
+
+Two consequences:
+
+  - The §72 sweep now running is measuring the right quantity. Had this gone the
+    other way, 54 h would have bought a more precise wrong number.
+  - The published "f sigma_s8" column is that same `df` relabelled against the
+    FIDUCIAL value, which independently confirms §60's fix (divide by Table 11,
+    not by the measurement) and §65's follow-on.
+
+Corroborating detail: desilike's own `ShapeFitCompressionObservable` accepts
+`quantities` from `['m', 'n', 'f_sqrt_Ap', 'dm', 'dn', 'df', 'DM_over_rd', ...]`
+— **no `fsigmar`**. That name belongs to `StandardCompressionObservable`
+(`['fsigmar', 'df', ...]`), the fixed-template compression. The two conventions
+are not interchangeable and desilike keeps them in separate observables.
+
+### Opened while reading: DESI de-wiggle with `peakaverage`, not `wallish2018`
+
+```python
+filter = PowerSpectrumBAOFilter(pk_dd_interpolator, engine='peakaverage',
+                                cosmo=self.fiducial, cosmo_fid=self.fiducial)
+```
+
+That filter is what defines `m` in their cosmology -> compressed map, which is
+the same map our MEAN pipeline implements — and we pass `with_now="wallish2018"`
+at every construction site, on the understanding that it is DESI's choice
+(`project_bao_dewiggling_engine`). At the fiducial the engines differ by 0.092 in
+`m_fid`, which is 1.4x LRG2's sigma(m).
+
+`dm = m - m_fid` is a DIFFERENCE with both terms on the same engine, so much of
+the offset should cancel; the §70 closure test passing at chi2 15.57 vs DESI's
+15.22 is evidence that it largely does. Measured separately — see §74.
+
+Two smaller differences in the same function, not yet chased:
+
+  - DESI's `Ap` uses `pk_dd_interpolator(kp)` — WITH wiggles. desilike's
+    extractor uses `pknow_dd_interpolator(kp)`. At kp = 0.03 the wiggle
+    contribution is small but not zero.
+  - DESI's `f` is `sigma8(theta-theta) / sigma8(delta-delta)`, a ratio of
+    velocity to density amplitudes, not a growth-rate derivative.
