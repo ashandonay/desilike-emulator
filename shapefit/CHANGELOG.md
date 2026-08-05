@@ -5294,3 +5294,64 @@ The VAC also holds `cobaya/` chains and `iminuit/` MAPs for `base_w`,
 (`fs-bao-bgs`, `fs-bao-lrg-z0`, ...). The per-tracer MAPs would allow a
 tracer-by-tracer closure test; `base_w_wa` would exercise the `w0`/`wa` cosmo
 models the emulator supports but nothing has validated against data.
+
+
+## §71 — should the covar-side comparison run at the fiducial or DR1's MAP?
+
+`mcmc.py:build()` and `compare_to_desi.our_forecast` both build at the DESI
+fiducial (`theta_cosmo=dict(FID)`). §70 made DESI's own ShapeFit-alone MAP
+available, so the question is whether the sigma comparison should move there.
+
+### Measured (REPT, DR1 N, all six tracers)
+
+```
+                       sigma change      mean F/D
+sigma_qiso              +3.42 %      0.794 -> 0.821
+sigma_qap               +3.33 %      0.855 -> 0.883
+sigma_f_sigmar_frac     +2.08 %      0.800 -> 0.817
+sigma_m                 +1.40 %      0.916 -> 0.929
+```
+
+Per tracer +0.66% (ELG2 sigma_m) to +4.93% (QSO sigma_qiso), all POSITIVE, so
+all toward DESI — we under-predict. `z_eff` moves <=0.13%.
+
+Context for the size: §63's Fisher-vs-MCMC gap is 5-20% and its per-seed rms on
+individual sigma is ~2-3%. This shift is at or below the noise already in those
+chains, and changes no conclusion in §57/§63.
+
+### The test moved BOTH the covariance and the derivatives
+
+That is NOT DESI's configuration. Their sigma come from fitting DR1 against an
+EZmock covariance built at AbacusSummit c000 — the fiducial, which §4.7 item 10
+notes is simultaneously the grid and the ShapeFit template cosmology. Only the
+THEORY and its derivatives sit at the best fit.
+
+`build_shapefit_likelihood` uses one `theta_cosmo` for both, so three configs
+exist and only two have been measured:
+
+| | covariance | derivatives | measured |
+|---|---|---|---|
+| current | fiducial | fiducial | yes |
+| MAP everywhere | MAP | MAP | yes, +1.4 to +3.4% |
+| DESI-matching | fiducial | MAP | **no** |
+
+The sign of the third is NOT predictable from the second: `C` and `dP/dtheta`
+both scale with amplitude and partially cancel, so moving the derivatives alone
+could push sigma the other way. `core.build_shapefit_likelihood(cov_override=)`
+is the existing hook if it is ever built — it was added to substitute DESI's
+own covariance in.
+
+### Scope
+
+This is a question about the VALIDATION COMPARISON, not about the pipeline.
+Training data is unaffected: every sample carries its own cosmology with its own
+self-consistent covariance, and it is the mean/covar consistency WITHIN a sample
+that matters there (§64, §66). No emulator output changes based on the answer.
+
+### Decision
+
+Do not rerun the sweep for this alone — 6.8 h to move numbers by less than their
+own seed noise. If the converged m-row run happens (§63: ~12500 iterations),
+switch to the MAP then; it is free at that point and better motivated, since the
+data was taken in the real universe rather than the fiducial one. Left as-is
+for now, deliberately, so §63's numbers stay comparable to §57's.
