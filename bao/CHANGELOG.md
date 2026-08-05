@@ -3917,3 +3917,39 @@ Config space is untouched (z_eff pinned by bundle). Fourier σ move. The
 `bao/regress_sigmas.py` fourier dump PINS `z_eff=cfg["z_eff"]` (line ~133), so
 the golden does not exercise this path at all — a known blind spot, not
 evidence of no change.
+
+## §89 — remove the dead published-σ reader from desi_reference
+
+`_read_desi_csv` and `_csv_sigma` were defined and never called -- no call site
+in this repo, in bedcosmo, or anywhere else under $HOME. They are removed, along
+with what they orphaned: `_NAME_MAP_TO_DATA` (their only user) and the `pandas`
+import.
+
+This is not tidying. The pair read `~/data/desi/bao_dr1/desi_data.csv` -- the
+un-vendored copy, bypassing `data/dr1/` entirely -- and returned DESI's
+*published* σ. bao-recon's post-marginalisation α-covariance is what this
+pipeline is compared against, and the two are differently defined. A dead
+function with an inviting name next to the live one is how the wrong reference
+gets picked up later.
+
+`_DR1_DIR` stays: it still resolves `_LIK_DIR` for the bao-recon .h5 bundles,
+which have no in-repo copy. Noted inline so it is not mistaken for the vendored
+table path.
+
+### Verification
+
+Dumped `_read_bao_recon` for all six tracers plus `DESI_SYST_INFLATION` at HEAD
+and after the edit: **numeric payload identical**. Module API differs by exactly
+`_read_desi_csv`, `_csv_sigma`, `_NAME_MAP_TO_DATA`, `pd` and nothing else. All
+eleven importers of `desi_reference` import clean.
+
+### Context
+
+`desi_data.csv` itself is NOT trimmed. Only `tracer`/`passed` is live in this
+repo (util.py:339 subsets to exactly those), but the remaining columns are the
+bedcosmo interface -- `quantity`, `value_at_z`, `observed`, `efficiency`, and
+the `Lya QSO` rows -- and `observed`x`efficiency` = `passed` is the only
+independent check on the count. Trimming would foreclose pointing bedcosmo at
+the vendored copy, which is the fix for the two-copy divergence risk (the repo
+reads `data/dr1/`, bedcosmo reads `~/data/desi/bao_dr1/`; byte-identical today,
+nothing keeps them so).

@@ -7,7 +7,12 @@ compared against; they belong to neither frame.
   _recon_sigmas(tracer, fid)    — DESI DR1 σ_q from bao-recon stat-only .h5,
                                   converted to σ(D/rd) using OUR fiducial (D/rd).
   _read_bao_recon(tracer)       — raw σ_q (and cov) from the bao-recon file.
-  _read_desi_csv / _csv_sigma   — DESI DR1 published σ from desi_data.csv.
+
+bao-recon is the ONLY σ reference here. `desi_data.csv`'s published σ used to be
+readable through `_read_desi_csv`/`_csv_sigma`; both were dead code by S89 and
+were removed, because bao-recon carries the post-marginalisation α-covariance
+this pipeline is actually compared against, and offering a second, differently
+defined σ under an inviting name is how the wrong one gets used.
 """
 from __future__ import annotations
 import os, sys, json, warnings
@@ -16,7 +21,6 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,8 +36,9 @@ from util import TRACER_CONFIGS
 _FID = {"Om": 0.3152, "hrdrag": 99.08}
 _AREA = 7500.0
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
-_NAME_MAP_TO_DATA = {"LRG3_ELG1": "LRG3+ELG1"}
 
+# Not the vendored data/dr1/ tables: this is the DESI likelihood bundle tree,
+# which stays out of the repo (S89 -- it is ~3 MB of .h5 and has no in-repo copy).
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
 _LIK_DIR = _DR1_DIR / "likelihoods"
 
@@ -65,19 +70,6 @@ from desi_syst import DESI_SYST_INFLATION, _SIGMA_KEYS, apply_desi_syst  # noqa:
 # ---------------------------------------------------------------------------
 # DESI reference σ readers
 # ---------------------------------------------------------------------------
-def _read_desi_csv():
-    df = pd.read_csv(_DR1_DIR / "desi_data.csv")
-    return df
-
-
-def _csv_sigma(df, tracer, quantity):
-    name = _NAME_MAP_TO_DATA.get(tracer, tracer)
-    row = df[(df["tracer"] == name) & (df["quantity"] == quantity)]
-    if len(row) == 0:
-        return float("nan")
-    return float(row["std"].iloc[0])
-
-
 def _read_bao_recon(tracer):
     """Return σ_q values from the bao-recon stat-only file.
 
