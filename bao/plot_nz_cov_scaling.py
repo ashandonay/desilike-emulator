@@ -3,10 +3,11 @@ cosmology, for each DR1 tracer bin:
 
 All figures land in plots/ (util.plots_dir) with a `bao_` prefix:
 
-  bao_nz_vs_ntracers               nbar(z) = N_tracers * slice_fraction(z) /
-                                   V_shell(z) (core.py:1201), per tracer (3x2),
-                                   one colour per tracer, N in {0.5,1.0,1.5}x
-                                   passed as linestyles.
+  bao_nz_vs_ntracers               nbar(z) = core.cov_nbar_per_slice, i.e. DESI's
+                                   NX total scaled by alpha(N) -- the density the
+                                   covariance actually uses (S90). Per tracer
+                                   (3x2), one colour per tracer, N in
+                                   {0.5,1.0,1.5}x passed as linestyles.
   bao_nP_vs_z                      nbar*P(k_p, z) per slice -- the FKP
                                    signal-to-noise that decides which slices
                                    carry the constraint. Marks the V_eff-weighted
@@ -71,42 +72,62 @@ def _fid_theta():
     return theta, hrdrag
 
 
-def nbar_of_z(tracer, cosmo, N_tracers, dataset="dr1"):
-    """nbar(z) per slice exactly as build_bao_likelihood does (core.py:1201)."""
-    z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
-        tracer, dataset=dataset)
+def _shell_volumes(z_edges, cosmo):
     chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]))
     chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]))
-    V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * (_AREA / _SKY)
-    return z_mid, (float(N_tracers) * frac) / np.maximum(V_bin, 1.0)
+    return (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * (_AREA / _SKY)
+
+
+def nbar_of_z(tracer, cosmo, N_tracers, dataset="dr1"):
+    """nbar(z) per slice exactly as build_bao_likelihood does (S90).
+
+    Was `N*frac/V` with a docstring claiming parity with the likelihood -- true
+    when written, false from S85 on, and this module exists precisely to show
+    how the emulator responds to N_tracers, so a different density here plots a
+    pipeline nobody runs.
+    """
+    z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
+        tracer, dataset=dataset)
+    V_bin = _shell_volumes(z_edges, cosmo)
+    nbar, _src = core.cov_nbar_per_slice(tracer, frac, V_bin, float(N_tracers),
+                                         dataset=dataset)
+    return z_mid, np.asarray(nbar, dtype=np.float64)
 
 
 K_PIVOT = 0.14  # h/Mpc, BAO Fisher kernel peak (matches core._compute_z_eff_from_nz)
 
 
-def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, dataset="dr1"):
-    """n̄P(z) per slice at k=K_PIVOT, using the published nominal-design n̄(z).
+def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, dataset="dr1", N_tracers=None):
+    """n̄P(z) per slice at k=K_PIVOT, on the density the covariance uses.
 
-    n̄ = nbar_file (the DESI design local density, from parse_desi_nz), and
-    P = b1² P_lin(k_p, z). Returns (z_mid, nP, V_eff-weighted nP scalar,
-    nP at z_eff). nP(z_eff) interpolates n̄ onto z_eff and evaluates P there;
-    None if z_eff is not given.
+    n̄ is `cov_nbar_per_slice` at `N_tracers` (default: DESI's own `passed`, so
+    the figure shows DR1 itself), and P = b1² P_lin(k_p, z). Returns (z_mid, nP,
+    V_eff-weighted nP scalar, nP at z_eff). nP(z_eff) interpolates n̄ onto z_eff
+    and evaluates P there; None if z_eff is not given.
+
+    Was `nbar_file` (S90). That column is the published per-slice density and is
+    1.19-2.37x the n_ran DESI's own weights are built from (core.py's z_eff
+    note), so this figure -- whose whole point is where nP ~ 1 puts the
+    shot-noise/sample-variance crossover -- was drawing the crossover in the
+    wrong place.
     """
-    z_mid, z_edges, frac, nbar_file = core._load_nz_slice_fractions(
+    z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
         tracer, dataset=dataset)
+    if N_tracers is None:
+        N_tracers = cc._get_ntracers(tracer)
+    V_bin = _shell_volumes(z_edges, cosmo)
+    nbar, _src = core.cov_nbar_per_slice(tracer, frac, V_bin, float(N_tracers),
+                                         dataset=dataset)
     P_g = np.array([b1 ** 2 * float(core._linear_pk_1d(fo, z=float(z))(
         np.array([K_PIVOT]))[0]) for z in z_mid])
-    nP = np.asarray(nbar_file, dtype=np.float64) * P_g
+    nP = np.asarray(nbar, dtype=np.float64) * P_g
     # V_eff-weighted representative nP (FKP-weight² × shell volume).
-    chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]))
-    chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]))
-    V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * (_AREA / _SKY)
     w = V_bin * (nP / (1.0 + nP)) ** 2
     nP_eff = float(np.sum(nP * w) / np.sum(w)) if w.sum() > 0 else float(np.max(nP))
     nP_zeff = None
     if z_eff is not None:
         ze = float(z_eff)
-        nb_ze = float(np.interp(ze, z_mid, nbar_file))
+        nb_ze = float(np.interp(ze, z_mid, nbar))
         P_ze = b1 ** 2 * float(core._linear_pk_1d(fo, z=ze)(np.array([K_PIVOT]))[0])
         nP_zeff = nb_ze * P_ze
     return z_mid, nP, nP_eff, nP_zeff

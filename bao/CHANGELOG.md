@@ -4015,3 +4015,57 @@ precisely the message that must never be swallowed (the S58 failure mode).
 
 Every covar σ moves, so this lands with the golden + v2 regeneration alongside
 S58, S76, S77, S85 and S87.
+
+## §91 — the last two stale densities, in the diagnostic that plots the design axis
+
+Asked whether the n(z) transition was complete across bao-Fourier, config and
+shapefit, the audit said no. The three sigma-producing paths were done
+(`core.py:1644`, `config_space` via S90, `shapefit/core.py:564`), but
+`plot_nz_cov_scaling.py` -- the figure set whose stated purpose is "how the
+emulator inputs/outputs respond to N_tracers" -- carried two stale definitions:
+
+  - `nbar_of_z` built `N*frac/V`, with a docstring asserting it was "exactly as
+    build_bao_likelihood does (core.py:1201)". True when written, false from S85
+    on, and pointing at a line number that had also moved (now 1644). A comment
+    claiming parity is worse than none: it stops the reader checking.
+  - `nP_of_z` used the raw `nbar_file` column -- 1.19-2.37x the n_ran DESI's own
+    weights are built from. This figure's entire point is where nP ~ 1 puts the
+    shot-noise/sample-variance crossover, so it was drawing that crossover in
+    the wrong place.
+
+Both now call `core.cov_nbar_per_slice`. `nP_of_z` gains an `N_tracers`
+argument defaulting to DESI's `passed`.
+
+### A second bug this exposed
+
+`N*frac/V` needs an area; this module passes the NOMINAL `_AREA` (7500 deg²) for
+every tracer, not the per-tracer footprint, so the old density carried a
+per-tracer error of (true_area/7500) on top of the definition error. Hence
+ratios here (LRG1 1.309) differ from S90's config-space measurement (1.002),
+which used `_tracer_area`. `cov_nbar_per_slice` returns NX x alpha(N) and is
+area-INDEPENDENT, so the new path cannot express this bug at all.
+
+### Effect on the figures
+
+```
+             nbar new/old   nP_eff old -> new
+BGS              1.018        1.938 -> 1.964
+LRG1             1.309        1.765 -> 1.783
+LRG2             1.333        1.456 -> 1.471
+LRG3_ELG1        1.354        2.386 -> 1.550
+ELG2             1.485        0.381 -> 0.452
+QSO             *1.037        0.066 -> 0.067
+```
+
+LRG3_ELG1 moves most: 2.39 -> 1.55 drops it from comfortably sample-variance
+dominated to near the crossover, because `nbar_file` badly overstated the
+combined bin. No sigma changes here -- these figures feed no labels.
+
+`bao_nz_vs_ntracers.png` regenerated and checked.
+
+With this the transition is complete for every consumer of a per-slice density:
+three sigma paths, three diagnostics (`alpha_sn_check`, `compare_to_desi` x2,
+`plot_nz_cov_scaling` x2), one plot (`shapefit/plot_nz`). The only remaining
+`nbar_file`/`N*frac/V` code is in the TABLE GENERATORS that define those columns
+(`make_nz_slices`, `parse_desi_nz`) and in `load_nz_slices`, now used solely for
+geometry behind `_nz_slices_nx`.
