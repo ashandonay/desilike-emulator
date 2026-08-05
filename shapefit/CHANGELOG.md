@@ -5355,3 +5355,71 @@ own seed noise. If the converged m-row run happens (§63: ~12500 iterations),
 switch to the MAP then; it is free at that point and better motivated, since the
 data was taken in the real universe rather than the fiducial one. Left as-is
 for now, deliberately, so §63's numbers stay comparable to §57's.
+
+
+## §72 — the convergence rerun: stop on tau, not on a budget
+
+§63's sweep ran a fixed 2500 iterations and landed at 9-12 tau against emcee's
+`niter > 50*tau`. The obvious fix — pick 12500 instead — is the same mistake
+with a different constant, because **tau's ESTIMATE grows with chain length**.
+A Kaiser smoke run makes it visible:
+
+```
+    60/200   tau  6  (9.3x)
+   110/200   tau 13  (8.4x)
+   160/200   tau 19  (8.2x)
+   200/200   tau 24  (8.3x)
+```
+
+`niter/tau` sat at 8-10 throughout, however far it ran. Any fixed budget chosen
+against today's tau can still finish short.
+
+### What changed in `mcmc.py`
+
+`run_emcee` now checks tau every `max(50, niter//40)` iterations and stops on
+emcee's two-part criterion — `niter > 50*tau` AND `|tau_prev - tau|/tau < 0.01`.
+Both must hold: long enough, and the estimate itself has settled. `NITER` is
+therefore a **ceiling**; a job that exits early converged and one that reaches
+the ceiling did not, recorded per seed as `converged` / `converged_at`.
+
+Burn-in is now a fraction of what ACTUALLY ran, not of the requested budget —
+an early stop would otherwise discard the wrong slice.
+
+`--cosmology dr1_map|fiducial`, defaulting to the MAP (§70/§71). `fiducial` is
+kept so §57/§63 stay reproducible rather than becoming unrecoverable history:
+`COSMO=fiducial NITER=2500 ./run_mcmc_sweep.sh`.
+
+Chains checkpoint to `*_seed<N>_partial.npz` every 1000 iterations and are
+deleted when the seed finishes. At a 20000 ceiling this run is up to ~55 h and
+the JSON is only written at exit; losing 40 hours to a reboot was not an
+acceptable failure mode.
+
+### Two corrections to what was said before
+
+**"~6 h by widening to more walkers" was wrong**, twice over. The 50-tau rule
+constrains chain LENGTH IN ITERATIONS, and tau is measured in iterations too —
+more walkers buys effective sample size, not convergence. And there are no idle
+cores to widen into: the box is a Threadripper 3975WX, **32 physical** cores
+(64 threads), and the sweep's 24 jobs already sit inside that. 48 jobs would
+oversubscribe and slow every job ~1.5x.
+
+**S63's outputs were archived, not left in place.** `comparison_plots._load_mcmc`
+GLOBS the logs directory, so 24 fiducial-cosmology JSONs sitting beside the new
+MAP-cosmology ones would have been unioned into single error bars mixing two
+input cosmologies. Moved to `archive/s63_fiducial_2500/` with a README. The glob
+is non-recursive, so the subdirectory is not picked up.
+
+### Launched
+
+2026-08-04 17:35:56, 24 jobs (6 tracers x seeds 42-45), REPT, `dr1_map`,
+ceiling 20000, burn-in 0.4.
+`logs/mcmc_sweep_20260804_173556/`.
+
+Expect ~55 h if the ceiling binds. Given tau grew from 213-280 at 2500
+iterations and keeps growing, **the ceiling binding is the likely outcome, not
+the exception**. That is still worth running: at 20000 iterations with tau ~400,
+effective sample size is ~32*20000/400 = 1600 per seed, ~6400 over four — ample
+for sigma and rho at the 1-2% level — and 40% burn-in of 20000 is 20-27 tau,
+which is ample burn-in even if the 50-tau reliability rule for the tau ESTIMATE
+is not met. Report `converged` honestly either way; do not describe a
+ceiling-limited run as converged.
