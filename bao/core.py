@@ -307,6 +307,8 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
             #
             # For single-tracer bins the two agree exactly (ratio 1.000), since
             # w_fkp is then a deterministic function of NX.
+            ntot = (df["nbar_total"].to_numpy(dtype=np.float64)
+                    if "nbar_total" in df.columns else None)
             p0e = None
             if "w_fkp_mean" in df.columns:
                 wfm = df["w_fkp_mean"].to_numpy(dtype=np.float64)
@@ -321,7 +323,7 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
                     warnings.warn(f"{path.name}: non-positive p0_eff; ignoring it")
                     p0e, ok = None, True
             if ok:
-                entry = (nx, s1, p0e)
+                entry = (nx, s1, p0e, ntot)
             else:
                 warnings.warn(
                     f"{path.name}: {nx.size} rows vs {len(nbar_file)} slices, "
@@ -333,7 +335,7 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
             f"No DESI n(z) geometry table for {tracer_bin!r}; z_eff falls back "
             "to `nbar_file`, which runs high and degrades agreement with "
             "DESI's published z_eff (shapefit CHANGELOG S53).")
-        return np.asarray(nbar_file, dtype=np.float64), None, None
+        return np.asarray(nbar_file, dtype=np.float64), None, None, None
     return entry
 
 
@@ -363,9 +365,18 @@ def cov_nbar_per_slice(tracer_bin: str, frac, V_bin, n_tracers, *,
 
     _, _, _frac_unused, nbar_file = _load_nz_slice_fractions(
         tracer_bin, dataset=dataset)
-    nx, s1, p0 = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
+    nx, s1, p0, ntot = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
     if s1 is None or np.asarray(nx).shape != frac.shape:
         return fallback, "N*frac/V"
+
+    # `nbar_total` (S87) is the TOTAL density -- for a combined bin the SUM over
+    # parent populations, identical to <NX> for a single-parent one. That is
+    # what the covariance needs: how many objects are there, not the FKP-weighted
+    # mean across two samples. It removes the S85 mixed-bin special case; the
+    # p0_eff MIXED test below survives only as a guard for tables predating it.
+    if ntot is not None and np.asarray(ntot).shape == frac.shape:
+        return np.asarray(ntot, dtype=np.float64) * _nz_scale_factor(
+            tracer_bin, n_tracers, dataset), "NX total"
 
     # MIXED bins must NOT use NX here (S85). For a combined catalogue DESI's
     # `NX` is each object's PARENT-sample density -- exactly what its own FKP
@@ -481,7 +492,7 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     # `nbar_file` is NOT n_ran (1.19-2.37x high, per-tracer) and the covariance
     # path (`fkp_analytic_cov.load_nz_slices`, N*frac/V) is a THIRD value again.
     # See shapefit CHANGELOG S51-S53.
-    nx, s1, p0_eff = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
+    nx, s1, p0_eff, _ntot = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
     nbar = nx * _nz_scale_factor(tracer_bin, n_tracers, dataset)
     # PER-SLICE pivot when DESI's own weights supply one (S82), else the scalar
     # tracers.yaml value. Note this stays a PIVOT rather than substituting the

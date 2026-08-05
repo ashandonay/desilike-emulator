@@ -77,7 +77,7 @@ _CACHE: dict = {}
 
 
 def _load(stem: str, source: str, nran: int):
-    """(Z, WEIGHT, NX, WEIGHT_FKP) concatenated over both caps."""
+    """(Z, WEIGHT, NX, WEIGHT_FKP, parent_tag) over both caps."""
     key = (stem, source, nran)
     if key in _CACHE:
         return _CACHE[key]
@@ -91,7 +91,7 @@ def _load(stem: str, source: str, nran: int):
             for i in range(nran):
                 paths.append(CAT_DIR / f"{stem}_{cap}_{i}_clustering.ran.fits")
 
-    z, w, nx, wf = [], [], [], []
+    z, w, nx, wf, par = [], [], [], [], []
     for p in paths:
         if not p.exists():
             raise FileNotFoundError(
@@ -104,8 +104,18 @@ def _load(stem: str, source: str, nran: int):
             w.append(np.asarray(d["WEIGHT"], dtype=np.float64))
             nx.append(np.asarray(d["NX"], dtype=np.float64))
             wf.append(np.asarray(d["WEIGHT_FKP"], dtype=np.float64))
+            # Parent tag (S87). A COMBINED catalogue carries both populations,
+            # and WEIGHT_RF/WEIGHT_SN -- ELG-specific imaging weights -- are
+            # finite for ELG rows and NaN for LRG rows. Verified on
+            # LRG+ELG_LOPnotqso: the finite set spans z 0.800-1.600 and the NaN
+            # set 0.400-1.100, matching the ELG and LRG parents exactly.
+            if "WEIGHT_RF" in d.columns.names:
+                par.append(np.isfinite(
+                    np.asarray(d["WEIGHT_RF"], dtype=np.float64)).astype(np.int8))
+            else:
+                par.append(np.zeros(len(d["Z"]), dtype=np.int8))
     out = (np.concatenate(z), np.concatenate(w), np.concatenate(nx),
-           np.concatenate(wf))
+           np.concatenate(wf), np.concatenate(par))
     _CACHE[key] = out
     return out
 
@@ -122,7 +132,7 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
     z_lo = sl["zlow"].to_numpy(dtype=np.float64)
     z_hi = sl["zhigh"].to_numpy(dtype=np.float64)
 
-    z, w, nx, wf = _load(STEM[tracer], source, nran)
+    z, w, nx, wf, par = _load(STEM[tracer], source, nran)
     edges = np.append(z_lo, z_hi[-1])
     idx = np.digitize(z, edges) - 1
     ok = (idx >= 0) & (idx < len(z_lo))
@@ -131,6 +141,7 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
     NX = np.zeros(len(z_lo))
     WF = np.zeros(len(z_lo))
     P0E = np.zeros(len(z_lo))
+    NTOT = np.zeros(len(z_lo))
     for i in range(len(z_lo)):
         m = ok & (idx == i)
         if not m.any():
@@ -153,6 +164,15 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
         # which no scalar `fkp_p0` can represent.
         WF[i] = np.average(wf[m], weights=w[m])
         P0E[i] = np.average((1.0 / wf[m] - 1.0) / nx[m], weights=w[m])
+        # nbar_total (S87): the TOTAL density of the sample, which for a
+        # combined bin is the SUM over parents, not a mean across them.
+        # <NX> above is the right thing for z_eff (the calibrated pivot
+        # reproduces DESI's own w_fkp from it); it is the wrong thing for the
+        # covariance, which needs how many objects are actually there.
+        # Identical to <NX> for a single-parent bin, so the column is universal.
+        for tag in np.unique(par[m]):
+            mm = m & (par == tag)
+            NTOT[i] += np.average(nx[mm], weights=w[mm] * wf[mm])
 
     if not np.all(NX > 0):
         bad = np.flatnonzero(NX <= 0)
@@ -161,7 +181,8 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
     return pd.DataFrame({"zmid": sl["zmid"].to_numpy(dtype=np.float64),
                          "zlow": z_lo, "zhigh": z_hi,
                          "nbar_desi_nx": NX, "S1_weight": S1,
-                         "w_fkp_mean": WF, "p0_eff": P0E})
+                         "w_fkp_mean": WF, "p0_eff": P0E,
+                         "nbar_total": NTOT})
 
 
 def main() -> int:

@@ -6577,3 +6577,78 @@ Plots n(z) per tracer bin as the pipeline consumes it -- via
 visible. Steps rather than lines, because the profile is piecewise-constant and
 a smooth curve would imply an interpolation nothing performs. `--n-factor`
 redraws at any multiple of DR1 to see the design axis move.
+
+
+## §87 — LRG3_ELG1 folded into the framework: `nbar_total`, and a correction to §85
+
+§85 kept `N*frac/V` for the combined bin and called the alternative a 0.3%
+uniformity gain. **That was wrong**, and the number was wrong for a specific
+reason worth recording: 0.3% was a MEAN over slices. Per slice the two differ by
+-8% to +24%, a 34.9% spread, crossing at z ~ 0.91 -- which is why the mean
+looked like agreement.
+
+```
+z       NX sum      N*frac/V    ratio    FKP weight change
+0.810   6.064e-04   6.583e-04   0.921        +7.35%
+0.910   5.195e-04   5.196e-04   1.000        +0.01%
+1.090   2.687e-04   2.163e-04   1.242       -14.21%
+```
+
+A z-DEPENDENT weighting error, which is the class that does not cancel in a
+z-weighted quantity -- the same lesson §82 taught with the pivot. Quoting an
+aggregate as if it constrained the shape is the error to avoid repeating.
+
+### Which one is wrong, and why
+
+`N*frac/V` takes its shape from `slice_fraction`, which `make_nz_slices.py`
+computes as the **WEIGHT-weighted** galaxy fraction. For the combined catalogue
+those weights carry DESI's bias factor (<W> = 1.545, §81), so the profile is
+BIAS-weighted, not a number-density shape. LRG (b~2) dominates the low-z end and
+ELG (b~1.3) the high-z end, which tilts it exactly as the ratio trends: too high
+at low z, too low at high z.
+
+### The data was already local
+
+DESI's combined randoms carry `WEIGHT_RF`/`WEIGHT_SN`, ELG-specific imaging
+weights that are finite for ELG rows and NaN for LRG rows. Verified on
+LRG+ELG_LOPnotqso: the finite set spans z 0.800-1.600 and the NaN set
+0.400-1.100, matching the two parents exactly. So no NERSC run and no download
+were needed to separate them -- the combined randoms were sufficient all along.
+
+Cross-check: the LRG half extracted this way reproduces the independently-built
+`LRG3` table to 0.99 (mean) at matched cap balance. The 3.5% seen first was an
+artefact of pooling 1 NGC file against the reference's 2 -- caps differ enough in
+density to shift a weighted mean. Matching them took it to 0.9911.
+
+### `nbar_total`
+
+New column in `{tracer}_desi_nx.csv`: the total density, summed over parent
+populations. Identical to `nbar_desi_nx` for a single-parent bin (verified:
+ratio 1.0000-1.0000 on all six), 1.47-2.00x for LRG3_ELG1.
+
+`nbar_desi_nx` is unchanged and still what z_eff uses -- the FKP-weighted mean
+across the merged sample is the RIGHT quantity there, since the calibrated pivot
+reproduces DESI's own `w_fkp` from it (-0.077%). The covariance needs a
+different thing: how many objects are actually present. Two quantities, two
+columns, rather than one column doing both jobs badly.
+
+`cov_nbar_per_slice` now reads `nbar_total` for every bin, so the §85 mixed-bin
+branch is gone -- one code path. The `p0_eff` MIXED test survives only as a guard
+for tables predating this entry.
+
+### Verification
+
+  - all seven tables regenerate at **0.000%** on every pre-existing column,
+    including the four built on NERSC -- so the local and NERSC generators are
+    bit-identical, closing §80's reproducibility hole;
+  - z_eff unchanged: mean 0.062%, max 0.125%, LRG3_ELG1 still -0.077%;
+  - covariance density now `NX total` on all seven, with LRG3_ELG1 shifting
+    0.921-1.244 against the old value, matching the independent measurement.
+
+### Note
+
+The full DR1 random set (22 GB, nran=2, all five parent catalogues) is now local,
+which is what made this a ten-minute loop rather than a NERSC round-trip. The
+reduction definition changed four times today (`w_fkp_mean`, `p0_eff`,
+`nbar_total`, plus §84's estimator fix); that is the argument for holding the
+randoms rather than fetching per-change.
