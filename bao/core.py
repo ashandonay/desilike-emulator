@@ -290,11 +290,21 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
             df = pd.read_csv(path)
             nx = df["nbar_desi_nx"].to_numpy(dtype=np.float64)
             s1 = df["S1_weight"].to_numpy(dtype=np.float64)
+            # p0_eff (S82): DESI's OWN FKP pivot, back-solved per object from
+            # their WEIGHT_FKP and averaged per slice. Absent in pre-S82 tables,
+            # in which case callers fall back to the scalar tracers.yaml pivot.
+            p0e = (df["p0_eff"].to_numpy(dtype=np.float64)
+                   if "p0_eff" in df.columns else None)
             ok = (nx.size == len(nbar_file) and np.all(np.isfinite(nx))
                   and np.all(nx > 0) and np.all(np.isfinite(s1))
                   and np.all(s1 > 0))
+            if ok and p0e is not None:
+                ok = np.all(np.isfinite(p0e)) and np.all(p0e > 0)
+                if not ok:
+                    warnings.warn(f"{path.name}: non-positive p0_eff; ignoring it")
+                    p0e, ok = None, True
             if ok:
-                entry = (nx, s1)
+                entry = (nx, s1, p0e)
             else:
                 warnings.warn(
                     f"{path.name}: {nx.size} rows vs {len(nbar_file)} slices, "
@@ -306,7 +316,7 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
             f"No DESI n(z) geometry table for {tracer_bin!r}; z_eff falls back "
             "to `nbar_file`, which runs high and degrades agreement with "
             "DESI's published z_eff (shapefit CHANGELOG S53).")
-        return np.asarray(nbar_file, dtype=np.float64), None
+        return np.asarray(nbar_file, dtype=np.float64), None, None
     return entry
 
 
@@ -405,9 +415,21 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     # `nbar_file` is NOT n_ran (1.19-2.37x high, per-tracer) and the covariance
     # path (`fkp_analytic_cov.load_nz_slices`, N*frac/V) is a THIRD value again.
     # See shapefit CHANGELOG S51-S53.
-    nx, s1 = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
+    nx, s1, p0_eff = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
     nbar = nx * _nz_scale_factor(tracer_bin, n_tracers, dataset)
-    w_fkp = 1.0 / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
+    # PER-SLICE pivot when DESI's own weights supply one (S82), else the scalar
+    # tracers.yaml value. Note this stays a PIVOT rather than substituting the
+    # measured w_fkp directly: N_tracers enters z_eff ONLY through
+    # w_fkp = 1/(1 + nbar*alpha(N)*P0) (S53), so freezing w_fkp at DR1's density
+    # would silently make z_eff N-independent and flatten the design axis.
+    # Using p0_eff keeps that scaling and reproduces DESI's weight exactly at
+    # alpha = 1.
+    #
+    # It matters for the combined LRG3_ELG1 bin, where the true pivot runs
+    # 11335 -> 18679 across the bin (LRG giving way to ELG) and no scalar works.
+    # For single-tracer bins p0_eff is constant and equals the yaml value.
+    p0 = p0_eff if p0_eff is not None else _fkp_p0_for_tracer(tracer_bin)
+    w_fkp = 1.0 / (1.0 + nbar * p0)
     if s1 is None:
         # No geometry table: fall back to the density form, n_ran = nbar w_fkp.
         w = (nbar * w_fkp) ** 2 * V_bin

@@ -44,41 +44,52 @@ import numpy as np
 
 CFS = Path("/global/cfs/cdirs/desi/survey/catalogs/Y1/LSS/iron/LSScats/v1.5")
 
-# Parent random catalogue per tracer bin, and that bin's slice edges.
-# LRG3_ELG1 is DESI's BAO combined bin; full shape uses LRG3 instead.
-TRACERS = {
-    "LRG3_ELG1": {
-        "stem": "LRG+ELG_LOPnotqso",
-        "edges": [round(0.80 + 0.02 * i, 6) for i in range(16)],
-        "zmid": [0.810025, 0.83003, 0.850008, 0.869977, 0.889957, 0.909974,
-                 0.929945, 0.949957, 0.969959, 0.990007, 1.009957, 1.029822,
-                 1.050078, 1.069957, 1.08993],
-    },
-    # Present so this script is SELF-VALIDATING: LRG2 already has a committed
-    # table, so running --tracer LRG2 and diffing proves the arithmetic here
-    # matches shapefit/make_desi_nx.py before trusting it on LRG3_ELG1.
-    "LRG2": {
-        "stem": "LRG",
-        "edges": [round(0.60 + 0.02 * i, 6) for i in range(11)],
-        "zmid": [0.610073, 0.630037, 0.650024, 0.66999, 0.690029, 0.710006,
-                 0.730057, 0.750048, 0.770128, 0.79015],
-    },
+# Parent random catalogue per tracer bin. Edges and zmid are NOT embedded --
+# they come from that tracer's {tracer}_nz_slices.csv, which must be copied
+# alongside this script (they are ~2-9 KB each). Embedding them would mean
+# QSO's 65 slices transcribed by hand, and a silent mismatch there sends the
+# bin down the nbar_file fallback via _desi_nz_geometry's length check.
+STEMS = {
+    "BGS": "BGS_BRIGHT-21.5",
+    "LRG1": "LRG",
+    "LRG2": "LRG",
+    "LRG3": "LRG",
+    "ELG2": "ELG_LOPnotqso",
+    "QSO": "QSO",
+    "LRG3_ELG1": "LRG+ELG_LOPnotqso",
 }
 
 
-def build(tracer: str, nfiles: int, cat_dir: Path):
+def read_slices(path):
+    """(edges, zmid) from a {tracer}_nz_slices.csv, dropping empty slices
+    exactly as the pipeline does."""
+    import csv as _csv
+    lo, hi, zm = [], [], []
+    with open(path) as f:
+        for row in _csv.DictReader(f):
+            if float(row["slice_fraction"]) <= 0.0:
+                continue
+            lo.append(float(row["zlow"])); hi.append(float(row["zhigh"]))
+            zm.append(float(row["zmid"]))
+    if not lo:
+        raise SystemExit(f"no non-empty slices in {path}")
+    return np.array(lo + [hi[-1]]), np.array(zm)
+
+
+def build(tracer: str, nfiles: int, cat_dir: Path, edges, zmid):
     from astropy.io import fits
 
-    spec = TRACERS[tracer]
-    edges = np.asarray(spec["edges"], dtype=np.float64)
     nslice = len(edges) - 1
     S1 = np.zeros(nslice)
     num = np.zeros(nslice)   # sum(NX * W * Wfkp)
     den = np.zeros(nslice)   # sum(W * Wfkp)
+    wsum = np.zeros(nslice)  # sum(W)             -- denominator for the two below
+    wf_num = np.zeros(nslice)   # sum(Wfkp * W)
+    p0_num = np.zeros(nslice)   # sum(((1/Wfkp)-1)/NX * W)
 
     for cap in ("NGC", "SGC"):
         for i in range(nfiles):
-            path = cat_dir / f"{spec['stem']}_{cap}_{i}_clustering.ran.fits"
+            path = cat_dir / f"{STEMS[tracer]}_{cap}_{i}_clustering.ran.fits"
             if not path.exists():
                 raise SystemExit(f"missing {path}")
             print(f"  reading {path.name}", flush=True)
@@ -96,16 +107,29 @@ def build(tracer: str, nfiles: int, cat_dir: Path):
             S1 += np.bincount(idx[ok], weights=w[ok], minlength=nslice)
             num += np.bincount(idx[ok], weights=(nx * ww)[ok], minlength=nslice)
             den += np.bincount(idx[ok], weights=ww[ok], minlength=nslice)
+            # DESI's own FKP weight and the per-slice pivot it implies (S82).
+            # p0 is back-solved PER OBJECT then averaged: 1/(1+nP) is convex, so
+            # deriving it from slice means would import the Jensen bias S49
+            # measured at 6.5%.
+            good = ok & (nx > 0) & (wf > 0)
+            wsum += np.bincount(idx[good], weights=w[good], minlength=nslice)
+            wf_num += np.bincount(idx[good], weights=(wf * w)[good], minlength=nslice)
+            p0_num += np.bincount(
+                idx[good], weights=(((1.0 / wf) - 1.0) / nx * w)[good], minlength=nslice)
 
     if np.any(den <= 0):
         raise SystemExit(f"empty slices: {np.flatnonzero(den <= 0).tolist()}")
-    return spec, num / den, S1
+    return num / den, S1, wf_num / wsum, p0_num / wsum
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tracer", default="LRG3_ELG1", choices=sorted(TRACERS))
+    ap.add_argument("--tracers", nargs="+", default=sorted(STEMS),
+                    choices=sorted(STEMS))
+    ap.add_argument("--slices-dir", type=Path, default=Path("."),
+                    help="where the {tracer}_nz_slices.csv files are "
+                         "(default: alongside this script)")
     ap.add_argument("--nfiles", type=int, default=2,
                     help="random files per cap (default 2, matching the "
                          "committed tables; S1_weight scales linearly with it)")
@@ -113,17 +137,25 @@ def main() -> int:
     ap.add_argument("-o", "--out", type=Path, default=None)
     a = ap.parse_args()
 
-    spec, nx, s1 = build(a.tracer, a.nfiles, a.cat_dir)
-    out = a.out or Path(f"{a.tracer}_desi_nx.csv")
-    with open(out, "w", newline="") as f:
-        wr = csv.writer(f)
-        wr.writerow(["zmid", "zlow", "zhigh", "nbar_desi_nx", "S1_weight"])
-        for i, zm in enumerate(spec["zmid"]):
-            wr.writerow([zm, spec["edges"][i], spec["edges"][i + 1],
-                         f"{nx[i]:.10g}", f"{s1[i]:.10g}"])
-    print(f"\nwrote {out}  ({len(spec['zmid'])} slices)")
-    print(f"  nbar_desi_nx range {nx.min():.4e} .. {nx.max():.4e}")
-    print(f"  S1_weight    total {s1.sum():.6g}")
+    for tracer in a.tracers:
+        print(f"\n== {tracer} ==")
+        edges, zmid = read_slices(a.slices_dir / f"{tracer}_nz_slices.csv")
+        nx, s1, wfm, p0e = build(tracer, a.nfiles, a.cat_dir, edges, zmid)
+        out = a.out or Path(f"{tracer}_desi_nx.csv")
+        with open(out, "w", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(["zmid", "zlow", "zhigh", "nbar_desi_nx", "S1_weight",
+                         "w_fkp_mean", "p0_eff"])
+            for i, zm in enumerate(zmid):
+                wr.writerow([zm, edges[i], edges[i + 1],
+                             f"{nx[i]:.10g}", f"{s1[i]:.10g}",
+                             f"{wfm[i]:.10g}", f"{p0e[i]:.10g}"])
+        print(f"  wrote {out}  ({len(zmid)} slices)")
+        print(f"  nbar_desi_nx {nx.min():.4e} .. {nx.max():.4e}")
+        print(f"  p0_eff       {p0e.min():.0f} .. {p0e.max():.0f}"
+              + ("   (constant -> single-tracer)"
+                 if p0e.max() / p0e.min() < 1.01 else
+                 f"   ({p0e.max()/p0e.min():.2f}x -> MIXED, no scalar pivot works)"))
     return 0
 
 

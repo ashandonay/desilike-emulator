@@ -129,6 +129,8 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
 
     S1 = np.zeros(len(z_lo))
     NX = np.zeros(len(z_lo))
+    WF = np.zeros(len(z_lo))
+    P0E = np.zeros(len(z_lo))
     for i in range(len(z_lo)):
         m = ok & (idx == i)
         if not m.any():
@@ -139,6 +141,18 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
         # weighting that appears in the z_eff weight. Recovering this was the
         # point of S80: WEIGHT alone is 4.8% off, unweighted 1.3%, this 0.07%.
         NX[i] = np.average(nx[m], weights=w[m] * wf[m])
+        # DESI's own FKP weight, and the per-slice pivot it implies (S82).
+        #
+        # p0_eff is back-solved PER OBJECT and then averaged, not derived from
+        # the slice means: 1/(1+nP) is convex, so averaging first would import
+        # the Jensen bias S49 measured at 6.5%.
+        #
+        # For a single-tracer sample this returns the yaml pivot exactly (LRG:
+        # 10000.0 +- 0.0). For the LRG3_ELG1 combined bin it is NOT constant --
+        # 11335 at z=0.81 rising to 18679 at z=1.09 as LRG gives way to ELG --
+        # which no scalar `fkp_p0` can represent.
+        WF[i] = np.average(wf[m], weights=w[m])
+        P0E[i] = np.average((1.0 / wf[m] - 1.0) / nx[m], weights=w[m])
 
     if not np.all(NX > 0):
         bad = np.flatnonzero(NX <= 0)
@@ -146,7 +160,8 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
                          "length check in _desi_nz_geometry would reject this")
     return pd.DataFrame({"zmid": sl["zmid"].to_numpy(dtype=np.float64),
                          "zlow": z_lo, "zhigh": z_hi,
-                         "nbar_desi_nx": NX, "S1_weight": S1})
+                         "nbar_desi_nx": NX, "S1_weight": S1,
+                         "w_fkp_mean": WF, "p0_eff": P0E})
 
 
 def main() -> int:

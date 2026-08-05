@@ -6304,3 +6304,59 @@ than at the end of a long session.
 replacement is also wrong, and the one defensible number (the FKP-weighted
 effective, 13102) buys 0.2% on a BAO-only bin while making the yaml look
 authoritative about something that is not a constant.
+
+
+## §83 — per-slice FKP pivot from DESI's own weights
+
+§82's fix, built. The `_desi_nx` tables gain two columns and `fkp_p0` leaves the
+z_eff path wherever they are present.
+
+```
+w_fkp_mean   WEIGHT-weighted mean of DESI's WEIGHT_FKP per slice (audit)
+p0_eff       the pivot that weight implies, back-solved PER OBJECT as
+             <(1/WEIGHT_FKP - 1)/NX>_WEIGHT, then averaged
+```
+
+### Why a pivot and not the weight itself
+
+The obvious move — store `w_fkp` and use it directly — would have been wrong.
+`N_tracers` enters z_eff ONLY through `w_fkp = 1/(1 + nbar*alpha(N)*P0)` (§53).
+Freezing `w_fkp` at DR1's density makes z_eff N-INDEPENDENT and silently
+flattens the design axis, which is the one thing this pipeline exists to vary.
+
+Storing the pivot instead keeps the N-scaling and still reproduces DESI's weight
+exactly at `alpha = 1`. `bao/core._desi_z_eff_from_nz` now uses the per-slice
+`p0_eff` when the column exists and the scalar `tracers.yaml` value when it does
+not, so pre-§83 tables keep working.
+
+Back-solved PER OBJECT, not from slice means: `1/(1+nP)` is convex, so averaging
+first imports the Jensen bias §49 measured at 6.5%.
+
+### It is a no-op for single-tracer bins, by construction
+
+Regenerating LRG1/LRG2/LRG3 gives `p0_eff = 10000.00 .. 10000.00` — exactly the
+yaml value, zero spread, every slice. The generators print the ratio and label
+it `(constant -> single-tracer)` vs `(MIXED, no scalar pivot works)`, so the
+distinction is visible at generation time rather than inferred later.
+
+`benchmark_desi.py` after the change: **mean |err| 0.059%, max 0.121%** (was
+0.062%). The small improvement is not the pivot — it is LRG1/2/3 being
+regenerated from our random pair rather than DESI's original one (LRG1 -0.101 ->
+-0.084, LRG2 -0.029 -> -0.020, LRG3 -0.055 -> -0.060).
+
+### Generators
+
+`make_desi_nx.py` (local randoms) and `nersc_make_desi_nx.py` (CFS) both emit
+the columns and stay digit-identical to each other.
+
+`nersc_make_desi_nx.py` now covers all seven bins and takes `--slices-dir`
+rather than embedding edges. Embedding would have meant transcribing QSO's 65
+slice edges by hand, and a silent mismatch there sends the bin down the
+`nbar_file` fallback via `_desi_nz_geometry`'s length check — a failure mode
+that reports nothing.
+
+### Still to run
+
+BGS, ELG2, QSO and LRG3_ELG1 have no local randoms, so their tables still lack
+the columns and still use the scalar pivot. LRG3_ELG1 remains at -0.694% until
+its table is regenerated — that bin is the entire point of the change.
