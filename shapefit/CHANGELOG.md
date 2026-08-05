@@ -6223,3 +6223,84 @@ randoms it gives max|dNX| 0.055%, max|dS1| 0.279% — digit-identical to
 Run it on NERSC for LRG3_ELG1, drop the CSV into `data/dr1/nz_slices/`, and
 re-check the bin's z_eff against the ~0.1% prediction. That removes the last
 `nbar_file` fallback in the pipeline.
+
+
+## §82 — DESI document the combined bin, and it is not a single-pivot sample
+
+Answering "is this in the papers?" — yes, and it changes the diagnosis from
+"unexplained residual" to "structurally wrong model for this bin".
+
+### The source
+
+*Combined tracer analysis for DESI 2024 BAO*, arXiv:2508.05467:
+
+  - the two samples are **concatenated with inverse-variance weights**, each
+    galaxy weighted by its linear bias: `W_t = b_t * w_t * w_FKP_eff` (Eq 4.14a);
+  - `w_FKP_eff(z, n_tile) = 1 / [1 + n_bar_eff(z) <C_assign>(n_tile) P0]` (Eq 4.13);
+  - **`P0 = 6000` h^-3 Mpc^3 for LRG+ELG**, chosen for a mean effective bias
+    `b_eff = 1.6`.
+
+Two independent confirmations from the catalogue itself: `<WEIGHT> = 1.545`
+against the paper's `b_eff = 1.6`, and the combined raw N equals LRG raw + ELG
+raw exactly (§81).
+
+### Why adopting P0 = 6000 naively makes it WORSE
+
+Eq 4.13 multiplies P0 by `n_bar_eff`, a BIAS-WEIGHTED effective density, not the
+raw `NX` our tables carry. Pairing DESI's pivot with our density mixes two
+conventions:
+
+```
+P0     z_eff    err % vs DESI 0.930
+10000  0.9236   -0.694   current tracers.yaml (the LRG value)
+ 6000  0.9202   -1.054   DESI's Eq 4.13 pivot, wrong density
+```
+
+The single-pivot equivalent is `b_eff^2 * P0` ~ 1.545^2 * 6000 ~ 14300, which is
+why back-solving `(1/WEIGHT_FKP - 1)/NX` on the randoms gives 13102. That
+correction helps but only by a third: 14322 -> -0.478%.
+
+### The measurement that ends it: the pivot is z-DEPENDENT
+
+Per-slice, back-solved from DESI's own `WEIGHT_FKP`:
+
+```
+z=0.81   P0_eff 11335   <W> 1.821
+z=0.93   P0_eff 13758   <W> 1.703
+z=1.09   P0_eff 18679   <W> 1.513
+                 low-z end 11549 -> high-z end 15590 = 1.35x
+```
+
+Monotonic, 65% across the bin, with `<W>` falling in step — the LRG-dominated
+low-z end giving way to the ELG-dominated high-z end. `tracers.yaml`'s
+`fkp_p0` is one scalar per tracer and cannot represent this at ANY value; 10000
+is in fact below the entire measured range.
+
+A z-dependent weighting error does not cancel in a z-weighted ratio, which is
+exactly why -0.694% survives here while every single-tracer bin sits at
+0.013-0.121%.
+
+**Not fixed by tuning.** P0 ~ 50000 would land z_eff on 0.930, and that number
+means nothing — it is outside the measured range and chosen to fit. Compare the
+LRG control, where the same back-solve returns exactly 10000.0 +- 0.0 and the
+yaml value is simply right.
+
+### The fix worth making
+
+Stop modelling `w_fkp` from a pivot for this bin and carry DESI's own weights:
+add a `w_fkp_mean` column (the `WEIGHT`-weighted mean of `WEIGHT_FKP` per slice)
+to the `_desi_nx` tables, and use it in `_desi_z_eff_from_nz` when present. That
+removes `fkp_p0` from the z_eff path entirely wherever the column exists, for
+combined and single tracers alike, and it is one extra `bincount` in both
+`make_desi_nx.py` and `nersc_make_desi_nx.py`.
+
+Cost: re-running the reductions (a second NERSC run for LRG3_ELG1). Not done
+here — it changes z_eff for every bin, so it wants to land deliberately rather
+than at the end of a long session.
+
+### Note on scope
+
+`fkp_p0` for LRG3_ELG1 is left at 10000. It is wrong, but every candidate
+replacement is also wrong, and the one defensible number (the FKP-weighted
+effective, 13102) buys 0.2% on a BAO-only bin while making the yaml look
+authoritative about something that is not a constant.
