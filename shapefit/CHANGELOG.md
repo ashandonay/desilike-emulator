@@ -5500,3 +5500,55 @@ Two smaller differences in the same function, not yet chased:
     contribution is small but not zero.
   - DESI's `f` is `sigma8(theta-theta) / sigma8(delta-delta)`, a ratio of
     velocity to density amplitudes, not a growth-rate derivative.
+
+
+## §74 — the `peakaverage` question: measured, negligible, keep `wallish2018`
+
+§73 found DESI's compressed likelihood de-wiggling with `engine='peakaverage'`
+while every construction site here passes `with_now="wallish2018"`. The engines
+differ by 0.092 in `m_fid`, 1.4x LRG2's sigma(m), so this needed a number.
+
+Measured at DESI's ShapeFit-alone MAP (§70), all six tracers:
+
+```
+tracer    z_eff |  dm wallish  dm peakavg      diff | sig(m)  diff/sig
+BGS      0.2954 |    +0.02507    +0.02901  +0.00394 | 0.1672    +0.024
+LRG1     0.5095 |    +0.02504    +0.02900  +0.00396 | 0.0699    +0.057
+LRG2     0.7058 |    +0.02502    +0.02900  +0.00398 | 0.0690    +0.058
+LRG3     0.9185 |    +0.02500    +0.02900  +0.00399 | 0.0591    +0.068
+ELG2     1.3168 |    +0.02499    +0.02899  +0.00400 | 0.0660    +0.061
+QSO      1.4902 |    +0.02500    +0.02899  +0.00400 | 0.0513    +0.078
+
+f_sigmar: +0.36% uniformly, against sigma of 10-25% -> 0.02-0.05 sigma
+```
+
+**+0.004 in `dm`, 0.02-0.08 sigma.** The 0.092 `m_fid` offset cancels almost
+entirely, which is what `dm = m - m_fid` with both terms on one engine predicts.
+The residual is nearly z-independent (+0.00394 to +0.00400 across z = 0.30-1.49),
+consistent with a fixed shape difference rather than anything evolving.
+
+This also explains why §70's closure test passed at chi2 15.57 against DESI's
+15.22 despite the engine mismatch: at 0.02-0.08 sigma per tracer it cannot move
+a 24-number chi2 appreciably.
+
+### Decision: keep `wallish2018`
+
+Two reasons beyond the size of the effect.
+
+  - `peakaverage` is NUMERICALLY UNSTABLE in this repo's BAO path — it crashed
+    chaotically (w0 sensitivity at 1e-9) and mislabelled sigma by ~2x, which is
+    what the 2026-07-16 fix was for (`project_bao_dewiggling_engine`). Adopting
+    it in shapefit to chase a 0.05-sigma agreement would trade a negligible
+    systematic for a known instability.
+  - Switching would invalidate every existing mean label and force a full
+    regeneration, for a shift far below the sigma on the quantity.
+
+Recorded so this is not rediscovered as a suspected bug. If a future comparison
+needs sub-0.05-sigma fidelity on `m`, the engine is the first thing to revisit.
+
+### Caveat
+
+Measured at ONE cosmology (the MAP). The offset is nearly constant across z,
+which suggests stability, but nothing here shows it stays 0.004 across the full
+prior box. The training data spans omega_cdm U[0.01, 0.99]; if the engines
+diverge more at the extremes, the effect on training labels is unmeasured.
