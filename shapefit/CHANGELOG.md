@@ -5873,3 +5873,81 @@ deliberate and stays — the BAO template is where Wallisch 2018 IS sourced
   - The covariance's THIRD n(z) (`load_nz_slices`, N*frac/V) is still not
     routed through `NX`.
   - LRG3's residual density ratio, 0.629 (§54).
+
+
+## §78 — the seam check: the mean/covar consistency test, built and passing
+
+Four of the last five findings were the same shape — a quantity BOTH pipelines
+consume, changed on one side — and every one was caught by hand, late, after it
+had already contaminated data:
+
+```
+S42  z_eff frozen at the fiducial in the mean path, derived per sample in covar
+S58  the per-tracer footprint reached the covar path and not the generators
+S60  a correction applied to one path's f_sigmar and not the other's
+S64  the two paths APPEARED to define f_sigmar at different radii
+S76  an explicit with_now honoured by one path, silently overridden in the other
+```
+
+That is a mechanical class of bug, so `seam_check.py` is the mechanical check.
+
+### What it asserts
+
+Per tracer, at two cosmologies (DESI's MAP and a deliberately off-fiducial
+point — a seam that agrees only at the fiducial, as §42's did, passes a
+fiducial-only test):
+
+| seam | mean side | covar side |
+|---|---|---|
+| tracer area | `tracer_area(t, dataset)` | same |
+| n(z) table | resolved path | same |
+| cosmology | `_to_mean_extractor_params` -> CLASS | `_to_shapefit_cosmo_params` -> CLASS |
+| z_eff | `_mean_z_eff_for_sample`, as the worker calls it | `build_shapefit_likelihood`'s `info["z_eff"]` |
+| de-wiggle engine | `extractor.with_now` | `template.with_now` AFTER `theory_cls` |
+| f_sigmar radius | `extractor.r` | `template.r` |
+
+The engine row reads the template *after* `theory_cls` has had it, which is the
+only way §76's override is visible — reading the constructor argument would
+have shown agreement while the objects disagreed.
+
+Defaults to Kaiser: none of the checked quantities depend on the theory model,
+and it is far cheaper. `--theory rept` for the production path.
+
+### Result: 16/16, LRG2 and QSO, both cosmologies
+
+### What it found on the first run
+
+The cosmology seam FAILED at a 1e-10 tolerance: `omega_cdm` differed by
+4.7e-7 relative, and `Omega_m`, `rs_drag`, `sigma8` with it.
+
+This is not a bug, and the distinction matters. The covar path hands cosmoprimo
+`omega_cdm` directly; the mean path cannot — the extractor's pipeline exposes no
+`omega_cdm` — so it hands over `Omega_m` and CLASS SHOOTS to recover the rest.
+One route goes through a nonlinear solve, so the two cannot agree bit-for-bit,
+and the residual is the shooting tolerance. **It is the same residual that makes
+`m` come out at 1e-5 rather than 0 in the mean plot's fiducial null test (§66)** —
+two symptoms, one cause, now pinned in a test instead of rediscovered.
+
+Tolerances therefore split by KIND rather than being loosened globally:
+
+  - `_RTOL_PASSTHRU = 1e-12` for parameters passed straight through on both
+    sides (`omega_b`, `h`, `n_s`) — these must be bit-equal and are;
+  - `_RTOL_SHOOT = 5e-6` for CLASS-solved quantities: 10x the observed 5e-7
+    residual, while a genuine mapping error is far larger — dropping
+    `omega_ncdm` from the `Omega_m` assembly (the bug
+    `_to_mean_extractor_params` exists to prevent) shifts `omega_cdm` by ~6e-4,
+    i.e. 5e-3 relative, a thousand times the tolerance.
+
+The report prints each relative gap against its tolerance, so a seam drifting
+toward its limit is visible before it becomes a failure.
+
+### What this does NOT do
+
+It is a CONSISTENCY test, not a validation: both paths can be wrong together and
+it stays silent. Correctness against DESI lives in `benchmark_desi.py` (published
+z_eff/area/pivots) and `validate_forecast.py`.
+
+It also only covers quantities both paths currently share. It would NOT have
+caught §65 (a stale denominator in plotting code, which is neither path) or §63's
+misuse of a signed mean. Run it before every regeneration, not instead of
+thinking.
