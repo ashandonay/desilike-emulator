@@ -5570,3 +5570,70 @@ Measured at ONE cosmology (the MAP). The offset is nearly constant across z,
 which suggests stability, but nothing here shows it stays 0.004 across the full
 prior box. The training data spans omega_cdm U[0.01, 0.99]; if the engines
 diverge more at the extremes, the effect on training labels is unmeasured.
+
+
+## §75 — correction to §73/§74: wallish2018 was never sourced for full-shape
+
+§73 and §74 framed DESI's `peakaverage` as conflicting with "DESI's fiducial
+choice". That framing is wrong, and the mistake is worth recording because it
+came from applying a BAO-side source to the full-shape side.
+
+### What the source actually says
+
+`project_bao_dewiggling_engine` cites Chen et al. 2024, *BAO Theory and
+Modelling Systematics for the DESI 2024 results* (arXiv:2402.14070) §8(v):
+
+> "The **DESI BAO template** is constructed following the method of Wallisch
+> (2018)"
+
+and §7.4, which twice calls Wallisch 2018 "our fiducial". That is the **BAO
+systematics paper**, about the **BAO template**. It says nothing about the
+ShapeFit compression, and does not extend to it.
+
+### Where shapefit's choice came from
+
+The build plan specifies `with_now="wallish2018"` with the note *"explicit
+with_now (spelling 'wallish2018')"*, and `core.py:10` records the reason as
+**"`with_now` MUST be explicit — the desilike [default]"**. The justification on
+record is *do not silently inherit the library default* — which is sound, and is
+the §33-era lesson — NOT *this is the engine DESI's full-shape analysis uses*.
+The engine itself was carried over from `bao/`.
+
+So there is no contradiction between the notes and DESI's source. DESI use
+different engines in different analyses, and this repo's shapefit choice was
+inherited, never independently sourced for full shape.
+
+### A distinction §73/§74 blurred
+
+| ours | DESI's equivalent | their engine |
+|---|---|---|
+| `fourier_space.py:337` extractor -> MEAN path | `_get_f_m` in the compressed likelihood | **peakaverage** (read at 7d51f4f8) |
+| `core.py:747` template -> COVAR path | their full-shape FITTING template | **unknown** |
+
+§73's finding and §74's measurement both concern the MEAN path only. What DESI's
+full-shape fit template used is a separate, unanswered question — and desilike's
+default there is also `peakaverage`, so if they did not override it, the covar
+path differs too. §74 measured `dm` and `f_sigmar` from the EXTRACTOR; it says
+nothing about the covariance.
+
+### What still stands
+
+§74's decision to keep `wallish2018` is unaffected, but its reasons narrow to
+the two that do not depend on the mis-framing:
+
+  - the measured mean-path effect is 0.02-0.08 sigma, far below anything that
+    matters;
+  - `peakaverage` is the engine that crashed chaotically and mislabelled sigma
+    ~2x in the BAO path, so adopting it repo-wide trades a negligible
+    systematic for a known instability.
+
+What is NOT still standing is any claim that wallish2018 is what DESI use for
+ShapeFit. We do not know that, and for the compressed map we now know the
+opposite.
+
+### Open
+
+Find what `with_now` DESI's full-shape FITTING pipeline used (their FS fit
+configs, not the compressed-cosmology likelihood read in §73). If it is
+`peakaverage` there too, the covar path's engine is unsourced in the same way,
+and the §74 measurement does not cover it.
