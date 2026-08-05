@@ -6438,3 +6438,69 @@ N-span across [0.5, 1.5] x N_dr1 is nonzero on every bin (BGS +0.56%, LRG3_ELG1
 still moves z_eff rather than having been frozen out.
 
 `benchmark_desi.py` (full-shape bins): mean 0.059%, max 0.125%.
+
+
+## §85 — the covariance moves onto DESI's NX, except where NX is the wrong quantity
+
+Until now z_eff used DESI's `NX` while the covariance built its own density as
+`N_tracers * frac / V_shell` — one sample described two ways. New
+`bao_core.cov_nbar_per_slice` is the single definition, used by both
+`build_bao_likelihood` and `build_shapefit_likelihood` (one helper, not a fourth
+copy of the lookup).
+
+### Measured first, wired second
+
+Density change per tracer, V-weighted mean:
+
+```
+BGS   1.014   LRG1  1.003   LRG2  1.020   LRG3  1.017   QSO 1.003
+ELG2  1.173
+LRG3_ELG1  0.558     <- would raise 1/n by 1.79x
+```
+
+Single-tracer bins agree to 0.3-2%: after the §54 footprint fix the two
+definitions had already converged, so this is mostly a consistency fix. ELG2's
+17% is the one real number, and it goes the way §54 predicted — that entry
+measured our ELG2 density at 0.802 of DESI's FKP^2-weighted <NX>, i.e. 20% low.
+
+Effect on sigma (Kaiser, at DESI's MAP):
+
+```
+                  LRG2      LRG3      ELG2
+sigma_qiso       -1.32%    -1.94%   -12.55%
+sigma_qap        -1.14%    -1.72%   -11.22%
+sigma_f_sigmar   -0.93%    -1.41%   -10.16%
+sigma_m          -0.67%    -1.05%    -8.22%
+```
+
+### LRG3_ELG1 is excluded, and not as a convenience
+
+For a COMBINED catalogue `NX` is each object's PARENT-sample density — which is
+exactly right for that object's own FKP weight, and wrong for the total density
+of the merged sample. The slice mean is then a weighted average of the parents
+rather than their sum. The old value confirms which is which:
+
+```
+N*frac/V     4.28e-4  ~  1.99e-4 (LRG3 alone) + 2.3e-4 (ELG1)     a SUM
+<NX>         2.39e-4                                              between them
+```
+
+So the bin keeps `N*frac/V`, and the helper says `N*frac/V (mixed bin)` rather
+than falling back silently — a quiet fallback here is the §58 failure mode.
+
+Gated on §84's `p0_eff` signature (pivot not constant => mixed sample) rather
+than on the tracer name, so a future combined bin is handled without anyone
+remembering to special-case it.
+
+### Not migrated
+
+`fkp_analytic_cov.load_nz_slices` (the config-space xi path) still uses
+`N*frac/V`. Moving it means `fkp_analytic_cov` importing `bao/core`, which
+re-creates the bare-`import core` collision §77 had to design around — it needs
+a different plumbing route and it is a third path, separate from the two the
+emulator trains on.
+
+### Regeneration
+
+This changes every covar sigma, so it must land with the golden + v2
+regeneration alongside §58, §76 and §77 — one pass, not four.

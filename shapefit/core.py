@@ -558,7 +558,12 @@ def build_shapefit_likelihood(
         chi_lo = np.asarray(cosmo.comoving_radial_distance(z_lo))
         chi_hi = np.asarray(cosmo.comoving_radial_distance(z_hi))
         V_bin_slice = (4.0 / 3.0) * np.pi * (chi_hi**3 - chi_lo**3) * sky_frac
-        nbar_slice = (float(N_tracers) * frac_slice) / np.maximum(V_bin_slice, 1.0)
+        # DESI's NX where the bin is single-tracer, N*frac/V otherwise (S85).
+        # Before this the covariance built its own density while z_eff used NX
+        # -- one sample, two densities.
+        nbar_slice, _nbar_src = bao_core.cov_nbar_per_slice(
+            tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
+            dataset=dataset)
 
         fkp_wsq_list = []
         for zi, ni in zip(z_mid_slice, nbar_slice):

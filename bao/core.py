@@ -337,6 +337,55 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
     return entry
 
 
+def cov_nbar_per_slice(tracer_bin: str, frac, V_bin, n_tracers, *,
+                       dataset: str = "dr1"):
+    """Per-slice comoving density for the COVARIANCE path (S85).
+
+    Returns (nbar, source) with source in {"NX", "N*frac/V"}.
+
+    Until S85 the covariance built its own density as `N_tracers * frac / V`,
+    a VOLUME AVERAGE over the nominal footprint, while z_eff used DESI's `NX`
+    = n(z)<C_assign> -- the LOCAL density their own weights are built from.
+    Two densities for one sample: z_eff said one thing, the shot noise and FKP
+    weighting another. S54 measured the gap at 0.63-1.01 per tracer.
+
+    Prefers NX, scaled to the requested N by the same `_nz_scale_factor` z_eff
+    uses, so both halves now describe the same sample. Exactly linear in
+    N_tracers, which `config_space` relies on when it caches `nbar_per_N`.
+
+    Falls back to `N*frac/V` when a tracer has no NX table, so a partial
+    dataset degrades to the old behaviour rather than raising -- and says so,
+    because a silent fallback here is the S58 failure mode.
+    """
+    frac = np.asarray(frac, dtype=np.float64)
+    V_bin = np.asarray(V_bin, dtype=np.float64)
+    fallback = (float(n_tracers) * frac) / np.maximum(V_bin, 1.0)
+
+    _, _, _frac_unused, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, dataset=dataset)
+    nx, s1, p0 = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
+    if s1 is None or np.asarray(nx).shape != frac.shape:
+        return fallback, "N*frac/V"
+
+    # MIXED bins must NOT use NX here (S85). For a combined catalogue DESI's
+    # `NX` is each object's PARENT-sample density -- exactly what its own FKP
+    # weight needs -- so the slice mean is a weighted average of the parents,
+    # not their sum. The covariance needs the TOTAL density of the sample.
+    #
+    # Measured on LRG3_ELG1: <NX> 2.39e-4 against 4.28e-4 from N*frac/V, and
+    # the latter is right because 4.28e-4 ~ 1.99e-4 (LRG3 alone) + 2.3e-4
+    # (ELG1) -- a sum. Using NX there would inflate 1/n by 1.79x.
+    #
+    # Detected by the same p0_eff signature S84 uses: a bin whose back-solved
+    # pivot is not constant is a mixed sample. Self-describing, so a future
+    # combined bin is handled without anyone remembering to special-case it.
+    if p0 is not None and float(np.max(p0)) / float(np.min(p0)) > 1.01:
+        return fallback, "N*frac/V (mixed bin)"
+
+    return np.asarray(nx, dtype=np.float64) * _nz_scale_factor(
+        tracer_bin, n_tracers, dataset), "NX"
+
+
 def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
                         n_tracers=None, dataset: str = "dr1") -> float:
     """DESI's effective redshift, DESI 2024 III Eq. (2.1).
@@ -1578,7 +1627,12 @@ def build_bao_likelihood(
             chi_lo = np.asarray(cosmo.comoving_radial_distance(z_lo))
             chi_hi = np.asarray(cosmo.comoving_radial_distance(z_hi))
             V_bin_slice = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
-            nbar_slice = (float(N_tracers) * frac_slice) / np.maximum(V_bin_slice, 1.0)
+            # DESI's NX where the bin is single-tracer, N*frac/V otherwise
+            # (S85). Before this the covariance built its own density while
+            # z_eff used NX -- one sample, two densities.
+            nbar_slice, _nbar_src = cov_nbar_per_slice(
+                tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
+                dataset=dataset)
             tracer_type_slice = str(cfg.get("tracer_type", "")).strip()
             if not tracer_type_slice:
                 raise ValueError(
