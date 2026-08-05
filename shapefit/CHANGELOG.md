@@ -6047,3 +6047,74 @@ unobtainable on a new machine.
 `nbar_file`. It needs the `LRG+ELG` randoms (~3.3 GB, `--what randoms --nran 1`),
 once, after which it is vendored like the rest and nobody needs randoms again.
 That is the last thing keeping `nbar_file` alive.
+
+
+## §80 — the repo owns the reference tables, and the `_desi_nx` recipe is recovered
+
+§79 vendored the tables but left `~/data/desi` winning. That is two sources of
+truth, which is how a machine silently disagrees with what is version-controlled.
+Now the repo is the ONLY source, and — the harder half — every file in it is
+reproducible by a committed script.
+
+### Single source
+
+`util.REPO_DATA_DIR` (override: `DESI_REF_DATA_DIR`) is the only place looked
+at. Removed: the `~/data/desi/nz_slices` constant in `bao/core.py`, the
+`~/data/desi/bao_{dataset}` lookups in `util.ntracers`, the `_repo_fallback`
+helper, and `nz_slices_path`'s flat-layout branch (that existed only for the old
+external layout). `make_nz_slices.py` and `make_lrg3_nz_slices.py` now write
+into `data/{dataset}/nz_slices`, so regenerating produces a reviewable git diff
+instead of silently changing a file outside the tree.
+
+### `nz_slices`: 6 of 7 reproduce BYTE-IDENTICALLY
+
+`make_nz_slices.py --out-dir <scratch>` then `cmp` against the committed files:
+BGS, ELG2, LRG1, LRG2, LRG3, QSO all identical.
+
+`LRG3_ELG1` does NOT, and the generator says why: `N_cat = 2,898,381` against
+`N_dr1 = 1,876,187`, a 69.7% shape change. That table came from
+`make_lrg3_nz_slices.py` reading the published `*_nz.txt` (final-survey sample),
+not from the catalogues. Left alone rather than overwritten — only the SHAPE is
+consumed (normalisation comes from `util.ntracers`), and which shape is right
+for the BAO combined bin is a question, not a typo. Flagged, not fixed.
+
+### `_desi_nx`: the recipe was not what it looked like
+
+`make_desi_nx.py` is new. The obvious implementation — `WEIGHT`-weighted mean of
+`NX` over randoms — reproduced the committed tables to only 4.8%, suspiciously
+equal to §79's data-vs-randoms bias. Testing estimators against the committed
+LRG2 table settled it:
+
+```
+WEIGHT * WEIGHT_FKP   0.071%   <- the recipe
+unweighted            1.322%
+harmonic              1.374%
+WEIGHT alone          4.765%
+```
+
+The FKP factor is not a detail: Eq. (2.1)'s random density is `n_ran = S1 *
+w_fkp`, so <NX> must carry the same weighting that appears in the z_eff weight.
+And `S1` is a SUM, so it scales linearly with the file count — one random file
+gives exactly 0.50063x the committed value, identifying nran=2.
+
+Reproducible, not bit-exact: DESI's random files are independent realisations
+and ours need not be the pair originally used. `--check` gives max|dNX|
+0.06-0.10%, max|dS1| ~0.3%, and the z_eff that results lands within 0.02% of the
+committed tables (LRG1 -0.101% -> -0.084%, LRG2 -0.029% -> -0.020%, LRG3
+-0.055% -> -0.060% vs DESI 2024 V Table 1). Recorded in PROVENANCE.md so the
+next person does not re-derive it.
+
+This was the reproducibility hole: before §80 the six tables could not be
+rebuilt by anything in the repo, and the recipe existed only in a scratch script
+from §51-53 that was never committed.
+
+### Deferred
+
+The physical `~/data/desi/nz_slices/*.csv` files are no longer read by anything,
+but deleting them is held until the §72 sweep finishes — those 24 processes hold
+the pre-§80 code in memory. `rm -rf ~/data/desi/nz_slices` after that.
+
+`LRG3_ELG1_desi_nx.csv` still does not exist; `make_desi_nx.py --tracers
+LRG3_ELG1` will build it once the `LRG+ELG` randoms are fetched (~3.3 GB at
+nran=1, ~6.6 GB at the nran=2 the other tables use). That is the last thing
+keeping `nbar_file` alive.

@@ -206,79 +206,61 @@ _COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {component: pa
 
 _DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
 
-# Cosmology-independent n(z) slice tables. Release-scoped since S62c; see
-# nz_slices_path.
-NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
-
-# Small DESI-derived reference tables VENDORED into the repo (S79), so a fresh
-# checkout runs the forecast with no downloads at all. 39 KB total: the n(z)
-# slice tables, the {tracer}_desi_nx.csv summaries reduced from DESI's randoms
-# (which are 20.9 GB and exist only to produce these ~10 KB), and the two
-# N_tracers tables.
+# Small DESI-derived reference tables live IN THE REPO (S79/S80), so a fresh
+# checkout runs the forecast with no downloads: the n(z) slice tables, the
+# {tracer}_desi_nx.csv summaries reduced from DESI's randoms (20.9 GB in, ~10 KB
+# out), and the two N_tracers tables. 39 KB total.
 #
-# ~/data/desi WINS when present. The vendored copy is a FALLBACK, not an
-# override, so that `make_nz_slices.py --install` keeps taking effect
-# immediately and this box's behaviour is unchanged. See data/dr1/PROVENANCE.md.
-REPO_DATA_DIR = Path(__file__).resolve().parent / "data"
+# This is the SINGLE source of truth. There is deliberately no ~/data/desi
+# fallback: two copies of a reference table is how you get a machine that
+# silently disagrees with the repo, and the whole point of committing them is
+# that what runs is what is version-controlled. Every file here is reproducible
+# -- see data/dr1/PROVENANCE.md for what regenerates each one.
+#
+# Set DESI_REF_DATA_DIR to point elsewhere (a scratch regeneration, say).
+REPO_DATA_DIR = Path(os.environ.get(
+    "DESI_REF_DATA_DIR", Path(__file__).resolve().parent / "data"))
 
 
-def _repo_fallback(local: Path, dataset: str, *parts: str) -> Optional[Path]:
-    """The vendored twin of `local`, if `local` is absent and the twin exists."""
-    if local.exists():
-        return local
-    cand = REPO_DATA_DIR.joinpath(str(dataset), *parts)
-    return cand if cand.exists() else None
+def reference_table_path(dataset: str, *parts: str) -> Path:
+    """Path to a vendored reference table, raising with the regeneration
+    recipe rather than a bare FileNotFoundError."""
+    p = REPO_DATA_DIR.joinpath(str(dataset), *parts)
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Missing reference table {p}. These ship with the repo; if it is "
+            "absent the checkout is incomplete or DESI_REF_DATA_DIR points "
+            f"somewhere wrong (currently {REPO_DATA_DIR}). Regeneration "
+            "recipes are in data/dr1/PROVENANCE.md.")
+    return p
 
 
 def nz_slices_path(filename: str, dataset: str,
                    base_dir=None) -> Path:
-    """Resolve a release-scoped n(z) file (shapefit CHANGELOG S62c).
+    """Resolve a release-scoped n(z) file: ``{base}/{dataset}/{filename}``.
 
-    Layout is ``{base}/{dataset}/{filename}``. The flat ``{base}/{filename}``
-    is the pre-S62c layout and is accepted ONLY for dr1, with a warning,
-    because flat *is* dr1 -- those files came from a make_nz_slices.py
-    hardcoded to the DR1 catalogues, areas, counts and download URL.
+    Release-scoped since S62c, because `ntracers`, `tracer_area` and
+    `get_default_save_path` all switch on `dataset` -- a release-mixing bug in
+    the n(z) layer would surface only as a subtly wrong covariance, the same
+    silent class as S58 (a fallback that never fired) and S59 (a caller never
+    updated).
 
-    For any other release a missing scoped directory RAISES rather than
-    falling back. That asymmetry is the entire point: `ntracers`,
-    `tracer_area` and `get_default_save_path` all switch on `dataset`, so a
-    release-mixing bug in the n(z) layer would surface only as a subtly wrong
-    covariance -- the same silent class as S58 (a fallback that never fired)
-    and S59 (a caller never updated).
+    The base is the REPO's data/ (S80). There is no ~/data/desi fallback and no
+    flat-layout fallback: those existed while the tables lived outside the repo,
+    and keeping them would allow a stale local copy to shadow the committed one.
+    `base_dir` overrides for a scratch regeneration.
 
-    Lives here, beside `tracer_area`/`ntracers`/`get_default_save_path`,
-    because it is the same kind of release-scoped lookup. It must NOT live in
-    bao/core.py: `bao/fkp_analytic_cov.py` needs it too, and a bare
-    ``import core`` there resolves to shapefit/core.py whenever cwd is
-    shapefit/.
+    Lives here, beside `tracer_area`/`ntracers`, because it is the same kind of
+    release-scoped lookup. It must NOT live in bao/core.py: `fkp_analytic_cov`
+    needs it too, and a bare ``import core`` there resolves to shapefit/core.py
+    whenever cwd is shapefit/.
     """
-    base = Path(base_dir) if base_dir is not None else NZ_SLICES_DIR
-    scoped = base / str(dataset) / filename
-    if scoped.exists():
-        return scoped
-
-    # Vendored fallback (S79): a fresh checkout has no ~/data at all.
-    if base_dir is None:
-        vendored = REPO_DATA_DIR / str(dataset) / "nz_slices" / filename
-        if vendored.exists():
-            return vendored
-
-    flat = base / filename
-    if str(dataset) == "dr1" and flat.exists():
-        warnings.warn(
-            f"n(z) file {filename!r} found only in the flat pre-S62c layout "
-            f"({flat}); treating it as dr1. Move these under {base / 'dr1'} -- "
-            "the flat fallback is dr1-only and will not serve another release.",
-            DeprecationWarning, stacklevel=2)
-        return flat
-
-    raise FileNotFoundError(
-        f"No n(z) file {filename!r} for dataset {dataset!r}. Looked for {scoped}"
-        + (f" (and the dr1-only flat fallback {flat})"
-           if str(dataset) == "dr1" else
-           f"; the flat fallback {flat} is NOT used for {dataset!r} because "
-           "those files are DR1")
-        + f". Generate them with shapefit/make_nz_slices.py --dataset {dataset}.")
+    if base_dir is not None:
+        p = Path(base_dir) / str(dataset) / filename
+        if not p.exists():
+            raise FileNotFoundError(f"No n(z) file {filename!r} under {base_dir}/{dataset}")
+        return p
+    return reference_table_path(dataset, "nz_slices", filename)
 
 
 def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
@@ -323,7 +305,7 @@ def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
 
 def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     """Return the DESI 'passed' N_tracers for ``tracer_bin`` from
-    ``~/data/desi/bao_{dataset}/desi_data.csv`` (dataset in {dr1, dr2}).
+    ``data/{dataset}/desi_data.csv`` in the repo (dataset in {dr1, dr2}).
 
     The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
     pipeline configuration that compares predictions against bundle data must
@@ -341,14 +323,7 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     if components:
         if dataset not in _COMPONENTS_CACHE:
             import pandas as pd
-            tpath = _repo_fallback(
-                Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_tracers.csv",
-                dataset, "desi_tracers.csv")
-            if tpath is None:
-                raise FileNotFoundError(
-                    f"No desi_tracers.csv for {dataset!r} in ~/data/desi/bao_{dataset}/ "
-                    f"or {REPO_DATA_DIR / dataset}")
-            tdf = pd.read_csv(tpath)
+            tdf = pd.read_csv(reference_table_path(dataset, "desi_tracers.csv"))
             _COMPONENTS_CACHE[dataset] = {
                 str(r["tracer"]): float(r["targets"]) * float(r["comp"]) * float(r["efficiency"])
                 for _, r in tdf.iterrows()}
@@ -361,14 +336,7 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
 
     if dataset not in _NTRACERS_CACHE:
         import pandas as pd
-        path = _repo_fallback(
-            Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv",
-            dataset, "desi_data.csv")
-        if path is None:
-            raise FileNotFoundError(
-                f"No desi_data.csv for {dataset!r} in ~/data/desi/bao_{dataset}/ "
-                f"or {REPO_DATA_DIR / dataset}")
-        df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
+        df = pd.read_csv(reference_table_path(dataset, "desi_data.csv"))[["tracer", "passed"]].drop_duplicates("tracer")
         _NTRACERS_CACHE[dataset] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
     cache = _NTRACERS_CACHE[dataset]
     key = _CSV_NAME_MAP.get(tracer_bin, tracer_bin)

@@ -165,8 +165,9 @@ _NMU_DISP = 64
 # not a fit: DESI pipelines use alpha in [20, 50]; 50 is conservative.
 _N_RAND_OVER_N_DATA = 50.0
 
-# Path to the cosmology-independent n(z) slices produced by parse_desi_nz.py.
-_NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
+# n(z) slice tables now live in the REPO (data/{dataset}/nz_slices), resolved by
+# util.nz_slices_path. The old ~/data/desi/nz_slices constant is gone: a second
+# copy is how a machine silently disagrees with what is version-controlled (S80).
 
 
 def _load_nz_slice_fractions(tracer_bin: str, *, dataset: str

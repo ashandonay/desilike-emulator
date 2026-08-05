@@ -8,7 +8,7 @@ only knows the BAO bin definitions, and `bao/` is regression-frozen, so this
 driver injects an `LRG3` bin into the module's tables at runtime and reuses the
 same slicing code rather than forking it.
 
-Writes ``~/data/desi/nz_slices/LRG3_nz_slices.csv``. Does not touch the existing
+Writes ``data/dr1/nz_slices/LRG3_nz_slices.csv`` in the repo (S80). Does not touch the existing
 LRG3_ELG1 slice file, which `bao/` still needs.
 
     python make_lrg3_nz_slices.py [--nz-dir DIR] [--dry-run]
@@ -44,7 +44,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--nz-dir", default=str(Path.home() / "data" / "desi" / "nz_data"))
-    p.add_argument("--out-dir", default=str(Path.home() / "data" / "desi" / "nz_slices"))
+    p.add_argument("--out-dir", default=str(
+        Path(__file__).resolve().parent.parent / "data" / "dr1" / "nz_slices"))
     p.add_argument("--caps", nargs="+", default=["NGC", "SGC"])
     p.add_argument("--coarsen-dz", type=float, default=0.02)
     p.add_argument("--dry-run", action="store_true")

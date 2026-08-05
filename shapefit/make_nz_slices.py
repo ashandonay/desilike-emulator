@@ -55,7 +55,10 @@ warnings.filterwarnings("ignore")
 from util import ntracers, tracer_area  # noqa: E402
 
 CAT_DIR = Path.home() / "data" / "desi" / "lss_dr1"
-NZ_DIR = Path.home() / "data" / "desi" / "nz_slices"
+# Output goes into the REPO (S80): these tables are version-controlled inputs,
+# so regenerating them should produce a reviewable diff, not a silent change to
+# a file outside the tree.
+NZ_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Release -> (catalogue dir, LSS run, LSS version). S62c item (3): everything
 # else in this script -- STEM, the slice edges, the areas, the counts and the
@@ -103,7 +106,7 @@ def _load_catalogue(stem: str):
 
 
 def rebuild(tracer: str, cosmo) -> pd.DataFrame:
-    old_path = NZ_DIR / f"{tracer}_nz_slices.csv"
+    old_path = NZ_DIR / "dr1" / "nz_slices" / f"{tracer}_nz_slices.csv"
     if not old_path.exists():
         raise FileNotFoundError(f"No existing slice file to take edges from: {old_path}")
     old = pd.read_csv(old_path)
@@ -169,10 +172,10 @@ def main() -> int:
     from desilike.theories.primordial_cosmology import get_cosmo
     cosmo = get_cosmo("DESI")
 
-    # Release-scoped layout (S62c): {NZ_DIR}/{dataset}/{tracer}_*.csv
+    # Release-scoped layout (S62c/S80): data/{dataset}/nz_slices/{tracer}_*.csv
     out_dir = (Path(a.out_dir) if a.out_dir
-               else (NZ_DIR / a.dataset if a.install
-                     else NZ_DIR / "regenerated" / a.dataset))
+               else (NZ_DIR / a.dataset / "nz_slices" if a.install
+                     else NZ_DIR / "regenerated" / a.dataset / "nz_slices"))
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"writing to {out_dir}\n")
 

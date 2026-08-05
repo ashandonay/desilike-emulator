@@ -40,6 +40,30 @@ Eq. (2.1)'s ratio; its residual 0.30% scatter is at the 0.36% Poisson floor.
 `NX` is a density-weighted mean of a density and does not cancel. See
 shapefit/CHANGELOG.md S79.
 
+## The `_desi_nx` recipe (recovered in S80)
+
+`nbar_desi_nx` is `NX` averaged with weights **`WEIGHT * WEIGHT_FKP`**, over
+**2** random files per cap; `S1_weight` is the plain `sum(WEIGHT)` over the same.
+The FKP factor is not optional -- Eq. (2.1)'s random density is `n_ran = S1 *
+w_fkp`, so <NX> must carry the same weighting that appears in the z_eff weight.
+Measured against the committed LRG2 table, per estimator:
+
+```
+WEIGHT * WEIGHT_FKP   0.071%   <- this one
+unweighted            1.322%
+harmonic              1.374%
+WEIGHT alone          4.765%
+```
+
+`S1` scales linearly with the file count (it is a sum), which is how nran=2 was
+identified: one file gives exactly 0.50063x the committed value.
+
+Regeneration is reproducible but not bit-exact -- DESI's random files are
+independent realisations and ours are not necessarily the pair originally used.
+`make_desi_nx.py --check` gives max|dNX| 0.06-0.10%, max|dS1| ~0.3%, and the
+resulting z_eff lands within 0.02% of the committed tables (LRG1 -0.101% ->
+-0.084%, LRG2 -0.029% -> -0.020%, LRG3 -0.055% -> -0.060% vs DESI).
+
 ## Known gap
 
 `LRG3_ELG1_desi_nx.csv` does not exist — the BAO combined bin. Building it
