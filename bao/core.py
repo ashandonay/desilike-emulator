@@ -293,8 +293,25 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
             # p0_eff (S82): DESI's OWN FKP pivot, back-solved per object from
             # their WEIGHT_FKP and averaged per slice. Absent in pre-S82 tables,
             # in which case callers fall back to the scalar tracers.yaml pivot.
-            p0e = (df["p0_eff"].to_numpy(dtype=np.float64)
-                   if "p0_eff" in df.columns else None)
+            # CALIBRATED per-slice pivot: the one that reproduces DESI's own
+            # slice-mean FKP weight when combined with this file's <NX>.
+            #
+            #     p0 = (1/<w_fkp> - 1) / <NX>
+            #
+            # NOT the `p0_eff` column, which back-solves per object and then
+            # averages. That was S83's choice and it is wrong for MIXED samples
+            # (S84): <NX> is WEIGHT*WEIGHT_FKP-weighted while a per-object <P0>
+            # is WEIGHT-weighted, and in a mixed bin NX and P0 are correlated
+            # within the slice, so 1/(1+<NX><P0>) != <1/(1+NX P0)>. It cost
+            # LRG3_ELG1 -2.370% where this form gives -0.077%.
+            #
+            # For single-tracer bins the two agree exactly (ratio 1.000), since
+            # w_fkp is then a deterministic function of NX.
+            p0e = None
+            if "w_fkp_mean" in df.columns:
+                wfm = df["w_fkp_mean"].to_numpy(dtype=np.float64)
+                if np.all(np.isfinite(wfm)) and np.all(wfm > 0) and np.all(wfm < 1):
+                    p0e = (1.0 / wfm - 1.0) / nx
             ok = (nx.size == len(nbar_file) and np.all(np.isfinite(nx))
                   and np.all(nx > 0) and np.all(np.isfinite(s1))
                   and np.all(s1 > 0))

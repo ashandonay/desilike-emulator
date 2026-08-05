@@ -6360,3 +6360,81 @@ that reports nothing.
 BGS, ELG2, QSO and LRG3_ELG1 have no local randoms, so their tables still lack
 the columns and still use the scalar pivot. LRG3_ELG1 remains at -0.694% until
 its table is regenerated — that bin is the entire point of the change.
+
+
+## §84 — correction to §83: the pivot must be slice-CALIBRATED, not back-solved per object
+
+§83 chose the wrong estimator, and the NERSC tables exposed it immediately.
+
+### What the four regenerated tables showed
+
+`p0_eff` back-solved from DESI's own `WEIGHT_FKP`, all seven bins:
+
+```
+BGS        7000.0 ..  7000.0   ratio 1.000   yaml  7000   constant
+LRG1      10000.0 .. 10000.0   ratio 1.000   yaml 10000   constant
+LRG2      10000.0 .. 10000.0   ratio 1.000   yaml 10000   constant
+LRG3      10000.0 .. 10000.0   ratio 1.000   yaml 10000   constant
+ELG2       4000.0 ..  4000.0   ratio 1.000   yaml  4000   constant
+QSO        6000.0 ..  6000.0   ratio 1.000   yaml  6000   constant
+LRG3_ELG1  11299   .. 19501    ratio 1.726   yaml 10000   MIXED
+```
+
+Six independent confirmations that the method is sound and every single-tracer
+yaml pivot is exactly right — DESI's weights back-solve to the Eq. (8.4) values
+with zero spread. And LRG3_ELG1 mixed at 1.73x, close to the 1.65x predicted
+from the NGC-only file.
+
+### But using it made LRG3_ELG1 WORSE
+
+```
+                       LRG3_ELG1   mean |err|    max
+scalar yaml pivot        -0.694%     0.165%     0.694%
+per-object p0_eff (S83)  -2.370%     0.444%     2.370%
+DESI's own <w_fkp>       -0.077%     0.062%     0.125%
+```
+
+**Why.** `nbar_desi_nx` is a `WEIGHT*WEIGHT_FKP`-weighted mean; a per-object
+`p0_eff` is a `WEIGHT`-weighted mean. In a MIXED bin `NX` and `P0` are
+correlated within the slice (LRG objects carry one pair, ELG another), so
+
+    1 / (1 + <NX><P0>)  !=  < 1 / (1 + NX P0) >
+
+and combining the two averages is not the weight DESI applied. §83's Jensen
+argument was about a real effect but pointed at the wrong estimator: the fix is
+not to avoid averaging `1/(1+nP)`, it is to CALIBRATE the pivot so the slice
+reproduces DESI's own mean weight.
+
+### The correct form
+
+    p0 = (1/<w_fkp> - 1) / <NX>          both already in the tables
+
+Exact at alpha = 1 by construction, and still a pivot, so `N_tracers` keeps
+entering through `w_fkp = 1/(1 + nbar*alpha(N)*P0)` and the design axis survives
+(§53). For single-tracer bins it returns the yaml pivot exactly — ratio 1.000,
+so no Jensen penalty arises there at all, because `w_fkp` is then a
+deterministic function of `NX`.
+
+No regeneration needed: `w_fkp_mean` and `nbar_desi_nx` were already stored, so
+this is a change in `bao/core._desi_nz_geometry` only. The `p0_eff` column stays
+as an audit of the raw back-solve and is NOT what the pipeline reads.
+
+### Result — all six DR1 BAO bins
+
+```
+BGS        0.2954   +0.125          LRG3_ELG1  0.9293   -0.077
+LRG1       0.5096   -0.084          ELG2       1.3167   -0.025
+LRG2       0.7059   -0.020          QSO        1.4904   -0.042
+
+mean |err| 0.062%   max 0.125%
+```
+
+LRG3_ELG1 goes +2.549% (final-survey n(z), nbar_file) -> +1.970% (DR1 n(z),
+nbar_file) -> -0.694% (NX, scalar pivot) -> **-0.077%**, in line with every
+other bin for the first time.
+
+N-span across [0.5, 1.5] x N_dr1 is nonzero on every bin (BGS +0.56%, LRG3_ELG1
++0.98%, ELG2 +0.98%, QSO +0.10%, LRG1/LRG2 -0.03%), confirming the design axis
+still moves z_eff rather than having been frozen out.
+
+`benchmark_desi.py` (full-shape bins): mean 0.059%, max 0.125%.
