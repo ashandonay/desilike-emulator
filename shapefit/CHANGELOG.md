@@ -6108,6 +6108,28 @@ This was the reproducibility hole: before §80 the six tables could not be
 rebuilt by anything in the repo, and the recipe existed only in a scratch script
 from §51-53 that was never committed.
 
+### Correction: three lookups still read `~/data`
+
+The claim that the repo was the only source was wrong when first made. A
+`Path.home()` sweep found FOUR copies of the N_tracers lookup: `util.ntracers`
+plus private `_get_ntracers` in `bao/mcmc.py`, `bao/desi_reference.py` and
+`bao/config_space.py`, each reading `desi_data.csv` straight from `~/data`. All
+three would have failed on a fresh checkout while `util.ntracers` worked.
+
+Verified identical on all six DR1 bins first, then pointed at `util.ntracers`.
+None of them handled the `components` route either (`LRG3` via
+`desi_tracers.csv`), so the consolidation removes a latent divergence as well as
+the portability break.
+
+What legitimately still references `~/data`: the bulk products that are NOT
+vendored -- `CAT_DIR` in the two generators (catalogues and randoms),
+`_DR1_DIR`/`_LIK_DIR` for the `.h5` bundles, `nz_data` for the published
+`*_nz.txt`, and `init_desi_data.py`'s own destination. Those are inputs to
+regeneration and validation, not things the forecast reads.
+
+Re-verified with `Path.home()` pointed at a nonexistent directory: all six
+`_get_ntracers` values, the `components` route, and the n(z) tables resolve.
+
 ### Deferred
 
 The physical `~/data/desi/nz_slices/*.csv` files are no longer read by anything,

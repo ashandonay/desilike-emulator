@@ -173,8 +173,9 @@ def bb_basis(obs_ells, obs_s, n_total, powers=(0, 2)):
 
 
 def _get_ntracers(tracer):
-    df = pd.read_csv(_DR1_DIR / "desi_data.csv")[["tracer", "passed"]].drop_duplicates("tracer")
-    return {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}[_NAME_MAP.get(tracer, tracer)]
+    """Delegates to util.ntracers (S80) -- see the note in bao/mcmc.py."""
+    from util import ntracers
+    return ntracers(tracer, "dr1")
 
 
 # ===========================================================================

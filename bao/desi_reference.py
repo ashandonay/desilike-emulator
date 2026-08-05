@@ -38,9 +38,9 @@ _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
 _LIK_DIR = _DR1_DIR / "likelihoods"
 
 def _get_ntracers(tracer):
-    df = pd.read_csv(_DR1_DIR / "desi_data.csv")[["tracer", "passed"]].drop_duplicates("tracer")
-    n_by = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
-    return n_by[_NAME_MAP_TO_DATA.get(tracer, tracer)]
+    """Delegates to util.ntracers (S80) -- see the note in bao/mcmc.py."""
+    from util import ntracers
+    return ntracers(tracer, "dr1")
 
 
 _BAO_RECON_FILE = {

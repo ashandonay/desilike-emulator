@@ -172,10 +172,14 @@ def _run_emcee(log_prob, names, fid, seed, nwalkers, niter, burn):
 # fourier-space sweep (+ bundle cov → precision machinery)
 # ===========================================================================
 def _get_ntracers(dataset, tracer):
-    df = pd.read_csv(Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv")
-    df = df[["tracer", "passed"]].drop_duplicates("tracer")
-    n_by = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
-    return n_by[_NAME_MAP.get(tracer, tracer)]
+    """Delegates to util.ntracers (S80).
+
+    Was a fourth private copy of this lookup, reading desi_data.csv straight
+    from ~/data -- which the repo no longer ships to, so it would have failed on
+    a fresh checkout while util.ntracers worked. Verified identical on all six
+    DR1 bins before switching."""
+    from util import ntracers
+    return ntracers(tracer, dataset)
 
 
 def _load_bundle(tracer):
