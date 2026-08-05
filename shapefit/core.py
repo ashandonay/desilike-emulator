@@ -7,10 +7,16 @@ the ShapeFit compressed parameters ``(qiso, qap, f_sigmar, m)``.
 Design decisions (see shapefit/README.md and shapefit/CHANGELOG.md):
 
 - Template: ``ShapeFitPowerSpectrumTemplate(apmode="qisoqap",
-  with_now="wallish2018")``. ``with_now`` MUST be explicit — the desilike
-  default ``'peakaverage'`` mislabels sigma ~2x and crashes chaotically across
-  wide emulator priors (see the long comment at bao/core.py:1641). ``dn``
-  stays fixed (un-fixing it changes the definition of ``m``).
+  with_now="peakaverage")``. ``with_now`` MUST be explicit, so that an upstream
+  default change cannot silently redefine the labels — that is the standing
+  lesson, and it is why this is spelled out rather than inherited. The VALUE is
+  ``'peakaverage'`` since S76: REPT overrides this argument unconditionally, so
+  the production path resolves there regardless, and it is what DESI's own
+  full-shape baseline (also desilike REPT) therefore ran. NB the
+  ``'peakaverage'`` instability recorded for the BAO path (bao/core.py:1641,
+  sigma mislabelled ~2x, chaotic w0 sensitivity) is a real risk carried into
+  this choice; S76 probes it across the prior box. ``dn`` stays fixed
+  (un-fixing it changes the definition of ``m``).
 - Theory: ``REPTVelocileptorsTracerPowerSpectrumMultipoles`` by default,
   pluggable via ``theory_cls``. This is DESI's own baseline -- 2024 V S4.7
   item 2, "We select velocileptors with its EPT option as our baseline choice"
@@ -740,11 +746,28 @@ def build_shapefit_likelihood(
     # ------------------------------------------------------------------
     # ShapeFit template + full-shape theory
     # ------------------------------------------------------------------
+    # with_now: 'peakaverage' repo-wide since S76. Two things forced this.
+    #
+    #   1. Under REPT (the production default) this argument is INERT.
+    #      REPTVelocileptorsPowerSpectrumMultipoles.initialize does
+    #      `self.template.init.update(with_now='peakaverage')` UNCONDITIONALLY
+    #      (desilike full_shape.py:1416) -- an .update(), not the
+    #      .setdefault(..., if_none=True) that bao.py:81 uses, so it overwrites
+    #      whatever is passed here. Same in FOLPSAX (2310) and PyBird with
+    #      nnlo counterterms (1688, 1953). Measured on the production object:
+    #      REPT -> peakaverage, Kaiser -> whatever is set here.
+    #   2. DESI's full-shape baseline IS desilike REPT, so their fit template
+    #      was forced the same way. peakaverage is what they ran.
+    #
+    # Setting it explicitly is therefore not a change to production numbers
+    # (S76 verified the REPT path is bit-identical); it makes Kaiser agree with
+    # REPT so that Kaiser-vs-REPT deltas measure the THEORY MODEL and not a
+    # silent de-wiggling swap on top of it.
     template = ShapeFitPowerSpectrumTemplate(
         z=z,
         fiducial=("DESI", dict(theta_cosmo)),
         apmode="qisoqap",
-        with_now="wallish2018",
+        with_now="peakaverage",
     )
 
     theory = theory_cls(template=template,

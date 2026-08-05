@@ -319,8 +319,20 @@ def _get_mean_extractor(tracer_bin: str, z_eff: float):
     else:
         from desilike.theories.galaxy_clustering import ShapeFitPowerSpectrumExtractor
 
-        # with_now MUST be explicit — same de-wiggling trap as the template
-        # (desilike defaults to 'peakaverage'; DESI uses Wallisch 2018).
+        # with_now MUST be explicit — same de-wiggling trap as the template.
+        # It is set to 'peakaverage', which happens to equal desilike's default;
+        # pinning it is still the point, so an upstream default change cannot
+        # silently redefine the labels.
+        #
+        # 'peakaverage' and not 'wallish2018' since S76, for two reasons:
+        #   - it is what DESI's compressed likelihood uses (S73, read at
+        #     7d51f4f8: PowerSpectrumBAOFilter(..., engine='peakaverage'));
+        #   - the covar path resolves to peakaverage no matter what it is
+        #     handed, because REPT overrides it (core.py, S76). Leaving the
+        #     mean path on wallish2018 would make the two halves of this
+        #     pipeline disagree with each other AND with DESI.
+        # Cost of the switch, measured in S74: +0.004 in dm (0.02-0.08 sigma)
+        # and +0.36% in f_sigmar, at DESI's MAP.
         #
         # `fiducial` is explicit for the same reason, even though 'DESI' is
         # already desilike's default. It is the denominator of every mean
@@ -337,7 +349,7 @@ def _get_mean_extractor(tracer_bin: str, z_eff: float):
         extractor = ShapeFitPowerSpectrumExtractor(
             z=float(key[1]),
             fiducial="DESI",
-            with_now="wallish2018",
+            with_now="peakaverage",
         )
         _MEAN_EXTRACTOR_CACHE[key] = extractor
         while len(_MEAN_EXTRACTOR_CACHE) > _MEAN_EXTRACTOR_MAXSIZE:

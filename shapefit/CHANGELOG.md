@@ -5631,9 +5631,153 @@ What is NOT still standing is any claim that wallish2018 is what DESI use for
 ShapeFit. We do not know that, and for the compressed map we now know the
 opposite.
 
-### Open
+### Open — RESOLVED in §76
 
 Find what `with_now` DESI's full-shape FITTING pipeline used (their FS fit
 configs, not the compressed-cosmology likelihood read in §73). If it is
 `peakaverage` there too, the covar path's engine is unsourced in the same way,
 and the §74 measurement does not cover it.
+
+§76: it IS `peakaverage`, and not by configuration — desilike's REPT class
+overrides `with_now` unconditionally, so both DESI's fit template and ours were
+forced there regardless of what either passed. The `with_now="wallish2018"` in
+the covar path never took effect. The table above resolves to: mean path
+peakaverage (matched to §73 by the §76 switch), covar path peakaverage
+(always was).
+
+
+## §76 — §75's open question, answered from desilike's source: REPT forces `peakaverage`, and our `with_now` was never in effect
+
+§75 left one question open: what `with_now` did DESI's full-shape FITTING
+pipeline use? It is not answerable from their configs, because **the theory
+class overrides the config.**
+
+### The mechanism
+
+`REPTVelocileptorsPowerSpectrumMultipoles.initialize` (desilike
+`full_shape.py:1416`):
+
+```python
+self.template.init.update(with_now='peakaverage')
+```
+
+Unconditional `.update()`. Compare `bao.py:81`, which uses
+`setdefault('with_now', 'peakaverage', if_none=True)` and therefore RESPECTS an
+explicit caller choice. The same unconditional override appears in
+`FOLPSAXPowerSpectrumMultipoles` (2310) and in PyBird when
+`with_nnlo_counterterm` is on (1688, 1953).
+
+`core.py` builds the template with `with_now=...` and then hands it to
+`theory_cls`. So the argument is overwritten for every theory DESI or we would
+plausibly use, EXCEPT Kaiser. Measured on the real production object
+(`mcmc.build("LRG2", theory, cosmo="dr1_map")`):
+
+```
+rept    -> template.with_now='peakaverage'   PeakAveragePowerSpectrumBAOFilter
+kaiser  -> template.with_now='wallish2018'   Wallish2018PowerSpectrumBAOFilter
+```
+
+### Three consequences
+
+1. **The covar path has always been `peakaverage`.** Every covar training set,
+   every Fisher sigma, and the §72 chains running now. `with_now="wallish2018"`
+   at the template was inert in production from the day it was written.
+2. **This answers §75 favourably.** DESI's full-shape baseline IS desilike REPT
+   (2024 V §4.7 item 2, velocileptors/EPT). Their fit template was forced the
+   same way ours was. The covar path already agrees with DESI — silently, and
+   for a reason neither analysis chose.
+3. **Kaiser-vs-REPT deltas were never clean.** Any sigma difference attributed
+   to the theory model also contained a de-wiggling engine swap. This affects
+   `validate_forecast.py`'s sensitivity checks and Kaiser smoke comparisons —
+   not production numbers.
+
+### Decision: `peakaverage` everywhere (mean path switched)
+
+The mean path (`fourier_space.py` extractor, no theory class) was the only place
+`wallish2018` was ever live — and it is the one place DESI are known to use
+`peakaverage` (§73). Leaving it would make the two halves of this pipeline
+disagree with each other AND with DESI. Switched.
+
+§74 declined this switch for two reasons. Both are now void:
+
+  - *"forces a full regeneration"* — the regeneration is already required for
+    §58 (the per-tracer footprint never reached the generators), so the switch
+    is free if it lands first.
+  - *"`peakaverage` is numerically unstable"* — that was a BAO-path finding
+    (`project_bao_dewiggling_engine`). It does not transfer. See below.
+
+Note the covar-side edit is documentation, not a change: it is bit-identical
+under REPT (verified above) and only makes Kaiser agree with REPT.
+
+### The stability probe (`probe_dewiggle_engine.py`), LRG2 and QSO
+
+§74's caveat — "measured at ONE cosmology" — became load-bearing once the switch
+was made, so it was tested across the prior box: MAP + 8 corners of
+(`omega_cdm`, `h`, `ln10A_s`) + 4 interior points, both engines.
+
+**Robustness — identical, so the engine is not the variable:**
+
+```
+peakaverage : 8/13 ok   FAILED at oc0.99 (all 4 corners), oc0.6_mid
+wallish2018 : 8/13 ok   FAILED at the SAME five points
+```
+
+Both tracers, same five. That is CLASS failing on absurd cosmologies
+(`omega_cdm` >= 0.6), not de-wiggling.
+
+**Smoothness — `wallish2018` is the chaotic one HERE.** Nudging `omega_cdm` by
+1e-9 relative (the BAO path's crash signature was exactly this: labels jumping
+under a 1e-9 nudge):
+
+```
+                          LRG2       QSO
+MAP           peakaverage 5.57e-05   5.53e-05
+              wallish2018 6.50e-04   6.30e-04    12x
+oc0.01_h0.2   peakaverage 2.26e-06   2.28e-06
+              wallish2018 5.67e-04   5.67e-04   250x
+oc0.05_mid    peakaverage 2.03e-06   1.70e-06
+              wallish2018 2.58e-04   3.24e-04   127-190x
+```
+
+The instability §74 feared does not transfer to the shapefit mean path; the
+inequality runs the other way, by 12-250x. Two honest caveats: both engines sit
+far above the ~1e-9 an exactly-smooth function would give, so both have a
+numerical noise floor and only their RATIO is being compared; and the metric is
+per-label relative, which inflates `m` because `m` is near zero at the MAP.
+
+**Agreement — §74's "0.02-0.08 sigma" is a MAP-only number:**
+
+```
+            LRG2 absmax    QSO absmax
+qiso        0.000000       0.000000     (AP geometry: engine-independent)
+qap         0.000000       0.000000
+f_sigmar    0.996264       1.361711
+m          17.113941      17.114457
+```
+
+At the MAP the engines agree to +0.004 in `m` (§74). In the far corners they
+differ by up to **17**. The engine choice is nearly irrelevant near the data and
+enormous at the box edges — which is where emulator training samples mostly
+live. This is the strongest argument for matching DESI rather than picking on
+aesthetics: at the corners there is no small-difference excuse.
+
+### A defect probed for and NOT found
+
+At the exact corner `oc=0.01, h=0.2`, `wallish2018` returns `f_sigmar` =
+**0.000000** and `m` = -19.08 while `peakaverage` returns finite values. Zero is
+finite, so `_worker_run_mean_targets`'s `np.isfinite` guard passes it — the
+label would enter training silently.
+
+Scanned all existing mean training data for it: **0 occurrences in 9072 labels**
+(v1 3072, v2 6000; minimum `f_sigmar` ~1e-5 in v1/v2, never 0). The pathology is
+a measure-zero box corner that random sampling does not hit exactly. Recorded as
+a latent edge case, not a live data defect, and moot after the switch.
+
+### Follow-ups
+
+  - The `mcmc.py --cosmology dr1_map` / `comparison_plots.py --reference dr1`
+    naming mismatch (same cosmology, two spellings; §69 renamed one and not the
+    other). Deliberately deferred: the 24 running jobs write `"dr1_map"` into
+    every diag record. Add `dr1` as an alias in both after the sweep.
+  - Regenerate golden + v2 with §58 AND this switch in, together.
+  - Re-examine any Kaiser-vs-REPT sigma delta recorded before this entry.
