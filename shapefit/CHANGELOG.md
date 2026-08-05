@@ -6463,14 +6463,23 @@ definitions had already converged, so this is mostly a consistency fix. ELG2's
 17% is the one real number, and it goes the way §54 predicted — that entry
 measured our ELG2 density at 0.802 of DESI's FKP^2-weighted <NX>, i.e. 20% low.
 
-Effect on sigma (Kaiser, at DESI's MAP):
+Effect on sigma. **These were first measured with KAISER, which was a poor
+choice** -- Kaiser under-reports sigma by 1.6-2.1x and the whole question is
+about sigma. Redone on REPT (production) in §86; both are kept because the
+relative shift is close between them, but only the REPT row should be quoted.
 
 ```
-                  LRG2      LRG3      ELG2
+KAISER            LRG2      LRG3      ELG2
 sigma_qiso       -1.32%    -1.94%   -12.55%
 sigma_qap        -1.14%    -1.72%   -11.22%
 sigma_f_sigmar   -0.93%    -1.41%   -10.16%
 sigma_m          -0.67%    -1.05%    -8.22%
+
+REPT              LRG2                ELG2
+sigma_qiso       -0.96%              -11.67%
+sigma_qap        -0.76%              -10.37%
+sigma_f_sigmar   -0.64%               -8.98%
+sigma_m          -0.29%               -5.33%
 ```
 
 ### LRG3_ELG1 is excluded, and not as a convenience
@@ -6504,3 +6513,67 @@ emulator trains on.
 
 This changes every covar sigma, so it must land with the golden + v2
 regeneration alongside §58, §76 and §77 — one pass, not four.
+
+
+## §86 — the sigma deficit does not track n-bar, so §85 stands
+
+§85 raised ELG2's density 17% and tightened its sigma, which moves it AWAY from
+DESI. If the sigma deficit were a density artefact that would be evidence
+against §85, so it needed testing rather than asserting.
+
+### The scan (REPT, all six full-shape bins, at DESI's MAP)
+
+P/D = ours / DESI's published, so >1 is conservative and <1 optimistic:
+
+```
+tracer   z_eff   PD_qiso  PD_qap   PD_m     n-bar range (e-4)
+BGS      0.295    0.628    0.975   0.681     3.0 - 3.7
+LRG1     0.509    1.118    1.147   1.206     3.6 - 3.8
+LRG2     0.706    0.908    0.961   0.977     3.5 - 4.0
+LRG3     0.918    0.745    0.733   0.807     0.5 - 3.9
+ELG2     1.316    0.602    0.552   0.879     0.95 - 2.2
+QSO      1.489    0.778    0.808   0.944     0.21 - 0.31
+```
+
+**It does not track n-bar.** Two independent disproofs:
+
+  - LRG1 and LRG2 have near-identical densities (3.6-3.8 vs 3.5-4.0e-4) and
+    differ by ~20% in P/D (1.12 vs 0.91). Same density, different deficit.
+  - QSO's density is 10x below ELG2's yet it agrees BETTER (0.78-0.94 vs
+    0.55-0.88). A shot-noise-driven deficit would run the other way.
+
+So §85 is orthogonal to the deficit and stands. It is a correctness fix on its
+own terms -- DESI's own density definition, independently corroborated by §54's
+0.802 ELG2 ratio -- and ELG2's 12% shift is the consequence of repairing a real
+17% density error, not evidence against it.
+
+### Two things the scan turned up that were not being looked for
+
+**LRG1 OVER-predicts** (P/D 1.12-1.21): our forecast sigma is LARGER than DESI
+achieved, where every other bin is optimistic. This contradicts the "uniform
+~23% under-prediction" carried over from the BAO-era note
+(`project_fisher_vs_desi_current_sigmas`), which is now wrong for full shape in
+both magnitude and sign.
+
+**The spread is per-TARGET, not per-tracer.** BGS is 0.628 on `qiso` and 0.975
+on `qap`; ELG2 is 0.552 on `qap` and 0.879 on `m`. No single scalar systematic
+inflation can produce that pattern, which points at the theory/nuisance
+treatment or DESI's per-tracer systematic budget rather than anything n-bar
+shaped.
+
+### Correction to §85's record
+
+§85 quoted Kaiser sigma deltas without labelling them, and Kaiser was the wrong
+tool for a sigma question (it under-reports by 1.6-2.1x). Redone on REPT: the
+relative shifts are close (ELG2 -12.55% -> -11.67% on qiso), so §85's conclusion
+is unaffected, but the absolute P/D that Kaiser implied (~0.34-0.53) was badly
+misleading -- REPT puts LRG2 at 0.91-0.98, essentially at DESI. §85's entry now
+carries both rows, labelled.
+
+### `plot_nz.py`
+
+Plots n(z) per tracer bin as the pipeline consumes it -- via
+`cov_nbar_per_slice`, not the raw columns, so the §85 NX/`N*frac/V` split is
+visible. Steps rather than lines, because the profile is piecewise-constant and
+a smooth curve would imply an interpolation nothing performs. `--n-factor`
+redraws at any multiple of DR1 to see the design axis move.

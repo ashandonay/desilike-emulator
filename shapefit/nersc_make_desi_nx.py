@@ -57,6 +57,12 @@ STEMS = {
     "ELG2": "ELG_LOPnotqso",
     "QSO": "QSO",
     "LRG3_ELG1": "LRG+ELG_LOPnotqso",
+    # ELG1 is DESI's 0.8-1.1 ELG slice. It is not a fit bin -- it exists so the
+    # COMBINED bin's total density can be formed as NX(LRG3) + NX(ELG1), which
+    # is what the covariance needs and what <NX> on the combined catalogue does
+    # NOT give (that averages the parents, S85). Run it with the combined bin's
+    # edges: --tracers ELG1 --edges-from LRG3_ELG1_nz_slices.csv
+    "ELG1": "ELG_LOPnotqso",
 }
 
 
@@ -127,6 +133,10 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tracers", nargs="+", default=sorted(STEMS),
                     choices=sorted(STEMS))
+    ap.add_argument("--edges-from", type=str, default=None,
+                    help="take slice edges from this {tracer}_nz_slices.csv "
+                         "instead of the one named after --tracers. Needed for "
+                         "ELG1, which has no bin file of its own.")
     ap.add_argument("--slices-dir", type=Path, default=Path("."),
                     help="where the {tracer}_nz_slices.csv files are "
                          "(default: alongside this script)")
@@ -139,7 +149,8 @@ def main() -> int:
 
     for tracer in a.tracers:
         print(f"\n== {tracer} ==")
-        edges, zmid = read_slices(a.slices_dir / f"{tracer}_nz_slices.csv")
+        src = a.edges_from or f"{tracer}_nz_slices.csv"
+        edges, zmid = read_slices(a.slices_dir / src)
         nx, s1, wfm, p0e = build(tracer, a.nfiles, a.cat_dir, edges, zmid)
         out = a.out or Path(f"{tracer}_desi_nx.csv")
         with open(out, "w", newline="") as f:
