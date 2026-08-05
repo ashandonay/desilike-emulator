@@ -3953,3 +3953,65 @@ independent check on the count. Trimming would foreclose pointing bedcosmo at
 the vendored copy, which is the fix for the two-copy divergence risk (the repo
 reads `data/dr1/`, bedcosmo reads `~/data/desi/bao_dr1/`; byte-identical today,
 nothing keeps them so).
+
+## §90 — the config-space σ-driver moves onto DESI's NX (S85/S87 finally reach it)
+
+S85 moved the covariance density onto DESI's `NX` and S87 onto `nbar_total`, but
+both stopped at the Fourier path. `config_space.py` -- which
+`generate_covar_data.py` documents as "the emulator σ-driver" -- never called
+`cov_nbar_per_slice` at all; it built `n = N*frac/V` via
+`fkp_analytic_cov.load_nz_slices`. So the BAO training labels were still being
+produced with the pre-S85 density while shapefit used the new one, and S87's
+"one code path" claim was true only within `cov_nbar_per_slice`.
+
+The wiring was clearly intended -- `cov_nbar_per_slice`'s own docstring says
+"exactly linear in N_tracers, which `config_space` relies on when it caches
+`nbar_per_N`" -- it was simply never done, and `core.py`'s three-density comment
+made the gap look like a documented fact rather than a TODO.
+
+`_nz_slices_nx(tracer, cosmo, area, N, *, dataset)` is the new single choke
+point: `load_nz_slices` supplies GEOMETRY (z_mid, V_shell at this cosmology and
+area), `core.cov_nbar_per_slice` supplies DENSITY. It lives in `config_space`,
+not `fkp_analytic_cov`, deliberately -- that module is numpy-only and must not
+acquire a `core` (desilike) dependency.
+
+Wired at all four sites: `XiSigmaGenerator.__init__`,
+`gaussxi_cov_on_bundle_grid`, `alpha_sn_check`, and both in
+`shapefit/compare_to_desi`. The last two are diagnostics, and they matter: a
+diagnostic on a different n-bar than the pipeline it audits measures nothing.
+The only surviving `load_nz_slices` call is inside `_nz_slices_nx` itself.
+
+### Verification
+
+  - all six tracers report `NX total`; no fallbacks;
+  - **linearity in N exact (0.0e+00)** at N=2.3xN_fid, so `_nbar_per_N` caching
+    stays valid -- this was the one thing that could have broken silently;
+  - geometry (z_mid, V) bit-identical to the old path for every tracer;
+  - density ratio new/old: BGS 1.014, LRG1 1.002, LRG2 1.020, QSO 1.003,
+    ELG2 1.173, LRG3_ELG1 0.921-1.243 (matching S87's independent measurement).
+
+σ through the actual driver (`XiSigmaGenerator.sigma_triplet`, fiducial N):
+
+```
+            DH        DM        DV
+BGS       -0.45%    -0.45%    -0.45%
+LRG1      -0.05%    -0.08%    -0.07%
+LRG2      -0.46%    -0.63%    -0.57%
+LRG3_ELG1 -2.15%    -2.85%    -2.65%
+ELG2      -8.62%   -10.24%    -9.91%
+QSO       -0.24%    -0.24%    -0.24%
+```
+
+**This makes the DESI comparison worse, not better.** σ tightens everywhere
+(more density -> less shot noise) and our BAO σ already under-predicts DESI, so
+the deficit widens, most of all for ELG2. That is not an argument against the
+change -- the density is measured from DESI's own randoms and the old one was
+never defensible -- but it must not be reported as an improvement. Whatever
+explains the deficit, it is not this.
+
+A fallback here now prints to **stderr**, not `warnings.warn`: this module calls
+`warnings.filterwarnings("ignore")` at import, which would have swallowed
+precisely the message that must never be swallowed (the S58 failure mode).
+
+Every covar σ moves, so this lands with the golden + v2 regeneration alongside
+S58, S76, S77, S85 and S87.

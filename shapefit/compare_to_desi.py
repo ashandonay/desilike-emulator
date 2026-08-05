@@ -543,10 +543,14 @@ def _windowed_analytic_cov(tracer: str, win: Dict, P_ells: np.ndarray,
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bao"))
     import fkp_analytic_cov as fac
 
+    import config_space as _cs
+
     cosmo = get_cosmo(("DESI", dict(theta)))
-    slices = fac.load_nz_slices(
-        tracer, cosmo, area_deg2=tracer_area(tracer, "dr1"),
-        N_design=float(ntracers(tracer, "dr1")), dataset="dr1")
+    # DESI NX density, same as the production covariance (S90); previously this
+    # built its own N*frac/V, so it audited a pipeline that no longer exists.
+    slices, _ = _cs._nz_slices_nx(
+        tracer, cosmo, tracer_area(tracer, "dr1"),
+        float(ntracers(tracer, "dr1")), dataset="dr1")
     blocks = fac.fkp_analytic_cov(
         k=win["th_k"], P_ells_in=P_ells, ells_in=win["th_ells"],
         ells_obs=win["th_ells"], slices=slices,
@@ -582,10 +586,13 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
         template=template, k=k, ells=(0, 2, 4))
     theory(**{kk: v for kk, v in base["info"]["params"].items()
               if kk in ("b1", "sn0", "sigmapar", "sigmaper")})
+    import config_space as _cs
+
     cosmo = get_cosmo(("DESI", dict(ours["theta"])))
-    slices = fac.load_nz_slices(
-        tracer, cosmo, area_deg2=tracer_area(tracer, "dr1"),
-        N_design=float(ntracers(tracer, "dr1")), dataset="dr1")
+    # DESI NX density, as above (S90).
+    slices, _ = _cs._nz_slices_nx(
+        tracer, cosmo, tracer_area(tracer, "dr1"),
+        float(ntracers(tracer, "dr1")), dataset="dr1")
     blocks = fac.fkp_analytic_cov(
         k=k, P_ells_in=np.asarray(theory.power), ells_in=(0, 2, 4),
         ells_obs=_OUR_ELLS, slices=slices,

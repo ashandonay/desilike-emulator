@@ -178,6 +178,46 @@ def _get_ntracers(tracer):
     return ntracers(tracer, "dr1")
 
 
+def _nz_slices_nx(tracer, cosmo, area_deg2, N_design, *, dataset):
+    """NZSlices whose n-bar is DESI's NX (`nbar_total`), not N*frac/V (S90).
+
+    `load_nz_slices` supplies the GEOMETRY -- z_mid and V_shell recomputed at
+    this cosmology and area -- and `core.cov_nbar_per_slice` supplies the
+    DENSITY, so the config-space covariance uses the same n-bar as z_eff and the
+    Fourier path.
+
+    Until S90 this module built n-bar = N*frac/V independently. That was the
+    third density for one sample (core.py's note at the z_eff block names all
+    three), and removing it was the whole point of S85/S87 -- but the wiring
+    stopped at the Fourier path, so the emulator's own sigma-driver kept the old
+    one. The two `load_nz_slices` frac/V filters are identical to
+    `core._load_nz_slice_fractions` (slice_fraction > 0, renormalised, same file
+    and order), which is what lets the arrays be combined element-wise; the
+    shape check below is the guard if that ever drifts apart.
+
+    Returns (NZSlices, source) -- the source string is propagated rather than
+    swallowed because a silent fallback here is the S58 failure mode.
+    """
+    sl = load_nz_slices(tracer_bin=tracer, cosmo=cosmo, area_deg2=area_deg2,
+                        N_design=N_design, dataset=dataset)
+    _, _, frac, _ = core._load_nz_slice_fractions(tracer, dataset=dataset)
+    if frac.shape != np.asarray(sl.nbar).shape:
+        raise ValueError(
+            f"{tracer}: slice-fraction shape {frac.shape} != geometry "
+            f"{np.asarray(sl.nbar).shape}; the two n(z) readers have diverged")
+    nbar, src = core.cov_nbar_per_slice(tracer, frac, sl.V, N_design,
+                                        dataset=dataset)
+    if not str(src).startswith("NX"):
+        # Deliberately stderr, not warnings.warn: this module calls
+        # warnings.filterwarnings("ignore") at import, which would swallow the
+        # one message that must never be swallowed.
+        print(f"WARNING {tracer}: config-space covariance fell back to '{src}' "
+              "instead of DESI NX -- the sigma this produces is NOT the "
+              "S85/S87 density", file=sys.stderr, flush=True)
+    return NZSlices(z_mid=sl.z_mid, nbar=np.asarray(nbar, dtype=np.float64),
+                    V=sl.V), str(src)
+
+
 # ===========================================================================
 # §2  Config-space Gaussian covariance (Grieb 2016, double-Bessel)
 #     ↔ the FKP P-space Gaussian cov in core (cov_engine="desilike")
@@ -419,11 +459,11 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     cfg = TRACER_CONFIGS[tracer]
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
     cosmo = core.get_cosmo(("DESI", dict(theta)))
-    slices = load_nz_slices(
-        tracer_bin=tracer, cosmo=cosmo, area_deg2=_tracer_area(tracer),
+    slices, _ = _nz_slices_nx(
+        tracer, cosmo, _tracer_area(tracer),
         # This module is DR1-only by construction: _get_ntracers reads
-        # _DR1_DIR/desi_data.csv and _AREA is the DR1 footprint (S62c).
-        N_design=float(_get_ntracers(tracer)), dataset="dr1",
+        # desi_data.csv's `passed` and _AREA is the DR1 footprint (S62c).
+        float(_get_ntracers(tracer)), dataset="dr1",
     )
 
     P_wide = _wide_Pell(tracer, info)  # (3, Nk) for ells (0,2,4)
@@ -699,12 +739,14 @@ class XiSigmaGenerator:
             {**core.PARAM_DEFAULTS, **_FID})
         cosmo_fid = core.get_cosmo(("DESI", dict(theta_fid)))
         self._N_fid = float(_get_ntracers(tracer))
-        self.slices = load_nz_slices(
-            tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_tracer_area(tracer),
-            N_design=self._N_fid, dataset=self.dataset)
-        # n̄ is exactly linear in N_design (load_nz_slices: nbar = N·frac/V_shell
-        # at the fixed frame), so the cov shot-noise term can be rebuilt for any
-        # sampled N_tracers by rescaling — no pandas re-read, no geometry recompute.
+        self.slices, self.nbar_source = _nz_slices_nx(
+            tracer, cosmo_fid, _tracer_area(tracer),
+            self._N_fid, dataset=self.dataset)
+        # n̄ is still exactly linear in N_design after S90 — cov_nbar_per_slice
+        # returns nbar_total × α(N) with α = N/N_dataset, and its docstring
+        # commits to that linearity for this cache — so the cov shot-noise term
+        # can be rebuilt for any sampled N_tracers by rescaling: no pandas
+        # re-read, no geometry recompute.
         self._nbar_per_N = np.asarray(self.slices.nbar, dtype=np.float64) / self._N_fid
 
         # Theory s-grid + window: the windowed (theory-grid) cov is what feeds
