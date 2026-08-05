@@ -1,7 +1,7 @@
 import warnings
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import json
@@ -210,6 +210,25 @@ _DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
 # nz_slices_path.
 NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
 
+# Small DESI-derived reference tables VENDORED into the repo (S79), so a fresh
+# checkout runs the forecast with no downloads at all. 39 KB total: the n(z)
+# slice tables, the {tracer}_desi_nx.csv summaries reduced from DESI's randoms
+# (which are 20.9 GB and exist only to produce these ~10 KB), and the two
+# N_tracers tables.
+#
+# ~/data/desi WINS when present. The vendored copy is a FALLBACK, not an
+# override, so that `make_nz_slices.py --install` keeps taking effect
+# immediately and this box's behaviour is unchanged. See data/dr1/PROVENANCE.md.
+REPO_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
+def _repo_fallback(local: Path, dataset: str, *parts: str) -> Optional[Path]:
+    """The vendored twin of `local`, if `local` is absent and the twin exists."""
+    if local.exists():
+        return local
+    cand = REPO_DATA_DIR.joinpath(str(dataset), *parts)
+    return cand if cand.exists() else None
+
 
 def nz_slices_path(filename: str, dataset: str,
                    base_dir=None) -> Path:
@@ -237,6 +256,12 @@ def nz_slices_path(filename: str, dataset: str,
     scoped = base / str(dataset) / filename
     if scoped.exists():
         return scoped
+
+    # Vendored fallback (S79): a fresh checkout has no ~/data at all.
+    if base_dir is None:
+        vendored = REPO_DATA_DIR / str(dataset) / "nz_slices" / filename
+        if vendored.exists():
+            return vendored
 
     flat = base / filename
     if str(dataset) == "dr1" and flat.exists():
@@ -316,7 +341,13 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     if components:
         if dataset not in _COMPONENTS_CACHE:
             import pandas as pd
-            tpath = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_tracers.csv"
+            tpath = _repo_fallback(
+                Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_tracers.csv",
+                dataset, "desi_tracers.csv")
+            if tpath is None:
+                raise FileNotFoundError(
+                    f"No desi_tracers.csv for {dataset!r} in ~/data/desi/bao_{dataset}/ "
+                    f"or {REPO_DATA_DIR / dataset}")
             tdf = pd.read_csv(tpath)
             _COMPONENTS_CACHE[dataset] = {
                 str(r["tracer"]): float(r["targets"]) * float(r["comp"]) * float(r["efficiency"])
@@ -330,7 +361,13 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
 
     if dataset not in _NTRACERS_CACHE:
         import pandas as pd
-        path = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv"
+        path = _repo_fallback(
+            Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv",
+            dataset, "desi_data.csv")
+        if path is None:
+            raise FileNotFoundError(
+                f"No desi_data.csv for {dataset!r} in ~/data/desi/bao_{dataset}/ "
+                f"or {REPO_DATA_DIR / dataset}")
         df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
         _NTRACERS_CACHE[dataset] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
     cache = _NTRACERS_CACHE[dataset]

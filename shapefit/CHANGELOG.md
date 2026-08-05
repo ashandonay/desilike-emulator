@@ -5951,3 +5951,99 @@ It also only covers quantities both paths currently share. It would NOT have
 caught §65 (a stale denominator in plotting code, which is neither path) or §63's
 misuse of a signed mean. Run it before every regeneration, not instead of
 thinking.
+
+
+## §79 — the reference tables are 39 KB; vendor them and the forecast needs no downloads
+
+Two things landed: `init_desi_data.py` (fetch every DESI input over public
+HTTPS) and, more usefully, the realisation that most of what a fresh machine
+needs is tiny and already derived.
+
+### `init_desi_data.py`
+
+Public and anonymous — no NERSC account, no MFA, no DTN pull. The recipe in
+`project_shapefit_bundle_blocker` (scp from dtn01) was an outage workaround from
+when `data.desi.lbl.gov` was Spin-backed and down; both endpoints return 200 now.
+
+Groups, measured (`--dry-run` HEADs every URL): `lss` 1.12 GB, `randoms` 20.9 GB
+at nran=2, `bao` 3 MB, `fs` 4 MB, `cov` 13 MB.
+
+Validated by pointing it at this box: the manifest resolved all 62 non-random
+files to the exact bytes on disk. That is what caught a wrong FS bundle name —
+known-local files showing as missing. (`likelihood_shapefit_spectrum-poles-
+rotated+bao-recon_syst-rotation-hod-photo_*` is a different, 35 KB product; the
+code loads `likelihood_spectrum-poles-rotated_syst-hod_*`.)
+
+Two traps handled: DESI serves `+` as `%2B` while every consumer here globs for
+a literal `+`, so the encoding applies to the URL only; and `--force` unlinks
+first, because `curl -C -` against a complete file resumes to a no-op.
+
+### The randoms are NOT required — and the reason matters
+
+The claim that the 20.9 GB was needed for the `_desi_nx` tables was wrong.
+`NX` and `WEIGHT` are columns in the `clustering.dat.fits` catalogues too.
+Measured, z_eff vs DESI 2024 V Table 1, six tracers:
+
+```
+S1 randoms + NX randoms   0.062% mean   0.121% max   <- the shipped tables
+S1 data    + NX randoms   0.064%
+S1 randoms + NX data      0.117%
+S1 data    + NX data      0.111%
+(pre-S53, for scale:      0.313% mean, 0.653% max)
+```
+
+`S1` from the data costs nothing; `NX` from the data costs everything. The
+mechanism, and it is not noise:
+
+  - `S1` is a SUM of weights. Data and randoms differ by a constant 0.0772
+    (~1/13, the density ratio) which cancels identically in Eq. (2.1)'s
+    normalised ratio. Its residual 0.30% z-scatter sits at the 0.36% Poisson
+    floor (77k objects/slice) — unbiased, just noisier.
+  - `NX` is a mean of a DENSITY weighted by the objects themselves. Galaxies
+    preferentially occupy high-`NX` regions, so the data-weighted mean is
+    <n^2>/<n> rather than <n> — biased 4.8% high. Randoms sample the SELECTION
+    FUNCTION, which is exactly what Eq. (2.1) means by `n_ran`.
+  - The bias is z-DEPENDENT (0.41% scatter), which is why it survives the
+    ratio. The two tracers that degrade most, LRG3 (0.9185 -> 0.9199) and ELG2
+    (1.3168 -> 1.3199), are the ones with the steepest n(z) evolution across
+    their bin — the same LRG3 shape sensitivity §54 flagged.
+
+Same object-weighted vs selection-weighted distinction as §48's retracted "29%
+low" and §50's 1.394-vs-1.227. There is no reweighting that recovers the
+selection function from the data alone, and inventing a correction factor is
+exactly the kind of fudge this project rejects.
+
+### Vendoring: 39 KB, and the forecast stops needing downloads
+
+The `_desi_nx.csv` tables ARE the reduction of the randoms — 20.9 GB in, ~10 KB
+out. They were unobtainable on a fresh machine only because they sat in
+`~/data`. Committed to `data/dr1/`:
+
+| | size |
+|---|---|
+| `{tracer}_nz_slices.csv` (7) | n(z) shape |
+| `{tracer}_desi_nx.csv` (6) | the randoms reduction |
+| `desi_data.csv`, `desi_tracers.csv` | the `N_tracers` design box |
+| **total** | **39 KB** |
+
+`~/data/desi` still WINS when present; the vendored copies are a fallback
+(`util._repo_fallback`, and a branch in `util.nz_slices_path`), so
+`make_nz_slices.py --install` keeps taking effect and this box is unchanged.
+
+`data/dr1/PROVENANCE.md` records what produced each file, sha256s, and the table
+above — so the `NX` bias is not rediscovered.
+
+Verified two ways: with `Path.home()` pointed at a nonexistent directory, all
+seven `N_tracers` values and all n(z)/`desi_nx` tables resolve from the repo;
+and with `~/data` present, `benchmark_desi.py` is bit-identical (0.062% / 0.121%).
+
+The `N_tracers` box mattered most here: `util.ntracers` reads `desi_data.csv` /
+`desi_tracers.csv`, so before this the pipeline's whole input axis was
+unobtainable on a new machine.
+
+### Still open
+
+`LRG3_ELG1_desi_nx.csv` does not exist, so that bin still falls back to
+`nbar_file`. It needs the `LRG+ELG` randoms (~3.3 GB, `--what randoms --nran 1`),
+once, after which it is vendored like the rest and nobody needs randoms again.
+That is the last thing keeping `nbar_file` alive.
