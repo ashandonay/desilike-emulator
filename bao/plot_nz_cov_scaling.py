@@ -71,9 +71,10 @@ def _fid_theta():
     return theta, hrdrag
 
 
-def nbar_of_z(tracer, cosmo, N_tracers):
+def nbar_of_z(tracer, cosmo, N_tracers, dataset="dr1"):
     """nbar(z) per slice exactly as build_bao_likelihood does (core.py:1201)."""
-    z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(tracer)
+    z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
+        tracer, dataset=dataset)
     chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]))
     chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]))
     V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * (_AREA / _SKY)
@@ -83,7 +84,7 @@ def nbar_of_z(tracer, cosmo, N_tracers):
 K_PIVOT = 0.14  # h/Mpc, BAO Fisher kernel peak (matches core._compute_z_eff_from_nz)
 
 
-def nP_of_z(tracer, cosmo, fo, b1, z_eff=None):
+def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, dataset="dr1"):
     """n̄P(z) per slice at k=K_PIVOT, using the published nominal-design n̄(z).
 
     n̄ = nbar_file (the DESI design local density, from parse_desi_nz), and
@@ -91,7 +92,8 @@ def nP_of_z(tracer, cosmo, fo, b1, z_eff=None):
     nP at z_eff). nP(z_eff) interpolates n̄ onto z_eff and evaluates P there;
     None if z_eff is not given.
     """
-    z_mid, z_edges, frac, nbar_file = core._load_nz_slice_fractions(tracer)
+    z_mid, z_edges, frac, nbar_file = core._load_nz_slice_fractions(
+        tracer, dataset=dataset)
     P_g = np.array([b1 ** 2 * float(core._linear_pk_1d(fo, z=float(z))(
         np.array([K_PIVOT]))[0]) for z in z_mid])
     nP = np.asarray(nbar_file, dtype=np.float64) * P_g

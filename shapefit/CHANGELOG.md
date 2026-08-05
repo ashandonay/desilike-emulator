@@ -5781,3 +5781,95 @@ a latent edge case, not a live data defect, and moot after the switch.
     every diag record. Add `dr1` as an alias in both after the sweep.
   - Regenerate golden + v2 with §58 AND this switch in, together.
   - Re-examine any Kaiser-vs-REPT sigma delta recorded before this entry.
+
+
+## §77 — §62c done: the n(z) layer is release-scoped, and the last uniform FKP pivot is gone
+
+Two of the long-standing open items, landed together because they touch the
+same layer. Behaviour-preserving: `benchmark_desi.py` reproduces §53's numbers
+exactly (mean |err| 0.062%, max 0.121%, all six pivots matching Eq. 8.4).
+
+### §62c — `dataset` threaded through the n(z) layer
+
+Every other release-scoped lookup (`ntracers`, `tracer_area`,
+`get_default_save_path`, `tracers.yaml` overrides) took a `dataset`. The n(z)
+tables did not, so with DR2 present `ntracers` would switch release while
+`_load_nz_slice_fractions` silently returned DR1 shapes.
+
+**(1) Release-scoped path.** New `util.nz_slices_path(filename, dataset)`:
+`{base}/{dataset}/{filename}`, with the flat pre-§62c layout accepted ONLY for
+dr1 and only with a `DeprecationWarning`. For any other release a missing
+scoped directory RAISES rather than falling back — flat *is* dr1, so silently
+serving it to DR2 is the bug being fixed.
+
+It lives in `util.py`, beside the other release-scoped lookups, and NOT in
+`bao/core.py`: `bao/fkp_analytic_cov.py` needs it too, and a bare
+`import core` there resolves to `shapefit/core.py` whenever cwd is `shapefit/`
+— the exact collision the build plan warns about.
+
+**(2) `dataset` is keyword-only and REQUIRED** on `_load_nz_slice_fractions`,
+`_desi_nz_geometry` and `fkp_analytic_cov.load_nz_slices`. A default of "dr1"
+would have preserved the very failure mode being fixed (a DR2 caller that
+forgets still gets DR1); with no default, a missed call site is a `TypeError`
+at import-adjacent time instead of a subtly wrong covariance. All 14 call sites
+audited and updated; `_compute_v_eff_fkp` gained the parameter, every other
+caller already had a release in scope.
+
+**Found while threading:** `_DESI_NX_CACHE` was keyed on `tracer_bin` alone, so
+a DR2 run following a DR1 run *in the same process* would have been served DR1
+rows from cache even with the paths fixed. Key is now `(dataset, tracer_bin)`.
+
+**(3) `make_nz_slices.py --dataset`** with a `_RELEASES` table holding dr1
+only. Anything else exits with a message naming what would have to be audited
+first (catalogue stems, slice edges, areas, counts, download URL). Stubbed to
+fail loudly, per §62c — the danger is emitting DR1 tables into a `{dataset}/`
+directory that then looks populated. Output is now release-scoped too.
+
+The 13 live tables were COPIED (not moved) into `nz_slices/dr1/`, verified
+byte-identical. The flat originals still resolve via the dr1 fallback, so
+nothing depends on the copy; they are now dead weight and can be deleted once
+you are satisfied.
+
+### The last uniform FKP pivot (§54's open item 2)
+
+`fkp_analytic_cov.P_FKP_DEFAULT = 1.0e4` — LRG's pivot — was reaching BGS, ELG
+and QSO through the two `fkp_analytic_cov()` call sites in `compare_to_desi.py`,
+which passed no `P_FKP`. That is a 1.43x error in `n*P0` for BGS, 2.5x for ELG,
+1.67x for QSO.
+
+New `fkp_analytic_cov.fkp_p0_for(tracer)` reads `fkp_p0` from tracers.yaml, and
+both call sites now use it. `config_space._pivot` (which §55 had already fixed
+for the config-space path) now delegates to the same helper, so there is ONE
+definition of the lookup rather than two copies drifting.
+
+`P_FKP_DEFAULT` stays as the last-resort default for the one caller with no
+tracer in hand (a synthetic single-slice self-test at `config_space.py:486`).
+
+**A bug written and caught in the same session:** the first `fkp_p0_for` passed
+`analysis="bao"` to `get_tracer_config` and wrapped it in `except Exception`.
+But `LRG3` is shapefit-only — bao uses the combined `LRG3_ELG1` — so the lookup
+raised, the broad `except` swallowed it, and LRG3 silently took the fallback
+pivot. It happened to be the right number (10000), which is exactly why it
+would have survived review. `analysis` is no longer passed, config errors
+propagate, and only a genuinely missing `fkp_p0` warns.
+
+### Also: §76 stragglers
+
+Three `wallish2018` sites §76 missed, all live (Kaiser templates and a direct
+`PowerSpectrumBAOFilter`): `compare_to_desi.py:519`, `:575`,
+`validate_mean.py:240`. Now `peakaverage`. The `bao/core.py:1918` site is
+deliberate and stays — the BAO template is where Wallisch 2018 IS sourced
+(Chen et al. 2024 §8(v)) and where `peakaverage` was unstable.
+
+### Status of the three coupled quantities (closes §50's table)
+
+  - `fkp_p0`: Eq. (8.4) everywhere, including the analytic-cov path. Done.
+  - n̄: the ~23% gap was the footprint (§54), fixed.
+  - z_eff: 0.062% mean against DESI's published values, at the §51 reference.
+
+### Not done here
+
+  - The mesh norm in the covariance path (§46/§47).
+  - The covariance's THIRD n(z) (`load_nz_slices`, N*frac/V) is still not
+    routed through `NX`.
+  - LRG3's residual density ratio, 0.629 (§54).

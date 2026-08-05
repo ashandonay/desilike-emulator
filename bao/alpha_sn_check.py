@@ -59,7 +59,8 @@ def _analyze(tracer):
 
     cosmo = core.get_cosmo(("DESI", dict(theta)))
     slices = cc.load_nz_slices(tracer_bin=tracer, cosmo=cosmo, area_deg2=cc._AREA,
-                               N_design=float(cc._get_ntracers(tracer)))
+                               N_design=float(cc._get_ntracers(tracer)),
+                               dataset="dr1")  # cc._AREA is DR1
     P_wide = cc._wide_Pell(tracer, info)
 
     bundle = cc.load_bundle(tracer)

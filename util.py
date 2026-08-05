@@ -206,6 +206,55 @@ _COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {component: pa
 
 _DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
 
+# Cosmology-independent n(z) slice tables. Release-scoped since S62c; see
+# nz_slices_path.
+NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
+
+
+def nz_slices_path(filename: str, dataset: str,
+                   base_dir=None) -> Path:
+    """Resolve a release-scoped n(z) file (shapefit CHANGELOG S62c).
+
+    Layout is ``{base}/{dataset}/{filename}``. The flat ``{base}/{filename}``
+    is the pre-S62c layout and is accepted ONLY for dr1, with a warning,
+    because flat *is* dr1 -- those files came from a make_nz_slices.py
+    hardcoded to the DR1 catalogues, areas, counts and download URL.
+
+    For any other release a missing scoped directory RAISES rather than
+    falling back. That asymmetry is the entire point: `ntracers`,
+    `tracer_area` and `get_default_save_path` all switch on `dataset`, so a
+    release-mixing bug in the n(z) layer would surface only as a subtly wrong
+    covariance -- the same silent class as S58 (a fallback that never fired)
+    and S59 (a caller never updated).
+
+    Lives here, beside `tracer_area`/`ntracers`/`get_default_save_path`,
+    because it is the same kind of release-scoped lookup. It must NOT live in
+    bao/core.py: `bao/fkp_analytic_cov.py` needs it too, and a bare
+    ``import core`` there resolves to shapefit/core.py whenever cwd is
+    shapefit/.
+    """
+    base = Path(base_dir) if base_dir is not None else NZ_SLICES_DIR
+    scoped = base / str(dataset) / filename
+    if scoped.exists():
+        return scoped
+
+    flat = base / filename
+    if str(dataset) == "dr1" and flat.exists():
+        warnings.warn(
+            f"n(z) file {filename!r} found only in the flat pre-S62c layout "
+            f"({flat}); treating it as dr1. Move these under {base / 'dr1'} -- "
+            "the flat fallback is dr1-only and will not serve another release.",
+            DeprecationWarning, stacklevel=2)
+        return flat
+
+    raise FileNotFoundError(
+        f"No n(z) file {filename!r} for dataset {dataset!r}. Looked for {scoped}"
+        + (f" (and the dr1-only flat fallback {flat})"
+           if str(dataset) == "dr1" else
+           f"; the flat fallback {flat} is NOT used for {dataset!r} because "
+           "those files are DR1")
+        + f". Generate them with shapefit/make_nz_slices.py --dataset {dataset}.")
+
 
 def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
     """Footprint in deg^2 for ``tracer_bin``: `area_deg2` from tracers.yaml.

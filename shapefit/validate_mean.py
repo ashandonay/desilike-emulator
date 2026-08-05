@@ -232,12 +232,12 @@ def check_shape(tracers: List[str]) -> None:
 
 
 def _pknow(cosmo, z):
-    """Linear no-wiggle P(k) for delta_cb at z, wallish2018 -- the same
+    """Linear no-wiggle P(k) for delta_cb at z, peakaverage -- the same
     de-wiggling engine the template and extractor are pinned to."""
     fo = cosmo.get_fourier()
     pk = fo.pk_interpolator(of="delta_cb").to_1d(z=z)
     from cosmoprimo import PowerSpectrumBAOFilter
-    return PowerSpectrumBAOFilter(pk, engine="wallish2018").smooth_pk_interpolator()
+    return PowerSpectrumBAOFilter(pk, engine="peakaverage").smooth_pk_interpolator()
 
 
 def _m_direct(cosmo, z, rd_fid):

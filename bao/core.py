@@ -49,6 +49,7 @@ from util import (
     get_tracer_config,
     latin_hypercube_samples,
     ntracers,
+    nz_slices_path,
 )
 
 warnings.filterwarnings("default")
@@ -168,7 +169,8 @@ _N_RAND_OVER_N_DATA = 50.0
 _NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
 
 
-def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _load_nz_slice_fractions(tracer_bin: str, *, dataset: str
+                             ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load the cosmology-independent n(z) shape for a tracer.
 
     Returns (z_centers, z_edges, slice_fraction, nbar_file) where:
@@ -177,10 +179,12 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
         redshift slice, computed at the file's effective area. This is the
         actual local density of the tracer at that redshift, suitable for
         FKP weighting and shot-noise calculation.
+
+    `dataset` is keyword-only and REQUIRED (S62c): every caller already threads
+    a release for `ntracers`/`tracer_area`, so a missing one here is a bug, and
+    a TypeError at the call site is the cheap way to find it.
     """
-    path = _NZ_SLICES_DIR / f"{tracer_bin}_nz_slices.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"Missing n(z) slice file for {tracer_bin}: {path}")
+    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", dataset)
     df = pd.read_csv(path)
     df = df[df["slice_fraction"] > 0.0].reset_index(drop=True)
     z_lo = df["zlow"].to_numpy(dtype=np.float64)
@@ -252,7 +256,7 @@ def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
 _DESI_NX_CACHE: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
 
 
-def _desi_nz_geometry(tracer_bin: str, nbar_file):
+def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
     """(nx, S1) for a tracer's slices, from DESI's own random catalogues.
 
     `{tracer}_desi_nx.csv` is built from the v1.5 randoms and aggregated onto
@@ -272,11 +276,16 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file):
     fall back to the density form. LRG3_ELG1 (the BAO combined bin) has none --
     it needs the LRG+ELG_LOPnotqso catalogue, which was never extracted.
     """
-    if tracer_bin not in _DESI_NX_CACHE:
-        path = (Path.home() / "data" / "desi" / "nz_slices"
-                / f"{tracer_bin}_desi_nx.csv")
+    # Cache key carries the release (S62c): keyed on tracer alone, a DR2 run
+    # after a DR1 run in the same process would have been served DR1 rows.
+    cache_key = (str(dataset), tracer_bin)
+    if cache_key not in _DESI_NX_CACHE:
+        try:
+            path = nz_slices_path(f"{tracer_bin}_desi_nx.csv", dataset)
+        except FileNotFoundError:
+            path = None
         entry = None
-        if path.exists():
+        if path is not None:
             df = pd.read_csv(path)
             nx = df["nbar_desi_nx"].to_numpy(dtype=np.float64)
             s1 = df["S1_weight"].to_numpy(dtype=np.float64)
@@ -289,8 +298,8 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file):
                 warnings.warn(
                     f"{path.name}: {nx.size} rows vs {len(nbar_file)} slices, "
                     "or non-positive values; falling back to nbar_file.")
-        _DESI_NX_CACHE[tracer_bin] = entry
-    entry = _DESI_NX_CACHE[tracer_bin]
+        _DESI_NX_CACHE[cache_key] = entry
+    entry = _DESI_NX_CACHE[cache_key]
     if entry is None:
         warnings.warn(
             f"No DESI n(z) geometry table for {tracer_bin!r}; z_eff falls back "
@@ -367,7 +376,8 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
 
     Pass n_tracers=None to evaluate at the dataset's own density.
     """
-    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, dataset=dataset)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -394,7 +404,7 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     # `nbar_file` is NOT n_ran (1.19-2.37x high, per-tracer) and the covariance
     # path (`fkp_analytic_cov.load_nz_slices`, N*frac/V) is a THIRD value again.
     # See shapefit CHANGELOG S51-S53.
-    nx, s1 = _desi_nz_geometry(tracer_bin, nbar_file)
+    nx, s1 = _desi_nz_geometry(tracer_bin, nbar_file, dataset=dataset)
     nbar = nx * _nz_scale_factor(tracer_bin, n_tracers, dataset)
     w_fkp = 1.0 / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
     if s1 is None:
@@ -458,7 +468,8 @@ def _compute_z_eff_from_nz(
     if Z_EFF_CONVENTION != "fisher_veff":
         raise ValueError(f"Unknown Z_EFF_CONVENTION {Z_EFF_CONVENTION!r}")
 
-    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, dataset=dataset)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -526,6 +537,8 @@ def _compute_v_eff_fkp(
     area_deg2: float,
     tracer_bin: str,
     fkp_weight_sq_per_bin: np.ndarray,
+    *,
+    dataset: str,
 ) -> Tuple[float, float]:
     """Compute FKP-weighted V_eff at the given cosmology.
 
@@ -535,7 +548,8 @@ def _compute_v_eff_fkp(
     redshift slice, computed by the caller via _fkp_band_weight_sq using
     cosmology-driven P_g(k,z) on the _BAO_K_GRID.
     """
-    z_mid, z_edges, frac, _ = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, frac, _ = _load_nz_slice_fractions(
+        tracer_bin, dataset=dataset)
     z_lo = z_edges[:, 0]
     z_hi = z_edges[:, 1]
     sky_frac = float(area_deg2) / 41252.96
@@ -1512,7 +1526,8 @@ def build_bao_likelihood(
     v_shell_for_footprint: Optional[float] = None
     if tracer_bin != "Lya_QSO":
         try:
-            z_mid_slice, z_edges_slice, frac_slice, _ = _load_nz_slice_fractions(tracer_bin)
+            z_mid_slice, z_edges_slice, frac_slice, _ = _load_nz_slice_fractions(
+                tracer_bin, dataset=dataset)
         except FileNotFoundError as exc:
             print(f"[veff] {tracer_bin}: nz slices missing -- using V_shell. ({exc})")
         else:
@@ -1568,7 +1583,7 @@ def build_bao_likelihood(
 
             v_eff, v_shell = _compute_v_eff_fkp(
                 cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
-                fkp_weight_sq_per_bin=fkp_wsq_per_bin,
+                fkp_weight_sq_per_bin=fkp_wsq_per_bin, dataset=dataset,
             )
             v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
             # Effective 3D density n_eff such that the BAO-Fisher-band

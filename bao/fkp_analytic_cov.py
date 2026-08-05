@@ -46,9 +46,45 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 
 
-# Pivot used for FKP weights w = 1 / (1 + n P_FKP). DESI/BOSS standard for
-# LRG is P_FKP = 1e4 (Mpc/h)^3. Re-verify per-tracer at calibration time.
+# Pivot used for FKP weights w = 1 / (1 + n P_FKP). DESI 2024 II Eq. (8.4)
+# sets it PER TRACER: BGS 7000, LRG 10000, ELG 4000, QSO 6000 (Mpc/h)^3.
+#
+# This module-level constant is the LRG value and is only a last-resort default
+# for callers with no tracer in hand. Prefer `fkp_p0_for(tracer_bin)`, which
+# reads `fkp_p0` from tracers.yaml -- the same values the rest of the pipeline
+# weights with, so the analytic cov and the Fisher path cannot disagree.
+#
+# S54 flagged the uniform 1e4 here as open: it silently applied the LRG pivot to
+# BGS (7000), ELG (4000) and QSO (6000), a 1.4-2.5x error in n*P0 for those.
 P_FKP_DEFAULT = 1.0e4
+
+
+def fkp_p0_for(tracer_bin: str, dataset: str = "dr1") -> float:
+    """DESI's Eq. (8.4) FKP pivot for this tracer, from tracers.yaml.
+
+    Falls back to P_FKP_DEFAULT with a warning if the tracer has no `fkp_p0`,
+    rather than silently weighting a BGS/ELG/QSO sample at the LRG pivot.
+
+    `analysis` is deliberately NOT passed to get_tracer_config: this helper
+    serves both pipelines, and the bins differ between them (bao uses the
+    combined LRG3_ELG1, shapefit uses LRG3). Pinning it to either one makes the
+    other's bins raise -- which, behind a broad `except`, degrades to the wrong
+    pivot without a word. Config errors propagate; only a MISSING `fkp_p0`
+    warns and falls back.
+    """
+    import warnings
+
+    from util import get_tracer_config
+
+    cfg = get_tracer_config(tracer_bin, dataset=dataset)
+    p0 = cfg.get("fkp_p0")
+    if p0 is None:
+        warnings.warn(
+            f"No `fkp_p0` in tracers.yaml for {tracer_bin!r}; falling back to "
+            f"the LRG pivot {P_FKP_DEFAULT:g}. DESI 2024 II Eq. (8.4) wants "
+            "7000/10000/4000/6000 for BGS/LRG/ELG/QSO.")
+        return float(P_FKP_DEFAULT)
+    return float(p0)
 
 # Calibration knob — initialized to 1.0 (pure FKP-1994 formula). After
 # comparing per-k diagonal to thecov at fid, set this to the geometric-mean
@@ -201,20 +237,23 @@ def load_nz_slices(
     area_deg2: float,
     N_design: float | None = None,
     nz_slices_dir: str | None = None,
+    *,
+    dataset: str,
 ) -> NZSlices:
     """Build NZSlices for a tracer at a given cosmology and total tracer count.
 
     The slice fractions are cosmology-INDEPENDENT (file-based). V_shell varies
     with cosmology through chi(z). n(z) = N_design * frac_i / V_i.
+
+    `dataset` is keyword-only and REQUIRED -- see S62c and `core.nz_slices_path`.
     """
     import pandas as pd
     from pathlib import Path
 
-    if nz_slices_dir is None:
-        nz_slices_dir = str(Path.home() / "data" / "desi" / "nz_slices")
-    path = Path(nz_slices_dir) / f"{tracer_bin}_nz_slices.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"No n(z) slices file: {path}")
+    from util import nz_slices_path
+
+    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", dataset,
+                          base_dir=nz_slices_dir)
 
     df = pd.read_csv(path)
     df = df[df["slice_fraction"] > 0.0].reset_index(drop=True)

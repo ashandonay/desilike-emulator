@@ -47,7 +47,8 @@ from desilike.theories.galaxy_clustering import (
     DampedBAOWigglesTracerCorrelationFunctionMultipoles,
     DampedBAOWigglesTracerPowerSpectrumMultipoles,
 )
-from fkp_analytic_cov import NZSlices, _fkp_integrals, P_FKP_DEFAULT, load_nz_slices
+from fkp_analytic_cov import (NZSlices, _fkp_integrals, P_FKP_DEFAULT,
+                              fkp_p0_for, load_nz_slices)
 from util import tracer_area as _tracer_area
 
 # ---------------------------------------------------------------------------
@@ -66,8 +67,13 @@ def _pivot(tracer: str) -> float:
 
     `P_FKP_DEFAULT = 1e4` is LRG's value and was being applied to every tracer,
     where Eq. (8.4) wants 7000 (BGS), 4000 (ELG) and 6000 (QSO). See shapefit
-    CHANGELOG S55."""
-    return float(TRACER_CONFIGS[tracer]["fkp_p0"])
+    CHANGELOG S55.
+
+    Delegates to `fkp_analytic_cov.fkp_p0_for` so there is ONE definition of
+    the pivot lookup -- S62c added the same helper for the Fourier path, and
+    two copies of a lookup like this is precisely the seam that S54 left open
+    for eight sections."""
+    return fkp_p0_for(tracer)
 _DESI_PRIOR_SCALE = {"sigmapar": 2.0, "sigmaper": 2.0, "sigmas": 2.0}
 
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
@@ -414,7 +420,9 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     cosmo = core.get_cosmo(("DESI", dict(theta)))
     slices = load_nz_slices(
         tracer_bin=tracer, cosmo=cosmo, area_deg2=_tracer_area(tracer),
-        N_design=float(_get_ntracers(tracer)),
+        # This module is DR1-only by construction: _get_ntracers reads
+        # _DR1_DIR/desi_data.csv and _AREA is the DR1 footprint (S62c).
+        N_design=float(_get_ntracers(tracer)), dataset="dr1",
     )
 
     P_wide = _wide_Pell(tracer, info)  # (3, Nk) for ells (0,2,4)
@@ -692,7 +700,7 @@ class XiSigmaGenerator:
         self._N_fid = float(_get_ntracers(tracer))
         self.slices = load_nz_slices(
             tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_tracer_area(tracer),
-            N_design=self._N_fid)
+            N_design=self._N_fid, dataset=self.dataset)
         # n̄ is exactly linear in N_design (load_nz_slices: nbar = N·frac/V_shell
         # at the fixed frame), so the cov shot-noise term can be rebuilt for any
         # sampled N_tracers by rescaling — no pandas re-read, no geometry recompute.

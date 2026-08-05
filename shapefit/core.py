@@ -423,7 +423,8 @@ def _fs_compute_z_eff(
                                             n_tracers=n_tracers,
                                             dataset=dataset)
 
-    z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(
+        tracer_bin, dataset=dataset)
     nbar_file = (np.asarray(nbar_file, dtype=np.float64)
                  * bao_core._nz_scale_factor(tracer_bin, n_tracers, dataset))
     if z_mid.size == 0:
@@ -546,7 +547,7 @@ def build_shapefit_likelihood(
     v_shell_for_footprint: Optional[float] = None
     try:
         z_mid_slice, z_edges_slice, frac_slice, _ = bao_core._load_nz_slice_fractions(
-            tracer_bin
+            tracer_bin, dataset=dataset
         )
     except FileNotFoundError as exc:
         print(f"[veff] {tracer_bin}: nz slices missing -- using V_shell. ({exc})")
@@ -579,7 +580,7 @@ def build_shapefit_likelihood(
 
         v_eff, v_shell = bao_core._compute_v_eff_fkp(
             cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
-            fkp_weight_sq_per_bin=fkp_wsq_per_bin,
+            fkp_weight_sq_per_bin=fkp_wsq_per_bin, dataset=dataset,
         )
         v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
 

@@ -57,6 +57,16 @@ from util import ntracers, tracer_area  # noqa: E402
 CAT_DIR = Path.home() / "data" / "desi" / "lss_dr1"
 NZ_DIR = Path.home() / "data" / "desi" / "nz_slices"
 
+# Release -> (catalogue dir, LSS run, LSS version). S62c item (3): everything
+# else in this script -- STEM, the slice edges, the areas, the counts and the
+# download URL -- is DR1-specific, so any other release must FAIL rather than
+# quietly emit DR1 tables into a {dataset}/ directory that then looks populated.
+# Filling this in is DR2 work, deferred by the DR1-first rule; the point of the
+# table is that the failure is loud.
+_RELEASES = {
+    "dr1": (CAT_DIR, "iron", "v1.5"),
+}
+
 # tracer bin -> catalogue stem. LRG1/2/3 share one LRG catalogue and are split
 # by the slice edges; LRG3_ELG1 is the BAO-only combined bin (S31/S32).
 STEM = {
@@ -141,13 +151,28 @@ def main() -> int:
                          "--install writes to the live nz_slices dir.")
     ap.add_argument("--install", action="store_true",
                     help="Overwrite the live tables, backing up to *.prefinal.bak")
+    ap.add_argument("--dataset", default="dr1",
+                    help="Data release. Only dr1 is implemented; anything else "
+                         "fails loudly rather than emitting DR1 tables under "
+                         "another release's name (S62c).")
     a = ap.parse_args()
+
+    if a.dataset not in _RELEASES:
+        raise SystemExit(
+            f"--dataset {a.dataset!r} is not implemented. This script is "
+            "DR1-specific throughout: catalogue stems, slice edges, areas, "
+            "counts and the download URL. Add an entry to _RELEASES and audit "
+            "every one of those before using it for another release (shapefit "
+            f"CHANGELOG S62c). Refusing to write DR1 tables into a "
+            f"{a.dataset!r} directory.")
 
     from desilike.theories.primordial_cosmology import get_cosmo
     cosmo = get_cosmo("DESI")
 
-    out_dir = Path(a.out_dir) if a.out_dir else (NZ_DIR if a.install
-                                                 else NZ_DIR / "regenerated")
+    # Release-scoped layout (S62c): {NZ_DIR}/{dataset}/{tracer}_*.csv
+    out_dir = (Path(a.out_dir) if a.out_dir
+               else (NZ_DIR / a.dataset if a.install
+                     else NZ_DIR / "regenerated" / a.dataset))
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"writing to {out_dir}\n")
 

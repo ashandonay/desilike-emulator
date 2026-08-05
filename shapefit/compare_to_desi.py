@@ -516,7 +516,7 @@ def our_theory_on_window_grid(tracer: str, win: Dict) -> Dict:
         {**FID_SAMPLE, "N_tracers": ntracers(tracer, "dr1")})
     template = ShapeFitPowerSpectrumTemplate(
         z=info["z_eff"], fiducial=("DESI", dict(theta)),
-        apmode="qisoqap", with_now="wallish2018")
+        apmode="qisoqap", with_now="peakaverage")   # S76
     theory = KaiserTracerPowerSpectrumMultipoles(
         template=template, k=win["th_k"], ells=win["th_ells"])
     theory(**{k: v for k, v in info["params"].items()
@@ -545,10 +545,13 @@ def _windowed_analytic_cov(tracer: str, win: Dict, P_ells: np.ndarray,
 
     cosmo = get_cosmo(("DESI", dict(theta)))
     slices = fac.load_nz_slices(
-        tracer, cosmo, area_deg2=tracer_area(tracer, "dr1"), N_design=float(ntracers(tracer, "dr1")))
+        tracer, cosmo, area_deg2=tracer_area(tracer, "dr1"),
+        N_design=float(ntracers(tracer, "dr1")), dataset="dr1")
     blocks = fac.fkp_analytic_cov(
         k=win["th_k"], P_ells_in=P_ells, ells_in=win["th_ells"],
-        ells_obs=win["th_ells"], slices=slices)
+        ells_obs=win["th_ells"], slices=slices,
+        # Eq. (8.4) pivot for THIS tracer, not the uniform LRG 1e4 (S54/S62c).
+        P_FKP=fac.fkp_p0_for(tracer))
     C_theory = fac.assemble_full_cov(blocks, win["th_ells"])
     n = C_theory.shape[0] + win["n_extra"]
     C_pad = np.zeros((n, n), dtype=np.float64)
@@ -572,7 +575,7 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
     k = base["k"]
     template = ShapeFitPowerSpectrumTemplate(
         z=base["info"]["z_eff"], fiducial=("DESI", dict(ours["theta"])),
-        apmode="qisoqap", with_now="wallish2018")
+        apmode="qisoqap", with_now="peakaverage")   # S76
     # ells (0,2,4) as MODEL input even though the observable is (0,2): the
     # Grieb formula needs the hexadecapole of the model to build the (0,2) block.
     theory = KaiserTracerPowerSpectrumMultipoles(
@@ -582,10 +585,11 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
     cosmo = get_cosmo(("DESI", dict(ours["theta"])))
     slices = fac.load_nz_slices(
         tracer, cosmo, area_deg2=tracer_area(tracer, "dr1"),
-        N_design=float(ntracers(tracer, "dr1")))
+        N_design=float(ntracers(tracer, "dr1")), dataset="dr1")
     blocks = fac.fkp_analytic_cov(
         k=k, P_ells_in=np.asarray(theory.power), ells_in=(0, 2, 4),
-        ells_obs=_OUR_ELLS, slices=slices)
+        ells_obs=_OUR_ELLS, slices=slices,
+        P_FKP=fac.fkp_p0_for(tracer))
     return fac.assemble_full_cov(blocks, _OUR_ELLS)
 
 
