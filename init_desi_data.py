@@ -21,9 +21,32 @@ WHAT EACH GROUP IS FOR
               slice tables.                                       1.12 GB
 
   randoms     {tracer}_{cap}_{i}_clustering.ran.fits -- the random catalogues.
-              Needed to build the {tracer}_desi_nx.csv tables (NX and S1_weight,
-              2411.12020 Eqs. 8.1-8.3), which is what z_eff is computed from
-              since S53.  0.5-2.2 GB EACH, hence --nran.  20.9 GB at nran=2
+              OPTIONAL, and rarely worth it. 0.5-2.2 GB EACH; 20.9 GB at
+              nran=2, hence the flag and the exclusion from the default set.
+
+              The {tracer}_desi_nx.csv tables (NX and S1_weight, 2411.12020
+              Eqs. 8.1-8.3) are what z_eff is computed from since S53, and they
+              can be built EITHER from these randoms or from the `lss` data
+              catalogues you already have -- `NX` and `WEIGHT` are columns in
+              both. Measured, all six tracers, z_eff vs DESI 2024 V Table 1:
+
+                  from randoms   0.062% mean   0.121% max
+                  from data      0.111% mean   0.204% max
+                  (pre-S53, for scale:  0.313% mean, 0.653% max)
+
+              The two differ because `S1` from the data is a constant 0.0772x
+              the randoms version (0.30% spread -- the data/random density
+              ratio, which CANCELS in Eq. 2.1's normalised ratio) and `NX` is
+              4.8% high (0.41% spread, nearly z-independent, so it mostly
+              cancels too).
+
+              So the randoms buy a factor ~1.8 on a quantity where S62a measured
+              n(z) shape errors costing <=0.15% in sigma. Fetch them only to
+              reproduce the shipped tables exactly, or for LRG3_ELG1 (the BAO
+              combined bin, the one tracer with no table) -- and for that you
+              need only the LRG+ELG stem, ~3.3 GB at --nran 1.
+
+              Transient either way: ~20 GB in, ~10 KB of CSV out.
 
   bao         likelihood_correlation-recon-poles_*.h5 -- window matrix and
               theory s-grid for the config-space path, plus the bao-recon
@@ -42,7 +65,7 @@ what is actually missing.
 
 HOW MANY RANDOMS
 ----------------
-Default 2, and that is a defensible default rather than a lazy one. The two
+Default 1, and that is a defensible default rather than a lazy one. The two
 quantities taken from the randoms behave differently:
 
   - `nbar_desi_nx` is an OBJECT-weighted mean of NX, which is occupancy-
@@ -232,11 +255,13 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--what", nargs="+", default=["lss", "bao", "fs", "cov"],
                     choices=["lss", "randoms", "bao", "fs", "cov", "all"],
-                    help="groups to fetch. Default omits `randoms` -- they are "
-                         "~1 GB each and only the _desi_nx tables need them.")
-    ap.add_argument("--nran", type=int, default=2,
-                    help="random files per tracer per cap (default 2; see the "
-                         "module docstring on why 2 is enough)")
+                    help="groups to fetch. Default omits `randoms`: they are "
+                         "0.5-2.2 GB each and buy only 0.062%% vs 0.111%% on "
+                         "z_eff over the data catalogues (see module docstring).")
+    ap.add_argument("--nran", type=int, default=1,
+                    help="random files per tracer per cap (default 1: the "
+                         "object-weighted NX mean is occupancy-independent and "
+                         "converges immediately, S50)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true",
                     help="refetch even if present at the right size")
@@ -286,9 +311,6 @@ def main() -> int:
     print("\nNext:")
     print("  python shapefit/make_nz_slices.py --install    # n(z) slice tables")
     print("  python shapefit/benchmark_desi.py              # verify vs DESI")
-    if "randoms" not in groups:
-        print("\nNOTE: the {tracer}_desi_nx.csv tables (which z_eff is computed")
-        print("from) need the randoms: rerun with --what randoms.")
     return 0
 
 
