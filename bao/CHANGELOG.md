@@ -4123,3 +4123,60 @@ config sigmas are IDENTICAL across §91 and §92 for all 8 cosmologies.
 
 Wired at the two cosmology-varying callers: `core.build_bao_likelihood` and
 `shapefit/core.py`. The config path and the plots are frame-fixed and unchanged.
+
+### §92 addendum — full-grid verification
+
+The entry above documented an LRG2 spot-check. The complete 6-tracer x
+8-cosmology dumps are now in, and they confirm it more strongly than the
+single tracer did.
+
+Spread of the change across the 8 cosmologies, measured against the pre-§81
+(cosmology-scaled) dump. A SMALL spread means the change is a normalisation;
+a large one means the cosmology response itself moved:
+
+```
+tracer        S91 frozen     S92 fixed
+BGS               9.0 pp        0.3 pp
+LRG1             13.8 pp        4.9 pp
+LRG2             17.8 pp        5.1 pp
+LRG3_ELG1        27.8 pp        7.9 pp
+ELG2             48.9 pp        5.2 pp
+QSO              99.7 pp        0.2 pp
+```
+
+QSO collapses from a 99.7-point swing (-36% at lowOm, +64% at highOm) to 0.2.
+
+**The control that makes this conclusive.** Isolating §92 inside shapefit, the
+change is EXACTLY +0.00% at `fid` *and* at `lowA`, and large at
+`lowOc`/`highOc`/`lowH`/`highH`. `lowA` varies only `ln10A_s` and `n_s`, leaving
+`omega_cdm`/`omega_b`/`h` fiducial -- so comoving distances are unchanged and the
+volume ratio is identically 1. `highA` (omega_cdm 0.1250) and `w0wa` show the
+small shifts expected. The correction fires exactly when the comoving volume
+moves and never otherwise, which is the definition it was derived from.
+
+Net effect of §81-§92 on shapefit: `sigma_qiso` -0.06% to -0.57% for
+BGS/LRG1/LRG2/LRG3/QSO, ELG2 -4.1% to -9.8%; z_eff under 0.02% throughout.
+On BAO fourier: BGS -0.4/-0.7%, LRG1 and LRG2 -3 to -9%, LRG3_ELG1 -5 to -13%,
+ELG2 -17 to -23%, QSO ~-3%. ELG2 leads both, consistent with the +17% density
+change §90 measured for it.
+
+### A methodology bug in the harness's own use
+
+The first shapefit "before" dump was INVALID and read +0.00% everywhere --
+nearly reported as "shapefit unaffected". `shapefit/core.py` imports
+`from desilike_emulator.bao import core`, falling back to an `importlib` load of
+`../bao/core.py` only on ImportError. That package resolves to the LIVE tree
+from anywhere, so a git-worktree checkout silently ran worktree-shapefit against
+live-bao; since `shapefit/core.py` itself was unchanged in the range, it compared
+HEAD with HEAD.
+
+Fix: a PYTHONPATH shim directory holding a `desilike_emulator` symlink to the
+worktree. Verified before rerunning by asserting `bao_core.__file__` resolves
+inside the worktree AND that `_fid_volume_ratio` is ABSENT there. `bao/`'s own
+harness was never affected -- it uses a plain `import core` with its directory
+first on sys.path, which is why it caught §92 in the first place.
+
+Anyone diffing shapefit across commits must use the shim. Two independent
+tells that something was wrong: both .npz files were byte-identical in size,
+and z_eff read +0.00% for the combined bin when the bao side already showed it
+moving -2.0%.

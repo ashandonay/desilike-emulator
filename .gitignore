@@ -23,3 +23,8 @@ autoresearch/dev/
 bao/*.npz
 shapefit/*.npz
 bao/regress_report*.md
+
+# Regression dumps: ~25 MB of binaries per set, regenerated on demand
+# with `regress_sigmas.py dump`. Deliberately untracked in a public repo.
+bao/regress_dumps/
+shapefit/regress_dumps/
