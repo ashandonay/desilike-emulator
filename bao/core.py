@@ -339,8 +339,61 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, dataset: str):
     return entry
 
 
+def _fid_volume_ratio(tracer_bin: str, cosmo, dataset: str):
+    """V_fid / V(cosmo) per slice -- 1.0 when `cosmo` is None (S92).
+
+    DESI's `NX` is a COMOVING density measured in their fiducial frame, so it
+    carries that frame's volume: NX = N_gal / V_fid. Forecasting at another
+    cosmology the same galaxies fill a different comoving volume, so
+
+        nbar(X) = NX * alpha(N) * V_fid / V(X).
+
+    Dropping the ratio -- which S85 did, by handing `V_bin` to a branch that
+    ignores it -- freezes n-bar in the fiducial frame. That is invisible at the
+    fiducial and grows to tens of percent at the prior edges, with the SIGN
+    FLIPPING between low and high Om (S92 measured QSO sigma at +63% for highOm).
+    The old `N*frac/V` had this scaling right and its normalisation wrong; this
+    keeps DESI's normalisation AND the scaling.
+
+    `cosmo=None` means "already in the fiducial frame, do not rescale" -- the
+    config path evaluates its geometry at _FID by design, so it passes None and
+    is unaffected.
+    """
+    if cosmo is None:
+        return 1.0
+    _, z_edges, _, _ = _load_nz_slice_fractions(tracer_bin, dataset=dataset)
+    chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]),
+                        dtype=np.float64)
+    chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]),
+                        dtype=np.float64)
+    chi3 = chi_hi ** 3 - chi_lo ** 3
+    return _fid_shell_chi3(tracer_bin, dataset) / np.maximum(chi3, 1e-30)
+
+
+_FID_CHI3_CACHE: Dict[Tuple[str, str], np.ndarray] = {}
+
+
+def _fid_shell_chi3(tracer_bin: str, dataset: str) -> np.ndarray:
+    """(chi_hi^3 - chi_lo^3) per slice at DESI's FIDUCIAL cosmology (S92).
+
+    Area-free on purpose: only the RATIO against the sampled cosmology is ever
+    used, and the sky fraction cancels in it, so this never has to know which
+    footprint a caller assumed.
+    """
+    key = (tracer_bin, dataset)
+    if key not in _FID_CHI3_CACHE:
+        _, z_edges, _, _ = _load_nz_slice_fractions(tracer_bin, dataset=dataset)
+        cosmo_fid = get_cosmo(("DESI", dict(PARAM_DEFAULTS)))
+        chi_lo = np.asarray(cosmo_fid.comoving_radial_distance(z_edges[:, 0]),
+                            dtype=np.float64)
+        chi_hi = np.asarray(cosmo_fid.comoving_radial_distance(z_edges[:, 1]),
+                            dtype=np.float64)
+        _FID_CHI3_CACHE[key] = chi_hi ** 3 - chi_lo ** 3
+    return _FID_CHI3_CACHE[key]
+
+
 def cov_nbar_per_slice(tracer_bin: str, frac, V_bin, n_tracers, *,
-                       dataset: str = "dr1"):
+                       dataset: str = "dr1", cosmo=None):
     """Per-slice comoving density for the COVARIANCE path (S85).
 
     Returns (nbar, source) with source in {"NX", "N*frac/V"}.
@@ -375,8 +428,9 @@ def cov_nbar_per_slice(tracer_bin: str, frac, V_bin, n_tracers, *,
     # mean across two samples. It removes the S85 mixed-bin special case; the
     # p0_eff MIXED test below survives only as a guard for tables predating it.
     if ntot is not None and np.asarray(ntot).shape == frac.shape:
-        return np.asarray(ntot, dtype=np.float64) * _nz_scale_factor(
-            tracer_bin, n_tracers, dataset), "NX total"
+        return (np.asarray(ntot, dtype=np.float64)
+                * _nz_scale_factor(tracer_bin, n_tracers, dataset)
+                * _fid_volume_ratio(tracer_bin, cosmo, dataset)), "NX total"
 
     # MIXED bins must NOT use NX here (S85). For a combined catalogue DESI's
     # `NX` is each object's PARENT-sample density -- exactly what its own FKP
@@ -1641,9 +1695,12 @@ def build_bao_likelihood(
             # DESI's NX where the bin is single-tracer, N*frac/V otherwise
             # (S85). Before this the covariance built its own density while
             # z_eff used NX -- one sample, two densities.
+            # `cosmo` is the SAMPLED cosmology (l.1589), so pass it: NX is a
+            # comoving density in DESI's fiducial frame and must be converted
+            # into this one (S92). Omitting it froze n-bar at the fiducial.
             nbar_slice, _nbar_src = cov_nbar_per_slice(
                 tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
-                dataset=dataset)
+                dataset=dataset, cosmo=cosmo)
             tracer_type_slice = str(cfg.get("tracer_type", "")).strip()
             if not tracer_type_slice:
                 raise ValueError(

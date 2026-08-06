@@ -561,9 +561,11 @@ def build_shapefit_likelihood(
         # DESI's NX where the bin is single-tracer, N*frac/V otherwise (S85).
         # Before this the covariance built its own density while z_eff used NX
         # -- one sample, two densities.
+        # Sampled cosmology passed for the fiducial-frame conversion (S92) --
+        # same reasoning as the BAO Fourier path.
         nbar_slice, _nbar_src = bao_core.cov_nbar_per_slice(
             tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
-            dataset=dataset)
+            dataset=dataset, cosmo=cosmo)
 
         fkp_wsq_list = []
         for zi, ni in zip(z_mid_slice, nbar_slice):

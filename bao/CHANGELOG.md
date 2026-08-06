@@ -4069,3 +4069,57 @@ three sigma paths, three diagnostics (`alpha_sn_check`, `compare_to_desi` x2,
 `nbar_file`/`N*frac/V` code is in the TABLE GENERATORS that define those columns
 (`make_nz_slices`, `parse_desi_nz`) and in `load_nz_slices`, now used solely for
 geometry behind `_nz_slices_nx`.
+
+## §92 — restore the cosmology scaling of n-bar that §85 silently removed
+
+The first run of the regress harness since the build plan asked for it caught
+this immediately, which is the entire argument for having built it.
+
+`cov_nbar_per_slice` takes `V_bin`, but on the `NX total` branch it never used
+it -- the argument was computed by the caller at the SAMPLED cosmology and
+discarded. So from §85 the Fourier path's n-bar was frozen in DESI's fiducial
+frame:
+
+  - before §85:  n = N*frac/V(sampled)  -- cosmology-scaled, wrong normalisation
+  - §85..§91:    n = NX*alpha(N)        -- right normalisation, NO cosmology scaling
+
+Invisible at the fiducial, and it grows to tens of percent at the prior edges
+**with the sign flipping**: measured against the pre-§81 dump, QSO's sigma went
+-36% at lowOm and +64% at highOm; ELG2 -41%/+14%. A change advertised as a
+normalisation fix was silently altering how sigma responds to cosmology, which
+for a cosmology-conditioned emulator is the response being learned.
+
+`NX` is a COMOVING density in DESI's fiducial frame, NX = N_gal/V_fid. At
+another cosmology the same galaxies fill a different comoving volume, so
+
+    nbar(X) = NX * alpha(N) * V_fid/V(X)
+
+`_fid_volume_ratio` supplies that factor; `_fid_shell_chi3` caches the fiducial
+shell (chi_hi^3 - chi_lo^3) per tracer. Area-free by construction -- only the
+ratio is used and the sky fraction cancels -- so it never needs to know which
+footprint a caller assumed. This is a unit conversion, not a tuned factor: the
+old formula had the scaling right and the normalisation wrong, and this keeps
+both.
+
+`cosmo=None` means "already fiducial, do not rescale". The config path passes
+None deliberately: it fixes window and FKP volume at _FID by design and admits
+cosmology only through P + AP, so rescaling n-bar alone would make it
+internally inconsistent.
+
+### Verification (LRG2, sigma vs the pre-§81 cosmology-scaled reference)
+
+```
+cosmo        S91 frozen     S92 ratio
+fid             -6.60%       -6.60%     <- unchanged, ratio is 1 at fiducial
+lowOm          -15.57%       -8.17%
+highOm          +2.23%       -3.98%     <- sign flip gone
+spread          17.8 pp       5.1 pp
+```
+
+What is left is a near-uniform normalisation offset, which is what §85 claimed
+to be. Also verified: ratio == 1 at the fiducial to 2.6e-5 (the CLASS shooting
+residual, §66's scale, not a defect); `cosmo=None` returns exactly 1.0; and the
+config sigmas are IDENTICAL across §91 and §92 for all 8 cosmologies.
+
+Wired at the two cosmology-varying callers: `core.build_bao_likelihood` and
+`shapefit/core.py`. The config path and the plots are frame-fixed and unchanged.
