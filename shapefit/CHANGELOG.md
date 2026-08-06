@@ -6703,3 +6703,42 @@ refreshed to 17 entries.
 
 Nothing here changes a forecast number: no analysis bin's density moved, and
 `ELG1_desi_nx.csv` has no consumer outside the plot.
+
+## §93 — MCMC relaunched against §92, and it will stop short of the tau criterion
+
+The §72 sweep was killed at 8-9k/20k iterations and archived
+(`logs/archive_f1a503c/`, 24 partials + the provisional Fisher-vs-MCMC harvest).
+It was running commit f1a503c, which predates §73-§92 -- the whole n(z) rework --
+so its sigma no longer matches the pipeline. Relaunched at §92: 6 tracers x 4
+seeds, rept, dr1_map, ceiling 20000, burn 0.4, detached via setsid so it
+survives disconnection.
+
+**It will not converge before the ceiling, and that is accepted.** Measured at
+5-6k iterations:
+
+```
+tracer   acc     tau    x tau
+BGS      0.169   499    12.0
+LRG1     0.186   409    12.2
+LRG2     0.172   399    12.5
+LRG3     0.154   466    10.7
+ELG2     0.162   451    11.1
+QSO      0.164   446    11.2
+```
+
+emcee's stop needs i > 50*tau, i.e. 20000-25000 iterations, and the tau ESTIMATE
+grows as the chain lengthens. Only LRG2 (50*tau = 19950) is nominally in reach.
+A prior estimate of tau ~ 250, extrapolated from §63's "2500 iters at 9-12 tau",
+was wrong by ~2x; the acceptance of 0.38-0.40 quoted at launch was from
+iterations 10-50, before the sampler equilibrated. The settled value of 0.15-0.19
+is below emcee's comfortable 0.2-0.5 band and is what drives tau this high.
+
+At the ceiling each chain carries ~32 x 12000 / 450 ~ 850 effective samples,
+so ~2.4% statistical error per sigma -- about 2x the archived harvest, enough to
+settle whether ELG2's Fisher/MCMC ratio of 1.50 on `m` is real. Results must be
+reported as **~44 tau, NOT converged**, never as a passed convergence test.
+
+The cheaper fix if this recurs is a move-set change (adding `DEMove` to the
+default stretch move), which is the standard remedy for poor acceptance in 10+
+dimensions. Not done here: it is a code change plus a restart, and the run is
+already usable for the question it was launched to answer.
