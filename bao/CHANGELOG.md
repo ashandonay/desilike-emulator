@@ -4564,6 +4564,13 @@ because overriding the caller's environment silently is its own §96 trap.
 inherited `OMP_NUM_THREADS=4`, and the NOTE fires only on conflict. Compare of
 the two HEAD dumps still reports 1158/1158 bit-identical.
 
+The claim that shapefit is insulated from §94-§98 is then verified at full
+scale, not just on the one bisect cell: pinned dumps at `fd32122` (S92) and at
+HEAD, over all 6 tracers x 8 cosmologies, compare **1158/1158 bit-identical**.
+That closes the last coverage gap in the S98 merge review -- bao identity
+checks had been reported as though they covered both pipelines, and until now
+they did not.
+
 ### Not done here
 
 Two intermediate commits (`d3920f7`, `70ebfcc`) show a pinned `cov_phys` that
