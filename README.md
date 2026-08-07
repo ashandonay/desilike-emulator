@@ -20,6 +20,32 @@ cd src/bedcosmo/num_tracers/emulator
 
 ---
 
+## DESI reference data
+
+The forecast and training-data generators read small **vendored** tables under
+`data/dr1/` (n(z) slices, `*_desi_nx.csv`, `desi_data.csv`, `desi_tracers.csv` —
+~39 KB). Those are committed and are the source of truth; a fresh checkout can
+generate training data and run Fisher forecasts **without downloading anything**.
+See `data/dr1/PROVENANCE.md`.
+
+`init_desi_data.py` fetches the larger **public** DESI DR1 products
+(anonymous HTTPS from `https://data.desi.lbl.gov/public/dr1` — no NERSC account)
+into `~/data/desi/`. Run it only when you need the raw inputs, not as a
+prerequisite for `generate_training_data.sh`:
+
+| `--what` | when you need it |
+|---|---|
+| `lss` (default set) | rebuild `*_nz_slices.csv` with `shapefit/make_nz_slices.py` |
+| `randoms` | rebuild `*_desi_nx.csv` with `shapefit/make_desi_nx.py` (~GB; optional — tables are already vendored) |
+| `bao` / `fs` / `cov` | DESI-comparison / validation scripts (`compare_to_desi`, bao-recon σ reference, cov checks) |
+
+```bash
+python init_desi_data.py --dry-run   # sizes of whatever is missing
+python init_desi_data.py             # default set (lss + bao + fs + cov; not randoms)
+```
+
+---
+
 ## Analysis directories (`bao/`, `shapefit/`)
 
 | Directory   | Role |
@@ -69,7 +95,8 @@ BAO’s YAML may use keys that do not match `cosmo-model` names (e.g. `base_scal
 
 ## Training-data generation
 
-The per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
+Uses the vendored `data/dr1/` tables above — no `init_desi_data.py` step. The
+per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
 `shapefit/README.md`). Both write per-tracer **`{tracer}_train.npz`** /
 **`{tracer}_test.npz`** (arrays **`x`**, **`y`**, **`param_names`**,
 **`target_names`**) under
@@ -92,6 +119,7 @@ shapefit/generate_training_data.sh --quantity mean  --cosmo-model base --n-sampl
 
 | File | Role |
 |------|------|
+| **`init_desi_data.py`** | Optional fetch of public DESI DR1 products into `~/data/desi/` (rebuild / validation only; see above). |
 | **`util.py`** | `build_model`, `get_default_save_path`, `get_pipeline` (loads the per-analysis ground-truth generators for `eval.py`), `save_dataset`, LHS sampling, tracer bins for **`--tracer-bin`**. |
 | **`train.py`** | Loads YAML + `.npz` data, standardizes inputs/targets, trains with MLflow logging, saves checkpoints under the run’s artifacts. |
 | **`eval.py`** | Loads a checkpoint, draws LHS parameters, compares NN to `get_pipeline` ground truth, writes diagnostic plots. |
