@@ -63,7 +63,7 @@ NZ_DIR = Path(__file__).resolve().parent.parent / "data"
 # Release -> (catalogue dir, LSS run, LSS version). S62c item (3): everything
 # else in this script -- STEM, the slice edges, the areas, the counts and the
 # download URL -- is DR1-specific, so any other release must FAIL rather than
-# quietly emit DR1 tables into a {dataset}/ directory that then looks populated.
+# quietly emit DR1 tables into a {data_release}/ directory that then looks populated.
 # Filling this in is DR2 work, deferred by the DR1-first rule; the point of the
 # table is that the failure is loud.
 _RELEASES = {
@@ -154,28 +154,28 @@ def main() -> int:
                          "--install writes to the live nz_slices dir.")
     ap.add_argument("--install", action="store_true",
                     help="Overwrite the live tables, backing up to *.prefinal.bak")
-    ap.add_argument("--dataset", default="dr1",
+    ap.add_argument("--data-release", default="dr1",
                     help="Data release. Only dr1 is implemented; anything else "
                          "fails loudly rather than emitting DR1 tables under "
                          "another release's name (S62c).")
     a = ap.parse_args()
 
-    if a.dataset not in _RELEASES:
+    if a.data_release not in _RELEASES:
         raise SystemExit(
-            f"--dataset {a.dataset!r} is not implemented. This script is "
+            f"--data_release {a.data_release!r} is not implemented. This script is "
             "DR1-specific throughout: catalogue stems, slice edges, areas, "
             "counts and the download URL. Add an entry to _RELEASES and audit "
             "every one of those before using it for another release (shapefit "
             f"CHANGELOG S62c). Refusing to write DR1 tables into a "
-            f"{a.dataset!r} directory.")
+            f"{a.data_release!r} directory.")
 
     from desilike.theories.primordial_cosmology import get_cosmo
     cosmo = get_cosmo("DESI")
 
-    # Release-scoped layout (S62c/S80): data/{dataset}/nz_slices/{tracer}_*.csv
+    # Release-scoped layout (S62c/S80): data/{data_release}/nz_slices/{tracer}_*.csv
     out_dir = (Path(a.out_dir) if a.out_dir
-               else (NZ_DIR / a.dataset / "nz_slices" if a.install
-                     else NZ_DIR / "regenerated" / a.dataset / "nz_slices"))
+               else (NZ_DIR / a.data_release / "nz_slices" if a.install
+                     else NZ_DIR / "regenerated" / a.data_release / "nz_slices"))
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"writing to {out_dir}\n")
 

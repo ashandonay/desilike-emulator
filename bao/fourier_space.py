@@ -170,14 +170,14 @@ def get_bao_fisher_covariance(
     include_fog: bool = True,
     float_sigma_bao: bool = True,
     kmax_cov: float | None = None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> Dict[str, float]:
     """Compute the 2x2 BAO covariance matrix from a single-bin Fisher forecast.
 
-    Isotropic tracer bins (dataset-dependent; see core.is_iso_tracer_bin) use a
+    Isotropic tracer bins (data_release-dependent; see core.is_iso_tracer_bin) use a
     qiso fit; all others use qpar/qper.
     """
-    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, dataset) else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, data_release) else "qparqper"
     info = build_bao_likelihood(
         N_tracers=N_tracers,
         theta_cosmo=theta_cosmo,
@@ -188,11 +188,11 @@ def get_bao_fisher_covariance(
         area=area,
         resolution=resolution,
         tracer_config=tracer_config,
-        # Forward the dataset: it is the reference count z_eff's N-scaling is
+        # Forward the data_release: it is the reference count z_eff's N-scaling is
         # measured against (core._nz_scale_factor), so a dr2 caller resolving
         # against dr1 would silently mis-scale n(z). Previously build_bao_
-        # likelihood had no dataset argument and this was unreachable.
-        dataset=dataset,
+        # likelihood had no data_release argument and this was unreachable.
+        data_release=data_release,
         override_sigmas=override_sigmas,
         n_iter=n_iter,
         include_fog=include_fog,
@@ -250,7 +250,7 @@ def get_bao_fisher_covariance_sliced_nz(
     n_iter: int = 1,
     include_fog: bool = True,
     float_sigma_bao: bool = True,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> Dict[str, float]:
     """
     Compute BAO covariance using redshift-sliced n(z).
@@ -267,7 +267,7 @@ def get_bao_fisher_covariance_sliced_nz(
     if z_eff_bin is None:
         z_eff_bin = float(cfg["z_eff"])
 
-    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, dataset) else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer_bin, data_release) else "qparqper"
     n_q = 1 if apmode == "qiso" else 2
     F_q_total = np.zeros((n_q, n_q), dtype=np.float64)
 
@@ -354,7 +354,7 @@ def run_fisher(
     float_sigma_bao: bool = True,
     nz_slices_path: str | Path | None = None,
     kmax_cov: float | None = None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> Dict[str, float]:
     """Convert a sample dict (with N_tracers + cosmo params) to Fisher covariance elements."""
     if param_defaults:
@@ -376,7 +376,7 @@ def run_fisher(
             n_iter=n_iter,
             include_fog=include_fog,
             float_sigma_bao=float_sigma_bao,
-            dataset=dataset,
+            data_release=data_release,
         )
 
     return get_bao_fisher_covariance(
@@ -392,17 +392,17 @@ def run_fisher(
         include_fog=include_fog,
         float_sigma_bao=float_sigma_bao,
         kmax_cov=kmax_cov,
-        dataset=dataset,
+        data_release=data_release,
     )
 
 
 def _fisher_targets_to_emulator_targets(
     targets: Dict[str, float],
     tracer_bin: str,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> List[float]:
     """Convert run_fisher output to per-tracer emulator training targets."""
-    if core.is_iso_tracer_bin(tracer_bin, dataset):
+    if core.is_iso_tracer_bin(tracer_bin, data_release):
         triplet = _cov_to_sigma_triplet(targets)
         return [triplet[2]]
 
@@ -469,7 +469,7 @@ def _worker_run_fisher_sigma(args_tuple):
     _worker_run_fisher, but emits per-tracer emulator targets (σ_DV for isotropic
     tracers; σ_DH, σ_DM, ρ for anisotropic). Top-level + picklable for the spawn
     Pool. Returns (sample, target_vals, tb_str)."""
-    sample, tracer_bin, zrange, z_eff, param_defaults, area, nz_slices_path, dataset = args_tuple
+    sample, tracer_bin, zrange, z_eff, param_defaults, area, nz_slices_path, data_release = args_tuple
     try:
         targets = run_fisher(
             sample,
@@ -479,9 +479,9 @@ def _worker_run_fisher_sigma(args_tuple):
             param_defaults=param_defaults,
             area=area,
             nz_slices_path=nz_slices_path,
-            dataset=dataset,
+            data_release=data_release,
         )
-        target_vals = _fisher_targets_to_emulator_targets(targets, tracer_bin, dataset)
+        target_vals = _fisher_targets_to_emulator_targets(targets, tracer_bin, data_release)
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
         return sample, target_vals, None
@@ -547,9 +547,9 @@ def main() -> None:
              "If omitted, auto-increments to the next available version.",
     )
     parser.add_argument(
-        "--dataset", type=str, default="dr1", choices=["dr1", "dr2"],
+        "--data-release", type=str, default="dr1", choices=["dr1", "dr2"],
         help="DESI release whose 'passed' counts anchor the N_tracers box "
-             "(box = tracers.yaml low/high FACTORS x passed[dataset]).",
+             "(box = tracers.yaml low/high FACTORS x passed[data_release]).",
     )
     parser.add_argument(
         "--ntracers-range",
@@ -558,7 +558,7 @@ def main() -> None:
         default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
         help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
-             "tracers.yaml low/high factors x the --dataset passed count.",
+             "tracers.yaml low/high factors x the --data_release passed count.",
     )
     parser.add_argument(
         "--priors-json",
@@ -611,7 +611,7 @@ def main() -> None:
     if args.ntracers_range is not None:
         nt_low, nt_high = args.ntracers_range
     else:
-        nt_low, nt_high = ntracers_range(args.tracer_bin, args.dataset)
+        nt_low, nt_high = ntracers_range(args.tracer_bin, args.data_release)
     priors["N_tracers"] = {"dist": "uniform", "low": nt_low, "high": nt_high}
 
     all_cosmo_keys = {"Om", "Ok", "w0", "wa", "hrdrag"}
@@ -626,7 +626,7 @@ def main() -> None:
     save_path = os.path.abspath(
         args.save_path if args.save_path else
         get_default_save_path(analysis="bao", quantity="covar",
-                              cosmo_model=cosmo_model, dataset=args.dataset)
+                              cosmo_model=cosmo_model, data_release=args.data_release)
     )
 
     print(f"Tracer bin: {args.tracer_bin}")

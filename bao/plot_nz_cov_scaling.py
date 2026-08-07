@@ -78,7 +78,7 @@ def _shell_volumes(z_edges, cosmo):
     return (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * (_AREA / _SKY)
 
 
-def nbar_of_z(tracer, cosmo, N_tracers, dataset="dr1"):
+def nbar_of_z(tracer, cosmo, N_tracers, data_release="dr1"):
     """nbar(z) per slice exactly as build_bao_likelihood does (S90).
 
     Was `N*frac/V` with a docstring claiming parity with the likelihood -- true
@@ -87,17 +87,17 @@ def nbar_of_z(tracer, cosmo, N_tracers, dataset="dr1"):
     pipeline nobody runs.
     """
     z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
-        tracer, dataset=dataset)
+        tracer, data_release=data_release)
     V_bin = _shell_volumes(z_edges, cosmo)
     nbar, _src = core.cov_nbar_per_slice(tracer, frac, V_bin, float(N_tracers),
-                                         dataset=dataset)
+                                         data_release=data_release)
     return z_mid, np.asarray(nbar, dtype=np.float64)
 
 
 K_PIVOT = 0.14  # h/Mpc, BAO Fisher kernel peak (matches core._compute_z_eff_from_nz)
 
 
-def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, dataset="dr1", N_tracers=None):
+def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, data_release="dr1", N_tracers=None):
     """n̄P(z) per slice at k=K_PIVOT, on the density the covariance uses.
 
     n̄ is `cov_nbar_per_slice` at `N_tracers` (default: DESI's own `passed`, so
@@ -112,12 +112,12 @@ def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, dataset="dr1", N_tracers=None):
     wrong place.
     """
     z_mid, z_edges, frac, _ = core._load_nz_slice_fractions(
-        tracer, dataset=dataset)
+        tracer, data_release=data_release)
     if N_tracers is None:
         N_tracers = cc._get_ntracers(tracer)
     V_bin = _shell_volumes(z_edges, cosmo)
     nbar, _src = core.cov_nbar_per_slice(tracer, frac, V_bin, float(N_tracers),
-                                         dataset=dataset)
+                                         data_release=data_release)
     P_g = np.array([b1 ** 2 * float(core._linear_pk_1d(fo, z=float(z))(
         np.array([K_PIVOT]))[0]) for z in z_mid])
     nP = np.asarray(nbar, dtype=np.float64) * P_g

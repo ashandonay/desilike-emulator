@@ -40,7 +40,7 @@
 #   --analysis         bao | shapefit            (default: bao)
 #   --space            config | fourier          (bao only; default: config)
 #   --quantity         covar | mean              (shapefit only; default: covar)
-#   --dataset          dr1 | dr2                 (default: dr1)
+#   --data-release          dr1 | dr2                 (default: dr1)
 #   --cosmo-model      MODEL                     (default: per analysis, below)
 #   --n-samples N      LHS draws per tracer      (default: 5000)
 #   --version N        shared v{N} folder        (default: auto = next free v{N})
@@ -96,7 +96,7 @@ while [[ $# -gt 0 ]]; do
         --analysis)     ANALYSIS="$2"; shift 2 ;;
         --space)        SPACE="$2"; shift 2 ;;
         --quantity)     QUANTITY="$2"; shift 2 ;;
-        --dataset)      DATASET="$2"; shift 2 ;;
+        --data-release)      DATASET="$2"; shift 2 ;;
         --cosmo-model)  COSMO_MODEL="$2"; shift 2 ;;
         --n-samples)    N_SAMPLES="$2"; shift 2 ;;
         --version)      VERSION="$2"; shift 2 ;;
@@ -250,7 +250,7 @@ cd __SCRIPT_DIR__
 
 python __GEN_SCRIPT__ \
     __GEN_QUANTITY_FLAG__ \
-    --dataset __DATASET__ \
+    --data-release __DATASET__ \
     --tracer-bin "__NAME__" \
     --cosmo-model __COSMO_MODEL__ \
     --n-samples __N_SAMPLES__ \

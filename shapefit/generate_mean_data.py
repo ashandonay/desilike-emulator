@@ -113,7 +113,7 @@ def main() -> None:
     p.add_argument("--version", type=int, default=None,
                    help="Explicit version for the training_data/v{N} dir. "
                         "If omitted, auto-increments.")
-    p.add_argument("--dataset", type=str, default="dr1", choices=["dr1"],
+    p.add_argument("--data-release", type=str, default="dr1", choices=["dr1"],
                    help="Dataset path segment (dr1 only for now).")
     p.add_argument("--priors-json", type=str, default="",
                    help="JSON dict of priors overriding the cosmo-model set.")
@@ -145,8 +145,8 @@ def main() -> None:
     # original (first) position, so the recorded order is unaffected.
     priors["N_tracers"] = {
         "dist": "uniform",
-        "low": ntracers_range(args.tracer_bin, args.dataset)[0],
-        "high": ntracers_range(args.tracer_bin, args.dataset)[1],
+        "low": ntracers_range(args.tracer_bin, args.data_release)[0],
+        "high": ntracers_range(args.tracer_bin, args.data_release)[1],
     }
 
     all_cosmo_keys = set(DEFAULT_PRIORS) - {"N_tracers"}
@@ -165,7 +165,7 @@ def main() -> None:
     # move. It is corrected anyway so the two generators cannot disagree about
     # the geometry, which is how S42's mu/C mismatch happened.
     area = (float(args.area) if args.area is not None
-            else tracer_area(args.tracer_bin, args.dataset))
+            else tracer_area(args.tracer_bin, args.data_release))
     # z_eff is NOT resolved here any more. It is derived per sample inside the
     # worker from that sample's cosmology AND N_tracers, because neither
     # dependence cancels (shapefit CHANGELOG S42). --z-eff still pins it for
@@ -175,12 +175,12 @@ def main() -> None:
     save_path = os.path.abspath(
         args.save_path if args.save_path else
         get_default_save_path(analysis="shapefit", quantity="mean",
-                              cosmo_model=cosmo_model, dataset=args.dataset)
+                              cosmo_model=cosmo_model, data_release=args.data_release)
     )
 
     worker_fn = fourier_space._worker_run_mean_targets
     make_task = lambda s: (s, args.tracer_bin, z_eff, param_defaults,  # noqa: E731
-                           area, args.dataset)
+                           area, args.data_release)
 
     print(f"Tracer bin: {args.tracer_bin}")
     print(f"Cosmo model: {cosmo_model} (varied: {model_params})")

@@ -9,7 +9,7 @@
 #
 # Options (all have defaults):
 #   --space        config | fourier        (default: config)
-#   --dataset      dr1 | dr2                (default: dr1) anchors N_tracers box
+#   --data-release      dr1 | dr2                (default: dr1) anchors N_tracers box
 #   --cosmo-model  base | base_w | base_w_wa | base_omegak | base_omegak_w_wa
 #                                           (default: base_w_wa)
 #   --n-samples    LHS draws per tracer     (default: 5000)
@@ -25,7 +25,7 @@
 # Examples:
 #   bao/generate_training_data.sh --cosmo-model base --n-samples 64 --workers 8 --version 99
 #   bao/generate_training_data.sh --space fourier --tracers "LRG2 QSO"
-#   bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
+#   bao/generate_training_data.sh --data-release dr2 --cosmo-model base --n-samples 10000
 set -euo pipefail
 
 # --- env (emulator conda env; cwd must be the bao/ dir) ---------------------
@@ -49,7 +49,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --space)       SPACE="$2"; shift 2 ;;
-    --dataset)     DATASET="$2"; shift 2 ;;
+    --data-release)     DATASET="$2"; shift 2 ;;
     --cosmo-model) COSMO_MODEL="$2"; shift 2 ;;
     --n-samples)   N_SAMPLES="$2"; shift 2 ;;
     --workers)     WORKERS="$2"; shift 2 ;;
@@ -98,7 +98,7 @@ for T in $TRACERS; do
   echo "  $T   ($(date '+%H:%M:%S'))"
   echo "----------------------------------------------------------------------"
   "$PYBIN" generate_covar_data.py \
-    --space "$SPACE" --dataset "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
+    --space "$SPACE" --data-release "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
     --n-samples "$N_SAMPLES" --workers "$WORKERS" --version "$VERSION" \
     "${save_args[@]}" "${EXTRA[@]}"
   echo

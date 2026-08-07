@@ -199,16 +199,16 @@ _KLIM = (0.02, 0.2, 0.005)
 DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
 
 
-def dataset_area(dataset: str = "dr1") -> float:
+def dataset_area(data_release: str = "dr1") -> float:
     """Effective footprint for a data release. Callers should route through
-    this (or pass ``dataset=``) rather than hardcoding a number: freezing one
+    this (or pass ``data_release=``) rather than hardcoding a number: freezing one
     release's area as a module default is exactly how the DR2 footprint ended
     up in a DR1-only pipeline."""
     try:
-        return DATASET_AREAS[dataset]
+        return DATASET_AREAS[data_release]
     except KeyError:
         raise ValueError(
-            f"No footprint area for dataset {dataset!r}; "
+            f"No footprint area for data_release {data_release!r}; "
             f"known: {sorted(DATASET_AREAS)}") from None
 
 # ShapeFit template pivot/slope conventions (desilike defaults; DESI/Brieden+21).
@@ -216,7 +216,7 @@ _SHAPEFIT_KP = 0.03
 _SHAPEFIT_A = 0.6
 
 
-def emulator_target_names(tracer_bin: str | None = None, dataset: str = "dr1") -> List[str]:
+def emulator_target_names(tracer_bin: str | None = None, data_release: str = "dr1") -> List[str]:
     """Per-tracer emulator targets — identical for all tracers (API symmetry
     with bao.core.emulator_target_names)."""
     return list(TARGET_NAMES)
@@ -395,7 +395,7 @@ def _fs_compute_z_eff(
     area_deg2: float,
     b1: float,
     n_tracers=None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> float:
     """Effective redshift from the n(z) slices.
 
@@ -421,12 +421,12 @@ def _fs_compute_z_eff(
     if bao_core.Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
                                             n_tracers=n_tracers,
-                                            dataset=dataset)
+                                            data_release=data_release)
 
     z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(
-        tracer_bin, dataset=dataset)
+        tracer_bin, data_release=data_release)
     nbar_file = (np.asarray(nbar_file, dtype=np.float64)
-                 * bao_core._nz_scale_factor(tracer_bin, n_tracers, dataset))
+                 * bao_core._nz_scale_factor(tracer_bin, n_tracers, data_release))
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -461,7 +461,7 @@ def build_shapefit_likelihood(
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
     area: float | None = None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
     klim_spec: Tuple[float, float, float] = _KLIM,
@@ -507,7 +507,7 @@ def build_shapefit_likelihood(
     # LRG 5740, ELG 5924, QSO 7249 against a ~7500 nominal). Using 7500 for all
     # inflates V by 1.31x on LRG and 1.27x on ELG. Never a frozen default --
     # see util.tracer_area() and shapefit CHANGELOG S54.
-    area = float(area) if area is not None else tracer_area(tracer_bin, dataset)
+    area = float(area) if area is not None else tracer_area(tracer_bin, data_release)
 
     cosmo = get_cosmo(("DESI", dict(theta_cosmo)))
     fo = cosmo.get_fourier()
@@ -529,7 +529,7 @@ def build_shapefit_likelihood(
                 # on LRG3. Must match what the BAO pipeline does, or the two
                 # derive different z_eff for the same tracer and N.
                 n_tracers=float(N_tracers),
-                dataset=dataset,
+                data_release=data_release,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])
@@ -547,7 +547,7 @@ def build_shapefit_likelihood(
     v_shell_for_footprint: Optional[float] = None
     try:
         z_mid_slice, z_edges_slice, frac_slice, _ = bao_core._load_nz_slice_fractions(
-            tracer_bin, dataset=dataset
+            tracer_bin, data_release=data_release
         )
     except FileNotFoundError as exc:
         print(f"[veff] {tracer_bin}: nz slices missing -- using V_shell. ({exc})")
@@ -565,7 +565,7 @@ def build_shapefit_likelihood(
         # same reasoning as the BAO Fourier path.
         nbar_slice, _nbar_src = bao_core.cov_nbar_per_slice(
             tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
-            dataset=dataset, cosmo=cosmo)
+            data_release=data_release, cosmo=cosmo)
 
         fkp_wsq_list = []
         for zi, ni in zip(z_mid_slice, nbar_slice):
@@ -587,7 +587,7 @@ def build_shapefit_likelihood(
 
         v_eff, v_shell = bao_core._compute_v_eff_fkp(
             cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
-            fkp_weight_sq_per_bin=fkp_wsq_per_bin, dataset=dataset,
+            fkp_weight_sq_per_bin=fkp_wsq_per_bin, data_release=data_release,
         )
         v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
 

@@ -181,14 +181,14 @@ def dv_dhdm_at(z: float, params: Dict[str, float] | None = None) -> Tuple[float,
 # summary.
 #
 # Source: DESI DR1 full-shape cosmology VAC v1.0, iminuit (posterior
-# maximization), model `base`, dataset
+# maximization), model `base`, data_release
 #   desi-shapefit-all-nolya_schoneberg2024-bbn_planck2018-ns10
 # file `bestfit.minimum.txt`, mirrored at
 #   ~/data/desi/dr1_fs_cosmo/shapefit_all_nolya.bestfit.minimum.txt
 #   https://data.desi.lbl.gov/public/dr1/vac/dr1/full-shape-cosmo-params/v1.0/
 #     iminuit/base/desi-shapefit-all-nolya_schoneberg2024-bbn_planck2018-ns10/
 #
-# This dataset is the right one for this module, on three counts:
+# This data_release is the right one for this module, on three counts:
 #   - ShapeFit, not the direct velocileptors fit — the same compression the
 #     Appendix A vectors are in;
 #   - full-shape ALONE, no BAO — the compressed vectors carry no BAO either;

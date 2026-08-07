@@ -197,17 +197,17 @@ _TARGET_TO_SYST_KEY = {
 }
 
 
-def apply_desi_syst_targets(targets, tracer_bin, dataset="dr1", ratios=None):
+def apply_desi_syst_targets(targets, tracer_bin, data_release="dr1", ratios=None):
     """Inflate an emulator output VECTOR from σ_stat → σ_tot (new per-tracer shape).
 
-    `targets` is in :func:`core.emulator_target_names` order for the tracer/dataset:
+    `targets` is in :func:`core.emulator_target_names` order for the tracer/data_release:
     isotropic ``[σ_DV]`` (scaled by R[DV]); anisotropic ``[σ_DH, σ_DM, ρ]`` (σ's
     scaled by R[DH], R[DM]; ρ passed through untouched). Diagonal, fiducial-
     calibrated, cosmology-independent — same semantics as :func:`apply_desi_syst`.
     Returns a new list. Unknown tracers / missing factors scale by 1.0 (no-op).
     """
     R = (ratios or DESI_SYST_INFLATION).get(tracer_bin, {})
-    names = core.emulator_target_names(tracer_bin, dataset)
+    names = core.emulator_target_names(tracer_bin, data_release)
     return [float(v) * float(R.get(_TARGET_TO_SYST_KEY.get(nm, ""), 1.0))
             for nm, v in zip(names, targets)]
 

@@ -69,10 +69,10 @@ def collect():
     rows = {}
     for t in TRACERS:
         area = tracer_area(t, "dr1")
-        z = bao_core._desi_z_eff_from_nz(t, cosmo, area, dataset="dr1")
+        z = bao_core._desi_z_eff_from_nz(t, cosmo, area, data_release="dr1")
         N = float(ntracers(t, "dr1"))
         zN = [bao_core._desi_z_eff_from_nz(t, cosmo, area, n_tracers=f * N,
-                                           dataset="dr1")
+                                           data_release="dr1")
               for f in (0.5, 1.0, 1.5)]
         rows[t] = {
             "z_eff": z,

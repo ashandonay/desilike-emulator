@@ -164,7 +164,7 @@ Exactly one of **`--run-id`**, **`--run-dir`**, or **`--model-path`** must ident
 
 ```bash
 bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
-python train.py --analysis bao --quantity config --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
+python train.py --analysis bao --quantity config --cosmo-model base --data-release dr1 --data-dir latest --tracer-bin LRG2
 python eval.py --run-id <mlflow_run_id> --analysis bao --tracer-bin LRG2
 ```
 
@@ -172,7 +172,7 @@ python eval.py --run-id <mlflow_run_id> --analysis bao --tracer-bin LRG2
 
 ```bash
 shapefit/generate_training_data.sh --quantity covar --cosmo-model base --n-samples 5000
-python train.py --analysis shapefit --quantity covar --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
+python train.py --analysis shapefit --quantity covar --cosmo-model base --data-release dr1 --data-dir latest --tracer-bin LRG2
 python eval.py --run-dir <path_to_run_artifacts> --analysis shapefit --quantity covar --tracer-bin LRG2
 ```
 
@@ -180,7 +180,7 @@ python eval.py --run-dir <path_to_run_artifacts> --analysis shapefit --quantity 
 
 ```bash
 shapefit/generate_training_data.sh --quantity mean --cosmo-model base --n-samples 10000
-python train.py --analysis shapefit --quantity mean --cosmo-model base --dataset dr1 --data-dir latest --tracer-bin LRG2
+python train.py --analysis shapefit --quantity mean --cosmo-model base --data-release dr1 --data-dir latest --tracer-bin LRG2
 python eval.py --model-path /path/to/model.pt --analysis shapefit --quantity mean --tracer-bin LRG2
 ```
 

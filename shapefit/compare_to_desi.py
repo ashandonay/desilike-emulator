@@ -550,7 +550,7 @@ def _windowed_analytic_cov(tracer: str, win: Dict, P_ells: np.ndarray,
     # built its own N*frac/V, so it audited a pipeline that no longer exists.
     slices, _ = _cs._nz_slices_nx(
         tracer, cosmo, tracer_area(tracer, "dr1"),
-        float(ntracers(tracer, "dr1")), dataset="dr1")
+        float(ntracers(tracer, "dr1")), data_release="dr1")
     blocks = fac.fkp_analytic_cov(
         k=win["th_k"], P_ells_in=P_ells, ells_in=win["th_ells"],
         ells_obs=win["th_ells"], slices=slices,
@@ -592,7 +592,7 @@ def _analytic_cov_on_obs_grid(tracer: str, ours: Dict) -> np.ndarray:
     # DESI NX density, as above (S90).
     slices, _ = _cs._nz_slices_nx(
         tracer, cosmo, tracer_area(tracer, "dr1"),
-        float(ntracers(tracer, "dr1")), dataset="dr1")
+        float(ntracers(tracer, "dr1")), data_release="dr1")
     blocks = fac.fkp_analytic_cov(
         k=k, P_ells_in=np.asarray(theory.power), ells_in=(0, 2, 4),
         ells_obs=_OUR_ELLS, slices=slices,

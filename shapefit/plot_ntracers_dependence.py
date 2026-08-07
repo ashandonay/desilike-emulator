@@ -132,12 +132,12 @@ def run_sweep(tracers, n_points: int, workers: int) -> dict:
 # ===========================================================================
 # Training-set read
 # ===========================================================================
-def load_training(version: str, dataset: str = "dr1",
+def load_training(version: str, data_release: str = "dr1",
                   cosmo_model: str = "base") -> dict:
     """{tracer: (N, y[n,10])} pooled over the train and test splits."""
     root = Path(get_default_save_path(analysis="shapefit", quantity="covar",
                                       cosmo_model=cosmo_model,
-                                      dataset=dataset)) / version
+                                      data_release=data_release)) / version
     out, names, pnames = {}, None, None
     for tracer in ("BGS", "LRG1", "LRG2", "LRG3", "LRG3_ELG1", "ELG2", "QSO"):
         xs, ys = [], []

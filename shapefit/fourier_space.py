@@ -158,7 +158,7 @@ def run_fisher(
     z_eff: float | None = None,
     param_defaults: Dict[str, float] | None = None,
     area: float | None = None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
     resolution: int = 3,
     float_sigma_damp: bool = True,
     theory_cls=None,
@@ -185,7 +185,7 @@ def run_fisher(
         zrange=zrange,
         z_eff=z_eff,
         area=area,
-        dataset=dataset,
+        data_release=data_release,
         resolution=resolution,
         float_sigma_damp=float_sigma_damp,
         **kwargs,
@@ -207,13 +207,13 @@ def run_fisher(
 # tb_str); sample None signals failure.
 # ===========================================================================
 def _worker_run_fisher_targets(args_tuple):
-    """Covar worker. The task tuple carries `dataset` (as the mean worker's
-    always has): without it this fell back to run_fisher's dataset="dr1"
+    """Covar worker. The task tuple carries `data_release` (as the mean worker's
+    always has): without it this fell back to run_fisher's data_release="dr1"
     default, so a dr2 run would have been saved under dr2/ by
     get_default_save_path while being generated from dr1 n(z) slices and the
-    dr1 z_eff. Harmless today only because --dataset is choices=["dr1"]."""
+    dr1 z_eff. Harmless today only because --data-release is choices=["dr1"]."""
     (sample, tracer_bin, zrange, z_eff, param_defaults, area,
-     dataset) = args_tuple
+     data_release) = args_tuple
     try:
         targets = run_fisher(
             sample,
@@ -222,7 +222,7 @@ def _worker_run_fisher_targets(args_tuple):
             z_eff=z_eff,
             param_defaults=param_defaults,
             area=area,
-            dataset=dataset,
+            data_release=data_release,
         )
         target_vals = [targets[t] for t in TARGET_NAMES]
         if not all(np.isfinite(v) for v in target_vals):
@@ -252,12 +252,12 @@ def _worker_run_mean_targets(args_tuple):
     None to derive.
     """
     (sample, tracer_bin, z_eff, param_defaults,
-     area_deg2, dataset) = args_tuple
+     area_deg2, data_release) = args_tuple
     try:
         merged_for_z = {**(param_defaults or {}), **sample}
         if z_eff is None:
             z_eff = _mean_z_eff_for_sample(
-                merged_for_z, tracer_bin, area_deg2, dataset)
+                merged_for_z, tracer_bin, area_deg2, data_release)
         extractor = _get_mean_extractor(tracer_bin, z_eff)
         merged = {**(param_defaults or {}), **sample}
         theta = sf_core._to_mean_extractor_params(merged)
@@ -278,12 +278,12 @@ def _worker_run_mean_targets(args_tuple):
 
 
 def _mean_z_eff_for_sample(sample, tracer_bin: str, area_deg2: float,
-                           dataset: str = "dr1") -> float:
+                           data_release: str = "dr1") -> float:
     """z_eff at THIS sample's cosmology and N_tracers."""
     from desilike.theories.primordial_cosmology import get_cosmo
 
     cfg = sf_core.get_tracer_config(tracer_bin, analysis="shapefit",
-                                    dataset=dataset)
+                                    data_release=data_release)
     theta = sf_core._to_shapefit_cosmo_params(sample)
     cosmo = get_cosmo(("DESI", dict(theta)))
     try:
@@ -291,7 +291,7 @@ def _mean_z_eff_for_sample(sample, tracer_bin: str, area_deg2: float,
             tracer_bin=tracer_bin, cosmo=cosmo, fo=cosmo.get_fourier(),
             area_deg2=float(area_deg2),
             b1=float(cfg.get("bias_recon", 2.0)),
-            n_tracers=sample.get("N_tracers"), dataset=dataset)
+            n_tracers=sample.get("N_tracers"), data_release=data_release)
     except (FileNotFoundError, ValueError):
         return float(cfg["z_eff"])
 

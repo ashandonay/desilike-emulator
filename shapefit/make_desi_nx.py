@@ -9,7 +9,7 @@ These tables are what z_eff is computed from since S53 (2411.12020 Eqs 8.1-8.3):
                    normalisation -- survey GEOMETRY, fixed in N.
 
 They are 20.9 GB of randoms reduced to ~10 KB, which is why the ~10 KB is
-committed (data/{dataset}/nz_slices) and the 20.9 GB is not. This script exists
+committed (data/{data_release}/nz_slices) and the 20.9 GB is not. This script exists
 so the committed files are REPRODUCIBLE rather than inherited.
 
     python make_desi_nx.py --tracers LRG2 --check      # rebuild, diff, discard
@@ -135,7 +135,7 @@ def _load(stem: str, source: str, nran: int):
     return out
 
 
-def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
+def rebuild(tracer: str, data_release: str, source: str, nran: int) -> pd.DataFrame:
     """Aggregate onto this tracer's EXISTING slice edges.
 
     The edges are not free: `bao/core._desi_nz_geometry` length-checks this file
@@ -145,7 +145,7 @@ def rebuild(tracer: str, dataset: str, source: str, nran: int) -> pd.DataFrame:
     # A parent pseudo-tracer borrows its combined bin's catalogue and edges,
     # then keeps only its own population (S88).
     base, tag = PARENT.get(tracer, (tracer, None))
-    sl = pd.read_csv(nz_slices_path(f"{base}_nz_slices.csv", dataset))
+    sl = pd.read_csv(nz_slices_path(f"{base}_nz_slices.csv", data_release))
     sl = sl[sl["slice_fraction"] > 0.0].reset_index(drop=True)
     z_lo = sl["zlow"].to_numpy(dtype=np.float64)
     z_hi = sl["zhigh"].to_numpy(dtype=np.float64)
@@ -215,7 +215,7 @@ def main() -> int:
     ap.add_argument("--tracers", nargs="+", default=sorted(STEM) + ["ELG1"],
                     help="analysis bins plus ELG1; LRG3p is the LRG-parent "
                          "cross-check and must be asked for by name")
-    ap.add_argument("--dataset", default="dr1", choices=["dr1"])
+    ap.add_argument("--data-release", default="dr1", choices=["dr1"])
     ap.add_argument("--source", choices=["randoms", "data"], default="randoms",
                     help="randoms (default) reproduces the committed tables; "
                          "data is a lossy fallback -- see the module docstring")
@@ -230,16 +230,16 @@ def main() -> int:
     ap.add_argument("--out-dir", type=Path, default=None)
     a = ap.parse_args()
 
-    out_dir = a.out_dir or (REPO_DATA / a.dataset / "nz_slices")
+    out_dir = a.out_dir or (REPO_DATA / a.data_release / "nz_slices")
     worst = 0.0
     for t in a.tracers:
         try:
-            df = rebuild(t, a.dataset, a.source, a.nran)
+            df = rebuild(t, a.data_release, a.source, a.nran)
         except FileNotFoundError as exc:
             print(f"  {t:10s} SKIP -- {str(exc).splitlines()[0]}")
             continue
 
-        cur = REPO_DATA / a.dataset / "nz_slices" / f"{t}_desi_nx.csv"
+        cur = REPO_DATA / a.data_release / "nz_slices" / f"{t}_desi_nx.csv"
         if cur.exists():
             old = pd.read_csv(cur)
             if len(old) == len(df):

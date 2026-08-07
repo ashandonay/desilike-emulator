@@ -131,10 +131,10 @@ into one shared, auto-incremented version folder (no overwrite):
 bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
 
 # DR2 counts — same factors, different anchor (lands in its own v{N})
-bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
+bao/generate_training_data.sh --data-release dr2 --cosmo-model base --n-samples 10000
 
 # single tracer, by hand (auto-versions per save() call — prefer the driver)
-python generate_covar_data.py --space config --dataset dr1 --tracer-bin LRG2 \
+python generate_covar_data.py --space config --data-release dr1 --tracer-bin LRG2 \
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
@@ -171,7 +171,7 @@ to the same σ-triplet.
 # one CLI, pick the frame with --space {config|fourier}
 
 # Fourier — sample the desilike likelihood object
-python mcmc.py --space fourier --tracers LRG2 QSO --cov analytic --dataset dr1
+python mcmc.py --space fourier --tracers LRG2 QSO --cov analytic --data-release dr1
 python mcmc.py --space fourier --cov bundle              # DR1 RascalC cov_ξ as precision
 python mcmc.py --space fourier --cov bundle --seeds 42 43 44 45 46   # sweep → error bars
 

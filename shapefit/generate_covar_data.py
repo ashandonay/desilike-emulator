@@ -21,7 +21,7 @@ Notes
   --z-eff pins it (sensitivity checks only). This differs from the BAO
   Fourier CLI, which pins the yaml value.
 * The N_tracers box is ALWAYS anchored via util.ntracers_range (tracers.yaml
-  low/high factors x the --dataset passed count) unless --ntracers-range
+  low/high factors x the --data_release passed count) unless --ntracers-range
   overrides it with absolute bounds. Never hardcode N (CHANGELOG bao §33n).
 """
 from __future__ import annotations
@@ -104,14 +104,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "If omitted, auto-increments.",
     )
     p.add_argument(
-        "--dataset", type=str, default="dr1", choices=["dr1"],
+        "--data-release", type=str, default="dr1", choices=["dr1"],
         help="DESI release anchoring the N_tracers box (dr1 only for now).",
     )
     p.add_argument(
         "--ntracers-range", type=float, nargs=2, default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
         help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
-             "tracers.yaml low/high factors x the --dataset passed count.",
+             "tracers.yaml low/high factors x the --data_release passed count.",
     )
     p.add_argument(
         "--priors-json", type=str, default="",
@@ -152,7 +152,7 @@ def main() -> None:
     if args.ntracers_range is not None:
         nt_low, nt_high = args.ntracers_range
     else:
-        nt_low, nt_high = ntracers_range(args.tracer_bin, args.dataset)
+        nt_low, nt_high = ntracers_range(args.tracer_bin, args.data_release)
     priors["N_tracers"] = {"dist": "uniform", "low": nt_low, "high": nt_high}
 
     all_cosmo_keys = set(DEFAULT_PRIORS) - {"N_tracers"}
@@ -167,13 +167,13 @@ def main() -> None:
     save_path = os.path.abspath(
         args.save_path if args.save_path else
         get_default_save_path(analysis="shapefit", quantity="covar",
-                              cosmo_model=cosmo_model, dataset=args.dataset)
+                              cosmo_model=cosmo_model, data_release=args.data_release)
     )
 
     # Footprint for THIS tracer, not for the release. S54 established the area
     # is per tracer class (DESI 2024 II Table 2: BGS 7473, LRG 5740, ELG 5924,
     # QSO 7249) because priority and imaging vetoes remove different sky from
-    # different samples. This used to resolve DATASET_AREAS[dataset] = 7500 and
+    # different samples. This used to resolve DATASET_AREAS[data_release] = 7500 and
     # pass it in explicitly, which OVERRODE the per-tracer default that
     # build_shapefit_likelihood only applies when area is None -- so the S54 fix
     # reached every validation path (our_forecast, mcmc.py, benchmark_desi.py)
@@ -182,14 +182,14 @@ def main() -> None:
     # wins over the diluted nbar, so the emulator was being taught that DESI is
     # MORE constraining than it is, worst exactly on the LRG bins.
     area = (float(args.area) if args.area is not None
-            else tracer_area(args.tracer_bin, args.dataset))
+            else tracer_area(args.tracer_bin, args.data_release))
 
     worker_fn = fourier_space._worker_run_fisher_targets
     make_task = lambda s: (  # noqa: E731
-        s, args.tracer_bin, zrange, z_eff, param_defaults, area, args.dataset,
+        s, args.tracer_bin, zrange, z_eff, param_defaults, area, args.data_release,
     )
 
-    target_names = sf_core.emulator_target_names(args.tracer_bin, args.dataset)
+    target_names = sf_core.emulator_target_names(args.tracer_bin, args.data_release)
 
     print(f"Tracer bin: {args.tracer_bin}")
     print(f"Tracer bin config: {tracer_bin_cfg}")
@@ -202,7 +202,7 @@ def main() -> None:
     print(f"Active constraints: {list(constraints.keys())}")
     print(f"Redshift range: {zrange}, z_eff = "
           f"{'derived per sample' if z_eff is None else f'{z_eff:.3f} (pinned)'}")
-    print(f"Area: {area:.3f} deg^2 ({args.dataset} footprint)")
+    print(f"Area: {area:.3f} deg^2 ({args.data_release} footprint)")
     print(f"Target: {target_names}")
     print("Writing dataset to:", save_path)
 

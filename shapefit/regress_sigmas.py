@@ -155,7 +155,7 @@ def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
         z_eff = sf_core._fs_compute_z_eff(
             tracer_bin=tracer, cosmo=cosmo_fid, fo=fo_fid,
             area_deg2=_area(tracer), b1=float(cfg.get("bias_recon", 2.0)),
-            n_tracers=ntracers(tracer, "dr1"), dataset="dr1",
+            n_tracers=ntracers(tracer, "dr1"), data_release="dr1",
         )
     except (FileNotFoundError, ValueError):
         z_eff = float(cfg["z_eff"])

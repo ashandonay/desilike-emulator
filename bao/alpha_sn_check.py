@@ -62,7 +62,7 @@ def _analyze(tracer):
     # a different n-bar than the pipeline it audits measures nothing.
     slices, _ = cc._nz_slices_nx(tracer, cosmo, cc._AREA,
                                  float(cc._get_ntracers(tracer)),
-                                 dataset="dr1")  # cc._AREA is DR1
+                                 data_release="dr1")  # cc._AREA is DR1
     P_wide = cc._wide_Pell(tracer, info)
 
     bundle = cc.load_bundle(tracer)

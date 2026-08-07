@@ -59,7 +59,7 @@ from numpy.polynomial.legendre import leggauss
 P_FKP_DEFAULT = 1.0e4
 
 
-def fkp_p0_for(tracer_bin: str, dataset: str = "dr1") -> float:
+def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
     """DESI's Eq. (8.4) FKP pivot for this tracer, from tracers.yaml.
 
     Falls back to P_FKP_DEFAULT with a warning if the tracer has no `fkp_p0`,
@@ -76,7 +76,7 @@ def fkp_p0_for(tracer_bin: str, dataset: str = "dr1") -> float:
 
     from util import get_tracer_config
 
-    cfg = get_tracer_config(tracer_bin, dataset=dataset)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     p0 = cfg.get("fkp_p0")
     if p0 is None:
         warnings.warn(
@@ -238,21 +238,21 @@ def load_nz_slices(
     N_design: float | None = None,
     nz_slices_dir: str | None = None,
     *,
-    dataset: str,
+    data_release: str,
 ) -> NZSlices:
     """Build NZSlices for a tracer at a given cosmology and total tracer count.
 
     The slice fractions are cosmology-INDEPENDENT (file-based). V_shell varies
     with cosmology through chi(z). n(z) = N_design * frac_i / V_i.
 
-    `dataset` is keyword-only and REQUIRED -- see S62c and `core.nz_slices_path`.
+    `data_release` is keyword-only and REQUIRED -- see S62c and `core.nz_slices_path`.
     """
     import pandas as pd
     from pathlib import Path
 
     from util import nz_slices_path
 
-    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", dataset,
+    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", data_release,
                           base_dir=nz_slices_dir)
 
     df = pd.read_csv(path)

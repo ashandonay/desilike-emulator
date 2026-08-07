@@ -11,7 +11,7 @@
 #   --quantity     covar | mean            (default: covar)
 #                    covar -> generate_covar_data.py (errors: sigma/rho)
 #                    mean  -> generate_mean_data.py     (qiso,qap,f_sigmar,m)
-#   --dataset      dr1                      (default: dr1) anchors N_tracers box
+#   --data-release      dr1                      (default: dr1) anchors N_tracers box
 #   --cosmo-model  base | base_w | base_w_wa (default: base)
 #   --n-samples    LHS draws per tracer     (default: 5000)
 #   --workers      spawn-Pool processes     (default: 32; each pinned to 1 BLAS
@@ -49,7 +49,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --quantity)    QUANTITY="$2"; shift 2 ;;
-    --dataset)     DATASET="$2"; shift 2 ;;
+    --data-release)     DATASET="$2"; shift 2 ;;
     --cosmo-model) COSMO_MODEL="$2"; shift 2 ;;
     --n-samples)   N_SAMPLES="$2"; shift 2 ;;
     --workers)     WORKERS="$2"; shift 2 ;;
@@ -123,7 +123,7 @@ for T in $TRACERS; do
   echo "  $T   ($(date '+%H:%M:%S'))"
   echo "----------------------------------------------------------------------"
   "$PYBIN" "$GENERATOR" \
-    --dataset "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
+    --data-release "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
     --n-samples "$N_SAMPLES" --workers "$WORKERS" --version "$VERSION" \
     "${save_args[@]}" "${EXTRA[@]}"
   echo

@@ -178,7 +178,7 @@ def _get_ntracers(tracer):
     return ntracers(tracer, "dr1")
 
 
-def _nz_slices_nx(tracer, cosmo, area_deg2, N_design, *, dataset):
+def _nz_slices_nx(tracer, cosmo, area_deg2, N_design, *, data_release):
     """NZSlices whose n-bar is DESI's NX (`nbar_total`), not N*frac/V (S90).
 
     `load_nz_slices` supplies the GEOMETRY -- z_mid and V_shell recomputed at
@@ -199,14 +199,14 @@ def _nz_slices_nx(tracer, cosmo, area_deg2, N_design, *, dataset):
     swallowed because a silent fallback here is the S58 failure mode.
     """
     sl = load_nz_slices(tracer_bin=tracer, cosmo=cosmo, area_deg2=area_deg2,
-                        N_design=N_design, dataset=dataset)
-    _, _, frac, _ = core._load_nz_slice_fractions(tracer, dataset=dataset)
+                        N_design=N_design, data_release=data_release)
+    _, _, frac, _ = core._load_nz_slice_fractions(tracer, data_release=data_release)
     if frac.shape != np.asarray(sl.nbar).shape:
         raise ValueError(
             f"{tracer}: slice-fraction shape {frac.shape} != geometry "
             f"{np.asarray(sl.nbar).shape}; the two n(z) readers have diverged")
     nbar, src = core.cov_nbar_per_slice(tracer, frac, sl.V, N_design,
-                                        dataset=dataset)
+                                        data_release=data_release)
     if not str(src).startswith("NX"):
         # Deliberately stderr, not warnings.warn: this module calls
         # warnings.filterwarnings("ignore") at import, which would swallow the
@@ -463,7 +463,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
         tracer, cosmo, _tracer_area(tracer),
         # This module is DR1-only by construction: _get_ntracers reads
         # desi_data.csv's `passed` and _AREA is the DR1 footprint (S62c).
-        float(_get_ntracers(tracer)), dataset="dr1",
+        float(_get_ntracers(tracer)), data_release="dr1",
     )
 
     P_wide = _wide_Pell(tracer, info)  # (3, Nk) for ells (0,2,4)
@@ -554,7 +554,7 @@ def _validate_shotnoise_limit(verbose: bool = True) -> bool:
 # ===========================================================================
 # §3  Native ξ-theory + Fisher  (↔ fourier_space.run_fisher / get_bao_fisher_covariance)
 # ===========================================================================
-def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, dataset="dr1"):
+def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, data_release="dr1"):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from native-ξ Fisher.
 
     cov_override: optional ndarray to substitute for bundle['cov']. Pass the
@@ -566,7 +566,7 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, data
     passes them in, so this function doesn't redundantly rebuild the template.
     """
     cfg = TRACER_CONFIGS[tracer]
-    apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
     if info is None:
         # lean=True: skip the desilike observable/Fourier-cov/likelihood build.
         # This path uses only the template + fiducial nuisance values; the ξ-cov
@@ -726,11 +726,11 @@ class XiSigmaGenerator:
     survey geometry + Bessel basis), then call ``sigma_triplet(**cosmo)`` for
     each sampled cosmology. Thread the same instance across a cosmology sweep."""
 
-    def __init__(self, tracer, dataset="dr1"):
+    def __init__(self, tracer, data_release="dr1"):
         self.tracer = tracer
-        self.dataset = dataset
+        self.data_release = data_release
         self.cfg = TRACER_CONFIGS[tracer]
-        self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
+        self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
         self.bundle = load_bundle(tracer)
 
         # FKP volume/n̄ at the FIDUCIAL frame (frame-fixed, like the window —
@@ -741,7 +741,7 @@ class XiSigmaGenerator:
         self._N_fid = float(_get_ntracers(tracer))
         self.slices, self.nbar_source = _nz_slices_nx(
             tracer, cosmo_fid, _tracer_area(tracer),
-            self._N_fid, dataset=self.dataset)
+            self._N_fid, data_release=self.data_release)
         # n̄ is still exactly linear in N_design after S90 — cov_nbar_per_slice
         # returns nbar_total × α(N) with α = N/N_dataset, and its docstring
         # commits to that linearity for this cache — so the cov shot-noise term
@@ -802,7 +802,7 @@ class XiSigmaGenerator:
             lean=True)
         cov = self.windowed_cov(info, N_tracers=N)
         return bundle_fisher_sigmas(self.tracer, cov_override=cov,
-                                    info=info, bundle=self.bundle, dataset=self.dataset)
+                                    info=info, bundle=self.bundle, data_release=self.data_release)
 
 
 # Per-tracer emulator targets (see core.emulator_target_names).
@@ -819,17 +819,17 @@ def _worker_xi_sigma(args_tuple):
     {N_tracers + cosmo} to per-tracer emulator targets via a cached per-process
     XiSigmaGenerator. Top-level + picklable for the spawn Pool. Returns
     (sample, target_vals, tb_str) — tb_str None on success."""
-    sample, tracer, dataset = args_tuple
+    sample, tracer, data_release = args_tuple
     try:
-        cache_key = (tracer, dataset)
+        cache_key = (tracer, data_release)
         gen = _XI_GEN_CACHE.get(cache_key)
         if gen is None:
-            gen = XiSigmaGenerator(tracer, dataset=dataset)
+            gen = XiSigmaGenerator(tracer, data_release=data_release)
             _XI_GEN_CACHE[cache_key] = gen
         N_tracers = sample.get("N_tracers")
         cosmo_overrides = {k: v for k, v in sample.items() if k != "N_tracers"}
         s = gen.sigma_triplet(N_tracers=N_tracers, **cosmo_overrides)
-        target_vals = core.fisher_sigmas_to_emulator_targets(s, tracer, dataset)
+        target_vals = core.fisher_sigmas_to_emulator_targets(s, tracer, data_release)
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
         return sample, target_vals, None

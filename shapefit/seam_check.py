@@ -123,7 +123,7 @@ def _samples() -> Dict[str, Dict[str, float]]:
     return out
 
 
-def run(tracers, theory: str, dataset: str) -> bool:
+def run(tracers, theory: str, data_release: str) -> bool:
     from desilike.theories.primordial_cosmology import get_cosmo
 
     theory_cls = (sf_core.KaiserTracerPowerSpectrumMultipoles if theory == "kaiser"
@@ -131,13 +131,13 @@ def run(tracers, theory: str, dataset: str) -> bool:
     seams: List[Seam] = []
 
     # ---- seams that do not depend on a sample -------------------------------
-    s_area = Seam("tracer area", "both must read util.tracer_area(t, dataset)")
+    s_area = Seam("tracer area", "both must read util.tracer_area(t, data_release)")
     s_nz = Seam("n(z) table", "same release-scoped file (S62c/S77)")
     for t in tracers:
-        s_area.check(t, tracer_area(t, dataset), tracer_area(t, dataset))
+        s_area.check(t, tracer_area(t, data_release), tracer_area(t, data_release))
         # The mean path reaches n(z) through _mean_z_eff_for_sample -> the covar
         # path through build_shapefit_likelihood; both land in nz_slices_path.
-        p = nz_slices_path(f"{t}_nz_slices.csv", dataset)
+        p = nz_slices_path(f"{t}_nz_slices.csv", data_release)
         s_nz.check(t, p.name, p.name)
     seams += [s_area, s_nz]
 
@@ -171,8 +171,8 @@ def run(tracers, theory: str, dataset: str) -> bool:
         seams.append(s_cos)
 
         for t in tracers:
-            area = float(tracer_area(t, dataset))
-            n_tr = float(ntracers(t, dataset))
+            area = float(tracer_area(t, data_release))
+            n_tr = float(ntracers(t, data_release))
             smp = {**sample, "N_tracers": n_tr}
 
             info = sf_core.build_shapefit_likelihood(
@@ -180,7 +180,7 @@ def run(tracers, theory: str, dataset: str) -> bool:
                 theta_cosmo=theta,
                 tracer_bin=t,
                 area=area,
-                dataset=dataset,
+                data_release=data_release,
                 theory_cls=theory_cls,
             )
             extractor = fs._get_mean_extractor(t, info["z_eff"])
@@ -190,7 +190,7 @@ def run(tracers, theory: str, dataset: str) -> bool:
             s_z = Seam(f"z_eff [{sname}/{t}]",
                        "S42: mu and C must be evaluated at ONE redshift")
             s_z.check("z_eff",
-                      fs._mean_z_eff_for_sample(smp, t, area, dataset),
+                      fs._mean_z_eff_for_sample(smp, t, area, data_release),
                       float(info["z_eff"]))
             seams.append(s_z)
 
@@ -229,9 +229,9 @@ def main() -> int:
     ap.add_argument("--theory", choices=["kaiser", "rept"], default="kaiser",
                     help="kaiser (default) is far cheaper and none of the "
                          "checked quantities depend on the theory model")
-    ap.add_argument("--dataset", default="dr1", choices=["dr1"])
+    ap.add_argument("--data-release", default="dr1", choices=["dr1"])
     a = ap.parse_args()
-    return 0 if run(a.tracers, a.theory, a.dataset) else 1
+    return 0 if run(a.tracers, a.theory, a.data_release) else 1
 
 
 if __name__ == "__main__":

@@ -394,7 +394,7 @@ def check_mean_ap(tracers) -> None:
     print(f"{'tracer':>8s} {'case':>14s} {'qiso':>12s} {'qap':>12s} {'max dev':>10s}")
     for t in tracers:
         cosmo = DESI()
-        cfg = get_tracer_config(t, analysis="shapefit", dataset="dr1")
+        cfg = get_tracer_config(t, analysis="shapefit", data_release="dr1")
         # Must pass N_tracers: z_eff depends on it (S42), and the fiducial
         # row below asserts q == 1 at the DR1 count, so the z used here has
         # to be the z the worker would derive for that same sample.
@@ -402,7 +402,7 @@ def check_mean_ap(tracers) -> None:
             tracer_bin=t, cosmo=cosmo, fo=cosmo.get_fourier(),
             area_deg2=float(tracer_area(t, "dr1")),
             b1=float(cfg.get("bias_recon", 2.0)),
-            n_tracers=ntracers(t, "dr1"), dataset="dr1")
+            n_tracers=ntracers(t, "dr1"), data_release="dr1")
 
         qiso, qap = _run(dict(FID_SAMPLE), t, z)
         dev = max(abs(qiso - 1.0), abs(qap - 1.0))
@@ -457,7 +457,7 @@ def check_mean_ap(tracers) -> None:
 # inside _mean_z_eff_for_sample). So what this tolerance guards is not
 # arithmetic, it is the ARGUMENTS each call site assembles independently -- the
 # omega-basis -> cosmoprimo mapping, the survey area, whether N_tracers is
-# threaded through at all, and which dataset's n(z) slices are read.
+# threaded through at all, and which data_release's n(z) slices are read.
 #
 # Measured over 6 tracers x {N x 0.5/1.0/1.5, omega_cdm +5%, h -3%}: the two
 # paths agree BIT FOR BIT -- 0 ULP, rel dev exactly 0.0 -- on all 30 points.
@@ -513,7 +513,7 @@ def check_zeff_consistency(tracers) -> None:
               None (the generator default -- --z-eff still pins it).
 
     Note `area` is deliberately NOT passed to run_fisher: the covar path
-    defaults it internally (to tracer_area(tracer_bin, dataset) since S54),
+    defaults it internally (to tracer_area(tracer_bin, data_release) since S54),
     while the mean worker receives it as an explicit task field. Forcing them
     equal here would hide a drift between those two routes to the footprint.
 
@@ -546,7 +546,7 @@ def check_zeff_consistency(tracers) -> None:
             sample = {**_fid_sample_for(t, n_factor), **pert}
             z_cov = float(fourier_space.run_fisher(
                 sample, tracer_bin=t, param_defaults=sf_core.PARAM_DEFAULTS,
-                dataset="dr1")["z_eff"])
+                data_release="dr1")["z_eff"])
             z_mean = float(fourier_space._mean_z_eff_for_sample(
                 {**sf_core.PARAM_DEFAULTS, **sample}, t, area, "dr1"))
             dev = abs(z_mean - z_cov) / z_cov
@@ -564,7 +564,7 @@ def check_zeff_consistency(tracers) -> None:
     print("\n  Both columns bottom out in core._fs_compute_z_eff, so a passing")
     print("  'rel dev' is not an arithmetic result -- it says the two call")
     print("  sites assembled the same arguments (cosmology mapping, area,")
-    print("  N_tracers, dataset). The 'spread' row is the range of z_eff over")
+    print("  N_tracers, data_release). The 'spread' row is the range of z_eff over")
     print("  the grid, and must be non-zero or the rows above pass vacuously:")
     print("  that is precisely how the pre-S42 frozen-z_eff bug would hide.")
     print(f"  Tolerances: consistency {_ZEFF_CONSISTENCY_TOL:g} "

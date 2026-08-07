@@ -73,14 +73,14 @@ def gather(n_factor: float):
     out = {}
     for t in BINS:
         bao_core._DESI_NX_CACHE.clear()
-        z_mid, z_edges, frac, _ = bao_core._load_nz_slice_fractions(t, dataset="dr1")
+        z_mid, z_edges, frac, _ = bao_core._load_nz_slice_fractions(t, data_release="dr1")
         area = float(tracer_area(t, "dr1"))
         N = n_factor * float(ntracers(t, "dr1"))
         sky = area / 41252.96
         chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]))
         chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]))
         V = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky
-        nbar, src = bao_core.cov_nbar_per_slice(t, frac, V, N, dataset="dr1")
+        nbar, src = bao_core.cov_nbar_per_slice(t, frac, V, N, data_release="dr1")
         out[t] = dict(z_lo=z_edges[:, 0], z_hi=z_edges[:, 1], z_mid=z_mid,
                       nbar=np.asarray(nbar, float), src=src, area=area, N=N)
 
