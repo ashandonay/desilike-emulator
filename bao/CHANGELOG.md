@@ -4437,3 +4437,50 @@ rebuild command (the pivot is measured, so there is deliberately no fallback);
 missing columns raise; and a >5% spread prints to stderr saying the returned
 scalar is an average rather than a description -- the honest form of S82's
 concern, quiet for every DR1 bin.
+
+## §98 — delete the `overrides` mechanism; tracers.yaml audit
+
+Asked "is anything else dead in tracers.yaml". One thing was.
+
+`overrides` was documented in the header and implemented in
+`get_tracer_config` (a `cfg.update()` merge keyed `<analysis>` then
+`<analysis>/<release>`), and **no tracer ever populated it** -- zero
+`overrides:` blocks, so the path had never once executed. It is also now
+redundant: the per-release half is what `data_release:` does since S94/S95, and
+the per-analysis half has no use case, because the bins that actually differ
+between analyses (LRG3_ELG1 for bao, LRG3 for full shape) are separate blocks
+by design. An untested path that silently merges config is the S58 failure mode
+with the safety catch removed.
+
+Removed: the merge loop, the header entry, and a stale pointer at line 51 that
+directed future DR2 z_eff values into `overrides` -- now repointed at a `dr2:`
+block under `data_release:`, which is where they belong.
+
+The freed header slot documents `supported`, which was undocumented. That
+mattered: it is what makes the eight Lya keys (`bF0`, `gamma_bF`,
+`Sigma_perp_fid`, `Sigma_par_fid`, `f_fid`, `sigma8_fid`, `sigma2_pix`,
+`delta_r_pix`) look dead. They are not -- they feed the Lya provider at
+`bao/core.py:1429-1450`, real code reachable only once Lya is un-gated.
+
+### Audit result
+
+Nothing else is unreferenced. `components` and `nz_slices` are live (LRG3
+only); `analyses`, `zrange`, `tracer_type`, `f_interloper`, `z_error_kms`,
+`smoothing_scale` all have real consumers -- `smoothing_scale` reaches the
+reconstruction kernel at `core.py:983`.
+
+One smell left, NOT fixed here: `bias_recon` does two jobs. In bao it is
+`b1_recon`, DESI's committed analysis-stage bias, deliberately distinct from
+the HOD-derived `b1` (`core.py:1536-1543`). In shapefit it is read as plain
+`b1` at five sites -- and shapefit is pre-recon by construction, so it borrows
+a recon-named key as a linear bias. Defensible (it IS a linear bias estimate)
+but misleading; a rename to `b1_fid` touches five call sites and is cosmetic,
+so it is left for its own change.
+
+### Verification
+
+All 1024 regress arrays bit-identical to the S97 baseline -- the right bar,
+since deleting a never-executed path cannot move a number. Tests 2/2. Spot-
+checked that the four behaviours adjacent to the removed loop still hold:
+LRG3/shapefit resolves, `tracers_for('shapefit')` filters, the bao-only
+combined bin is rejected for shapefit, and the gated Lya bin raises.

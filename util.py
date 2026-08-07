@@ -207,9 +207,12 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
     callers (all of ``bao/``, which is regression-frozen) are untouched.
 
     Passing ``analysis`` validates the bin against the block's ``analyses``
-    list and merges any ``overrides`` on top, in the order ``<analysis>`` then
-    ``<analysis>/<data_release>``. The override mechanism is wired but only DR1
-    values are populated (DR1-first rule).
+    list. There used to be an `overrides` merge here for per-analysis /
+    per-release deltas; it was removed in S98 -- no tracer ever populated it,
+    the per-release half is now `data_release:`, and the per-analysis half has
+    no use case because the bins that differ between analyses (LRG3_ELG1 vs
+    LRG3) are separate blocks. An untested path that silently `cfg.update()`s
+    is the S58 failure mode waiting to happen.
     """
     key = tracer_bin.strip()
     if key not in TRACER_CONFIGS:
@@ -218,7 +221,6 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
     if not cfg.get("supported", True):
         raise ValueError(f"Tracer bin {tracer_bin!r} is marked unsupported in tracers.yaml")
 
-    overrides = cfg.pop("overrides", None) or {}
     if analysis is not None:
         allowed = cfg.get("analyses")
         if allowed is not None and analysis not in allowed:
@@ -226,9 +228,6 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
                 f"Tracer bin {tracer_bin!r} is not part of the {analysis!r} analysis "
                 f"(tracers.yaml declares analyses={list(allowed)}). "
                 f"Valid bins: {tracers_for(analysis)}")
-        for okey in (analysis, f"{analysis}/{data_release}" if data_release else None):
-            if okey and okey in overrides:
-                cfg.update(dict(overrides[okey]))
 
     # Per-release block (S94). Selected, never merged-with-fallback: if the
     # requested release has no entry we RAISE, because the values are not

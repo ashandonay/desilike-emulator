@@ -48,8 +48,8 @@
 #                    Values here are DR1 (Adame+24 Table 1), matching the DR1
 #                    bundles. DR2 differs for LRG3+ELG1/ELG2/QSO
 #                    (0.934/1.321/1.484) and is not carried here under the
-#                    DR1-first rule; the per-release `overrides` mechanism is
-#                    where it belongs when DR2 comes up.
+#                    DR1-first rule; it belongs in a `dr2:` block under
+#                    `data_release:`, beside the DR1 one.
 #
 # Analysis / data-release scoping:
 #
@@ -68,12 +68,11 @@
 #                    only carries the BAO bin combinations.
 #   nz_slices        (optional) Basename of the n(z) slice file if it differs
 #                    from the bin key: ~/data/desi/nz_slices/<name>_nz_slices.csv.
-#   overrides        (optional) Per-analysis / per-release deltas, merged on top
-#                    of the base block by util.get_tracer_config(analysis=,
-#                    data_release=). Keys are "<analysis>" then "<analysis>/<release>",
-#                    applied in that order. Populated for DR1 only so far — the
-#                    mechanism is here so a DR2 sample change drops in without
-#                    another refactor, per the DR1-first rule.
+#   supported        (optional, default true) False marks a bin as gated off;
+#                    get_tracer_config raises for it. Only Lya_QSO, whose
+#                    bF0/gamma_bF/Sigma_*_fid/f_fid/sigma8_fid/sigma2_pix/
+#                    delta_r_pix keys feed the Lya provider in bao/core.py --
+#                    real code, reachable only once Lya is un-gated.
 #
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
