@@ -42,6 +42,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Sequence, Tuple
 
+import sys as _sys
+
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 
@@ -59,35 +61,87 @@ from numpy.polynomial.legendre import leggauss
 P_FKP_DEFAULT = 1.0e4
 
 
-def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
-    """DESI's Eq. (8.4) FKP pivot for this tracer, from tracers.yaml.
+_P0_CACHE: dict = {}
 
-    RAISES on a missing `fkp_p0` -- there is no safe default (S96). This used to
-    warn and fall back to P_FKP_DEFAULT, which is LRG's 1e4, i.e. it would weight
-    a BGS/ELG/QSO sample at the LRG pivot. Two things made that indefensible:
-    `core._fkp_p0_for_tracer` already raised on the same lookup, so one pipeline
-    failed loudly and the other did not; and the warning was DEAD, because
-    config_space -- the main consumer -- calls warnings.filterwarnings("ignore")
-    at import, so the fallback was silent exactly where it mattered.
+
+def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
+    """DESI's FKP pivot for this tracer, MEASURED from their own weights (S97).
+
+    Back-solved from the vendored `_desi_nx` table:
+
+        P0 = mean[(1 / w_fkp_mean - 1) / nbar_total]
+
+    which inverts DESI's own `WEIGHT_FKP = 1/(1 + n P0)` against the density
+    the covariance actually uses (`nbar_total`, the summed-over-parents column
+    from S87). It is flat per tracer to <1%, and recovers DESI 2024 II
+    Eq. (8.4) exactly for the single-parent bins: BGS 7000, LRG 10000,
+    ELG 4000, QSO 6000.
+
+    It used to read a hand-entered `fkp_p0` from tracers.yaml. That was a
+    redundant transcription for six tracers and WRONG for the seventh:
+    LRG3_ELG1 carried 10000 with the comment "DESI 2024 II Eq. (8.4)", but
+    Eq. (8.4) tabulates single tracers and says nothing about a combined bin.
+    The combined-tracer paper (arXiv:2508.05467 Eq. 4.13) prescribes P0 = 6000
+    against a bias-weighted n_eff; back-solving against our `nbar_total`
+    returns 6244, i.e. that prescription in our density convention. The yaml's
+    10000 mis-weighted that bin's covariance by ~30% in w_fkp.
+
+    S82's "the pivot is z-dependent, 11335->18679, no scalar works" was an
+    artefact of dividing by `nbar_desi_nx` -- the FKP-weighted mean ACROSS
+    parents -- instead of the summed `nbar_total`. Against the right density the
+    pivot is flat. z_eff is unaffected either way: it uses its own
+    slice-calibrated pivot (core._desi_nz_geometry), which reproduces
+    `w_fkp_mean` identically by construction.
 
     `analysis` is deliberately NOT passed to get_tracer_config: this helper
-    serves both pipelines, and the bins differ between them (bao uses the
-    combined LRG3_ELG1, shapefit uses LRG3). Pinning it to either one makes the
-    other's bins raise -- which, behind a broad `except`, degrades to the wrong
-    pivot without a word. Config errors propagate; only a MISSING `fkp_p0`
-    warns and falls back.
+    serves both pipelines and the bins differ between them (bao uses the
+    combined LRG3_ELG1, shapefit uses LRG3).
     """
-    from util import get_tracer_config
+    import numpy as _np
+    import pandas as _pd
 
-    cfg = get_tracer_config(tracer_bin, data_release=data_release)
-    p0 = cfg.get("fkp_p0")
-    if p0 is None:
+    key = (tracer_bin, data_release)
+    if key in _P0_CACHE:
+        return _P0_CACHE[key]
+
+    from util import nz_slices_path
+
+    path = nz_slices_path(f"{tracer_bin}_desi_nx.csv", data_release)
+    try:
+        df = _pd.read_csv(path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"No `{tracer_bin}_desi_nx.csv` for {data_release!r}: the FKP pivot "
+            "is MEASURED from DESI's weights (S97), not configured, so there is "
+            "no fallback. Rebuild it with shapefit/make_desi_nx.py --install."
+        ) from exc
+
+    missing = {"w_fkp_mean", "nbar_total"} - set(df.columns)
+    if missing:
         raise KeyError(
-            f"No `fkp_p0` in tracers.yaml for {tracer_bin!r}. DESI 2024 II "
-            "Eq. (8.4) wants 7000/10000/4000/6000 for BGS/LRG/ELG/QSO and "
-            "there is no safe default -- the old fallback was LRG's 1e4, which "
-            "would weight a BGS or ELG sample at 1.4-2.5x its correct pivot.")
-    return float(p0)
+            f"{path.name} lacks {sorted(missing)}; the pivot back-solve needs "
+            "both. Regenerate with shapefit/make_desi_nx.py --install.")
+
+    wfm = df["w_fkp_mean"].to_numpy(dtype=_np.float64)
+    ntot = df["nbar_total"].to_numpy(dtype=_np.float64)
+    if not (_np.all(wfm > 0) and _np.all(wfm < 1) and _np.all(ntot > 0)):
+        raise ValueError(f"{path.name}: non-physical w_fkp_mean or nbar_total")
+
+    per_slice = (1.0 / wfm - 1.0) / ntot
+    p0 = float(_np.mean(per_slice))
+    spread = float(per_slice.max() / per_slice.min())
+    if spread > 1.05:
+        # Flat to <1% for every DR1 bin. A real spread would mean the single
+        # scalar the covariance takes cannot represent this sample -- say so
+        # rather than average it away. stderr, not warnings.warn: config_space
+        # filters warnings at import (S96).
+        print(f"WARNING {tracer_bin}: back-solved FKP pivot varies by "
+              f"{spread:.2f}x across the bin ({per_slice.min():.0f}-"
+              f"{per_slice.max():.0f}); the covariance takes one scalar, so "
+              f"{p0:.0f} is an average, not a description.",
+              file=_sys.stderr, flush=True)
+    _P0_CACHE[key] = p0
+    return p0
 
 # Calibration knob — initialized to 1.0 (pure FKP-1994 formula). After
 # comparing per-k diagonal to thecov at fid, set this to the geometric-mean

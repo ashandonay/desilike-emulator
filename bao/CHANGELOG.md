@@ -4366,3 +4366,74 @@ bin while z_eff uses the right one. `_fkp_integrals` computes
 pivot (verified: constant-array == scalar to 1e-12). Dropping `fkp_p0`
 altogether is therefore mostly mechanical, but it is not a pure refactor --
 it would change LRG3_ELG1's sigma, which is the point.
+
+## §97 — the FKP pivot is measured, not configured; `fkp_p0` deleted
+
+`tracers.yaml`'s `fkp_p0` was a hand-entered transcription of a quantity the
+vendored tables already contain. It is gone; `fkp_p0_for` now back-solves it
+from DESI's own weights:
+
+    P0 = mean[(1 / w_fkp_mean - 1) / nbar_total]
+
+inverting `WEIGHT_FKP = 1/(1 + n P0)` against the density the covariance
+actually uses (`nbar_total`, S87). Flat per tracer to <1%, and it recovers
+Eq. (8.4) from the data: BGS 7000, LRG 10000, ELG 4000, QSO 6000.
+
+### The seventh bin was wrong, and S82's diagnosis of it was too
+
+LRG3_ELG1 carried `fkp_p0: 1.0e4` commented "DESI 2024 II Eq. (8.4)". Eq. (8.4)
+tabulates SINGLE tracers and says nothing about a combined bin -- the value was
+copied from LRG by analogy with the `area_deg2` note directly above it ("take
+LRG's, since LRG dominates; the two differ by 3% so the choice is not
+consequential"). That reasoning is sound for area, where the candidates differ
+by 3%. Carried onto the pivot it is not: the measured value is 6244, so 10000
+was ~60% high, and the covariance's w_fkp was ~30% off for that bin.
+
+The combined-tracer paper (arXiv:2508.05467 Eq. 4.13) prescribes P0 = 6000
+against a bias-weighted n_eff. Back-solving against our `nbar_total` returns
+6244 -- the same prescription in our density convention, 4% apart. That
+agreement is the check that this is the right quantity, not a convenient one.
+
+**S82's headline was an artefact.** "The pivot is z-dependent, 11335->18679, no
+scalar can represent it at ANY value" came from dividing by `nbar_desi_nx` --
+the FKP-weighted mean ACROSS parents -- rather than the summed `nbar_total`.
+Against the right density it is flat: 6208-6268, +-0.5%. The bin was never
+anomalous; the density convention was.
+
+z_eff is unaffected: it uses its own slice-calibrated pivot
+(`_desi_nz_geometry`: `p0e = (1/w_fkp_mean - 1)/nx`), which reproduces
+`w_fkp_mean` identically by construction and never depended on `fkp_p0`. Both
+parameterisations give the same z_eff -- LRG3_ELG1 -0.077% (current) vs -0.058%
+(nbar_total + flat) against DESI's 0.930.
+
+### Verification -- and NOT bit-identical, which the display hid
+
+```
+tracer      max |relative delta|      sigma(DV) change
+LRG3_ELG1        1.1e-02              -0.22% to -0.50%
+LRG2             4.5e-14              +0.000%
+ELG2             3.3e-14              +0.000%
+LRG1             3.2e-14              +0.000%
+BGS              3.9e-15              +0.000%
+QSO              2.8e-15              +0.000%
+```
+
+The six single-parent bins are NOT bit-identical: the back-solve returns
+7000.000000001148 rather than 7000, a ~1e-12 round-trip through the CSV's
+stored precision, propagating to <=4.5e-14 in sigma. Physically nothing, but it
+is not zero, and reporting it as "identical" would have been wrong.
+
+**The sigma impact is modest.** A 30% error in w_fkp moves sigma(DV) by only
+0.22-0.50%, because the pivot enters through 1/(1 + nP0) and V_eff is
+insensitive to it. This is a consistency fix, not a large correction -- an
+earlier note in this session called it "larger than most things we've chased",
+which the measurement does not support.
+
+`s97_check.npz` becomes the regress baseline, since the 4e-14 float drift would
+otherwise make every future exact-equality check fail against head_S92.
+
+Guards, following S96: a missing table raises FileNotFoundError naming the
+rebuild command (the pivot is measured, so there is deliberately no fallback);
+missing columns raise; and a >5% spread prints to stderr saying the returned
+scalar is an average rather than a description -- the honest form of S82's
+concern, quiet for every DR1 bin.

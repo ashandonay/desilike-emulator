@@ -118,7 +118,6 @@
 BGS:
   tracer_type: BGS
   zrange: [0.1, 0.4]
-  fkp_p0: 7.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
@@ -133,7 +132,6 @@ BGS:
 LRG1:
   tracer_type: LRG
   zrange: [0.4, 0.6]
-  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
@@ -148,7 +146,6 @@ LRG1:
 LRG2:
   tracer_type: LRG
   zrange: [0.6, 0.8]
-  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
@@ -169,7 +166,6 @@ LRG3_ELG1:
   # No Table 2 row: this bin mixes LRG (5740) and ELG (5924). Take LRG's, since
   # LRG dominates; the two differ by 3% so the choice is not consequential.
   zrange: [0.8, 1.1]
-  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
@@ -191,7 +187,6 @@ LRG3:
   analyses: [shapefit]
   tracer_type: LRG
   zrange: [0.8, 1.1]
-  fkp_p0: 1.0e4         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.0                # LRG value, as LRG1/LRG2 - not the MIX blend
   smoothing_scale: 15.0          # unused pre-recon; kept for schema symmetry
   f_interloper: 0.002            # LRG value (Adame+24 Table 2), not the blend
@@ -208,7 +203,6 @@ LRG3:
 ELG2:
   tracer_type: ELG
   zrange: [1.1, 1.6]
-  fkp_p0: 4.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
@@ -223,7 +217,6 @@ ELG2:
 QSO:
   tracer_type: QSO
   zrange: [0.8, 2.1]
-  fkp_p0: 6.0e3         # DESI 2024 II Eq. (8.4), FKP pivot
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z
