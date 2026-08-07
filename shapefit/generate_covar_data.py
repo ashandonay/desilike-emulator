@@ -21,7 +21,7 @@ Notes
   --z-eff pins it (sensitivity checks only). This differs from the BAO
   Fourier CLI, which pins the yaml value.
 * The N_tracers box is ALWAYS anchored via util.ntracers_range (tracers.yaml
-  low/high factors x the --data_release passed count) unless --ntracers-range
+  low/high factors x the --data-release passed count) unless --ntracers-range
   overrides it with absolute bounds. Never hardcode N (CHANGELOG bao §33n).
 """
 from __future__ import annotations
@@ -111,7 +111,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--ntracers-range", type=float, nargs=2, default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
         help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
-             "tracers.yaml low/high factors x the --data_release passed count.",
+             "tracers.yaml low/high factors x the --data-release passed count.",
     )
     p.add_argument(
         "--priors-json", type=str, default="",

@@ -558,7 +558,7 @@ def main() -> None:
         default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
         help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
-             "tracers.yaml low/high factors x the --data_release passed count.",
+             "tracers.yaml low/high factors x the --data-release passed count.",
     )
     parser.add_argument(
         "--priors-json",

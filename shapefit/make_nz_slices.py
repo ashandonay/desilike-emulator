@@ -162,7 +162,7 @@ def main() -> int:
 
     if a.data_release not in _RELEASES:
         raise SystemExit(
-            f"--data_release {a.data_release!r} is not implemented. This script is "
+            f"--data-release {a.data_release!r} is not implemented. This script is "
             "DR1-specific throughout: catalogue stems, slice edges, areas, "
             "counts and the download URL. Add an entry to _RELEASES and audit "
             "every one of those before using it for another release (shapefit "

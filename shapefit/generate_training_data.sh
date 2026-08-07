@@ -2,7 +2,7 @@
 # Generate ShapeFit emulator training data for all tracer bins, one per
 # invocation of the per-quantity generator, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   shapefit/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
+#   shapefit/training_data/{data_release}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   shapefit/generate_training_data.sh [options]
@@ -36,7 +36,7 @@ export LD_LIBRARY_PATH="$HOME/miniconda3/envs/emulator/lib:${LD_LIBRARY_PATH:-}"
 
 # --- defaults ---------------------------------------------------------------
 QUANTITY="covar"
-DATASET="dr1"
+DATA_RELEASE="dr1"
 COSMO_MODEL="base"
 N_SAMPLES=5000
 WORKERS=32          # workers are pinned to 1 BLAS thread each; scale toward ncores
@@ -49,7 +49,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --quantity)    QUANTITY="$2"; shift 2 ;;
-    --data-release)     DATASET="$2"; shift 2 ;;
+    --data-release)     DATA_RELEASE="$2"; shift 2 ;;
     --cosmo-model) COSMO_MODEL="$2"; shift 2 ;;
     --n-samples)   N_SAMPLES="$2"; shift 2 ;;
     --workers)     WORKERS="$2"; shift 2 ;;
@@ -75,13 +75,14 @@ save_args=()
 # tracers share one v{N} dir (distinguished by the {tracer}_ file prefix), so we
 # must NOT let each per-tracer save_dataset() call auto-increment on its own.
 if [[ -z "$VERSION" ]]; then
-  VERSION="$("$PYBIN" - "$QUANTITY" "$COSMO_MODEL" "$DATASET" "$SAVE_PATH" <<'PY'
+  VERSION="$("$PYBIN" - "$QUANTITY" "$COSMO_MODEL" "$DATA_RELEASE" "$SAVE_PATH" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.getcwd()))   # repo root (parent of shapefit/)
 from util import get_default_save_path, _next_version
-quantity, cosmo_model, dataset, save_path = sys.argv[1:5]
+quantity, cosmo_model, data_release, save_path = sys.argv[1:5]
 root = save_path or get_default_save_path(
-    analysis="shapefit", quantity=quantity, cosmo_model=cosmo_model, dataset=dataset)
+    analysis="shapefit", quantity=quantity, cosmo_model=cosmo_model,
+    data_release=data_release)
 print(_next_version(root))
 PY
 )"
@@ -91,7 +92,9 @@ fi
 # Fail loudly rather than scatter the batch across per-tracer auto-increments.
 if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
   echo "ERROR: could not resolve a numeric version (got '$VERSION'). " \
-       "Set \$SCRATCH, or pass --save-path / --version explicitly." >&2
+       "Set \$SCRATCH, or pass --save-path / --version explicitly. " \
+       "If the snippet above raised, that is the real cause -- read its " \
+       "traceback rather than this line." >&2
   exit 1
 fi
 
@@ -113,7 +116,7 @@ if [[ -z "$LOG_FILE" ]]; then
 fi
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "=== $GENERATOR: quantity=$QUANTITY dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
+echo "=== $GENERATOR: quantity=$QUANTITY data_release=$DATA_RELEASE model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
 echo "Tracers: $TRACERS"
 echo "Log: $LOG_FILE"
 echo
@@ -123,10 +126,10 @@ for T in $TRACERS; do
   echo "  $T   ($(date '+%H:%M:%S'))"
   echo "----------------------------------------------------------------------"
   "$PYBIN" "$GENERATOR" \
-    --data-release "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
+    --data-release "$DATA_RELEASE" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
     --n-samples "$N_SAMPLES" --workers "$WORKERS" --version "$VERSION" \
     "${save_args[@]}" "${EXTRA[@]}"
   echo
 done
 
-echo "=== done: all tracers written to .../shapefit/training_data/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="
+echo "=== done: all tracers written to .../shapefit/training_data/$DATA_RELEASE/$COSMO_MODEL/$QUANTITY/v$VERSION/ ==="
