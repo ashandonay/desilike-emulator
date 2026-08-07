@@ -138,12 +138,12 @@ python generate_covar_data.py --space config --data-release dr1 --tracer-bin LRG
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../emulator/bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
+- Output: `$SCRATCH/.../emulator/bao/training_data/{data_release}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
   with `target_names = [sigma_DH_over_rd, sigma_DM_over_rd, sigma_DV_over_rd]`
   and the cosmo + `N_tracers` inputs in `x`.
-- `--dataset` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors
+- `--data-release` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors
   the `N_tracers` box (`tracers.yaml low/high` are factors x that count) and forms
-  the `{dataset}` path segment. Train with the matching `train.py --dataset`.
+  the `{data_release}` path segment. Train with the matching `train.py --data-release`.
 - `--cosmo-model` ∈ {`base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa`}
   selects which cosmology parameters vary.
 - **`--space config` ignores `--area`/`--zrange`/`--z-eff`/`--nz-slices-path`** — its

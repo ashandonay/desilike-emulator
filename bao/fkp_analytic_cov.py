@@ -53,8 +53,9 @@ from numpy.polynomial.legendre import leggauss
 #
 # This module-level constant is the LRG value and is only a last-resort default
 # for callers with no tracer in hand. Prefer `fkp_p0_for(tracer_bin)`, which
-# reads `fkp_p0` from tracers.yaml -- the same values the rest of the pipeline
-# weights with, so the analytic cov and the Fisher path cannot disagree.
+# back-solves P0 from the vendored `*_desi_nx.csv` tables (S97) -- the same
+# measured pivot the rest of the pipeline weights with, so the analytic cov and
+# the Fisher path cannot disagree.
 #
 # S54 flagged the uniform 1e4 here as open: it silently applied the LRG pivot to
 # BGS (7000), ELG (4000) and QSO (6000), a 1.4-2.5x error in n*P0 for those.

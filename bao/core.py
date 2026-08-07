@@ -199,8 +199,9 @@ def _load_nz_slice_fractions(tracer_bin: str, *, data_release: str
     return z_mid, np.column_stack([z_lo, z_hi]), frac, nbar_file
 
 
-# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), per tracer BIN
-# (values live in tracers.yaml as `fkp_p0`; DESI 2024 III Table 2).
+# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), per tracer BIN.
+# Measured from the vendored `*_desi_nx.csv` tables via fkp_p0_for (S97); for
+# single-parent bins this recovers DESI 2024 II Eq. (8.4) / III Table 2.
 # These are DESI's DR1 analysis choices (KP3 / Adame+24), not free parameters:
 # the weight definition is part of how the published measurements — and their
 # quoted z_eff — are constructed.
@@ -218,12 +219,12 @@ Z_EFF_CONVENTION = "desi_eq21"
 
 
 def _fkp_p0_for_tracer(tracer_bin: str, data_release: str = "dr1") -> float:
-    """FKP pivot P0(k=0.14) for a tracer BIN, from tracers.yaml.
+    """FKP pivot P0 for a tracer BIN, measured from `*_desi_nx.csv` (S97).
 
     Per BIN, not per tracer_type: DESI 2024 III Table 2 gives LRG1 and LRG2
-    8.9e3 but LRG3 8.4e3, so a type-keyed lookup cannot represent them. The
-    values are DESI's own, "rounded numbers taken from the DR1 P0(k)
-    measurements" at k = 0.14 h/Mpc.
+    8.9e3 but LRG3 8.4e3, so a type-keyed lookup cannot represent them. For
+    single-parent bins the measured values recover DESI 2024 II Eq. (8.4);
+    the combined LRG3_ELG1 bin is measured rather than transcribed.
     """
     # Delegates to fkp_analytic_cov.fkp_p0_for so there is ONE definition of
     # this lookup (S96). There were two, with OPPOSITE failure policies: this

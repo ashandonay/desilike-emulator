@@ -73,9 +73,9 @@ The per-analysis CLIs are documented in their own READMEs (`bao/README.md`,
 `shapefit/README.md`). Both write per-tracer **`{tracer}_train.npz`** /
 **`{tracer}_test.npz`** (arrays **`x`**, **`y`**, **`param_names`**,
 **`target_names`**) under
-`{analysis}/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/`, and both
+`{analysis}/training_data/{data_release}/{cosmo_model}/{quantity}/v{N}/`, and both
 anchor the `N_tracers` box via `util.ntracers_range` (tracers.yaml low/high
-factors × the dataset's `passed` counts — never hardcode N).
+factors × the data release's `passed` counts — never hardcode N).
 
 ```bash
 # BAO (from bao/):     one shared v{N} for all 6 tracers

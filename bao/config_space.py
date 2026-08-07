@@ -63,11 +63,12 @@ _AREA = 7500.0
 
 
 def _pivot(tracer: str) -> float:
-    """DESI's FKP pivot for a tracer (2411.12020 Eq. 8.4), from tracers.yaml.
+    """DESI's FKP pivot for a tracer, measured from `*_desi_nx.csv` (S97).
 
     `P_FKP_DEFAULT = 1e4` is LRG's value and was being applied to every tracer,
     where Eq. (8.4) wants 7000 (BGS), 4000 (ELG) and 6000 (QSO). See shapefit
-    CHANGELOG S55.
+    CHANGELOG S55. Single-parent bins recover those values; the combined bin
+    is measured rather than transcribed from yaml.
 
     Delegates to `fkp_analytic_cov.fkp_p0_for` so there is ONE definition of
     the pivot lookup -- S62c added the same helper for the Fourier path, and

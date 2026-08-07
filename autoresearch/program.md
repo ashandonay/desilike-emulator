@@ -91,7 +91,7 @@ export LD_LIBRARY_PATH=$HOME/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH
 
 # Train (uses bao/model.py + the model_config.yaml key); saves model_best.pt
 # under the MLflow run artifacts, then auto-runs eval.
-$PY train.py --analysis bao --dataset dr1 --cosmo-model base --quantity config \
+$PY train.py --analysis bao --data-release dr1 --cosmo-model base --quantity config \
     --data-dir v2 --tracer-bin LRG2 --nn-model dr1_base_config --epochs 10000
 
 # Eval standalone on a saved checkpoint (live config-space ground truth):

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "desilike_emulator"
 version = "0.1.0"
 description = "Neural emulator utilities and training scripts for num_tracers BAO/shapefit covariances."
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 # Flat repo layout: the top-level directory is the importable package
 # `desilike_emulator` (build_model / decode_emulator_outputs live in util.py).
