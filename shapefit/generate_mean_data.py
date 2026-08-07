@@ -62,11 +62,12 @@ _FID_SAMPLE = {
 }
 
 
-def _fiducial_z_eff(tracer_bin: str, area: float) -> float:
+def _fiducial_z_eff(tracer_bin: str, area: float,
+                    data_release: str = "dr1") -> float:
     """Tracer z_eff at the DESI fiducial cosmology with the FS band weight."""
     from desilike.theories.primordial_cosmology import get_cosmo
 
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     theta = sf_core._to_shapefit_cosmo_params(_FID_SAMPLE)
     cosmo = get_cosmo(("DESI", dict(theta)))
     fo = cosmo.get_fourier()

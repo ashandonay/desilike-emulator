@@ -144,7 +144,8 @@ def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
     fo_fid = cosmo_fid.get_fourier()
     from util import get_tracer_config, ntracers
 
-    cfg = get_tracer_config(tracer)
+    # DR1-only harness (COSMO_GRID is a DR1 box), so the release is pinned.
+    cfg = get_tracer_config(tracer, data_release="dr1")
     # Record the fiducial-cosmology, DR1-count z_eff as a diagnostic anchor
     # only. Production no longer uses a single frozen z_eff (S42), so this is
     # NOT the z the rows below are evaluated at -- passing z_eff=None makes the

@@ -135,7 +135,7 @@ def main() -> None:
     sys.argv = [a for a in sys.argv if a.strip()]
     args = _build_arg_parser().parse_args()
 
-    tracer_bin_cfg = get_tracer_config(args.tracer_bin)
+    tracer_bin_cfg = get_tracer_config(args.tracer_bin, data_release=args.data_release)
     zrange = (tuple(args.zrange) if args.zrange is not None
               else tuple(tracer_bin_cfg["zrange"]))
     z_eff = args.z_eff  # None -> derived per sample inside the likelihood build

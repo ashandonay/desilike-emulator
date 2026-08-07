@@ -47,7 +47,7 @@ sys.path.insert(0, str(_HERE.parent))
 import core
 import config_space as cc
 from fourier_space import _q_fisher_from_bao_likelihood_info
-from util import TRACER_CONFIGS, ntracers, plots_dir
+from util import TRACER_CONFIGS, get_tracer_config, ntracers, plots_dir
 from desilike.theories.primordial_cosmology import get_cosmo
 
 TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -134,7 +134,7 @@ def nP_of_z(tracer, cosmo, fo, b1, z_eff=None, data_release="dr1", N_tracers=Non
 
 
 def _build(tracer, theta, hrdrag, N_tracers, apmode):
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     info = core.build_bao_likelihood(
         N_tracers=float(N_tracers), theta_cosmo=theta, hrdrag=hrdrag,
         tracer_bin=tracer, zrange=tuple(cfg["zrange"]), z_eff=float(cfg["z_eff"]),
@@ -368,7 +368,7 @@ def plot_nP(cosmo, theta, hrdrag, out):
     for t in TRACERS:
         apmode = "qiso" if t in SPARSE else "qparqper"
         b1 = float(_build(t, theta, hrdrag, ntracers(t, "dr1"), apmode)["params"]["b1"])
-        z_eff = float(TRACER_CONFIGS[t]["z_eff"])
+        z_eff = float(get_tracer_config(t, data_release="dr1")["z_eff"])
         z, nP, nP_eff, nP_zeff = nP_of_z(t, cosmo, fo, b1, z_eff=z_eff)
         ax.plot(z, nP, color=TRACER_COLOR[t], lw=1.8,
                 label=f"{DISPLAY.get(t, t)}  (nP$_{{\\rm eff}}$={nP_eff:.2f}, {_regime(nP_eff)})")

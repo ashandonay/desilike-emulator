@@ -42,9 +42,8 @@ _THIS_DIR = Path(__file__).resolve().parent
 _TRACER_CONFIG_PATH = _THIS_DIR / "tracers.yaml"
 _REQUIRED_TRACER_KEYS = {
     "zrange",
-    "z_eff",
-    # `low`/`high` are NOT here: they moved under the per-release
-    # `data_release:` block in S94 and are validated there instead.
+    # `z_eff`, `area_deg2`, `low`, `high` are NOT here: they are RELEASE-scoped
+    # and live under `data_release:`, validated per release below (S95).
     "data_release",
 }
 
@@ -82,7 +81,9 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
                 if not isinstance(vals, dict):
                     raise ValueError(
                         f"Tracer config for {key!r}: data_release/{rel} must be a mapping")
-                miss = {"low", "high"} - set(vals)
+                # `area_deg2` is deliberately NOT required: the gated Lya block
+                # has no footprint, since Lya bypasses the n(z) derivation.
+                miss = {"low", "high", "z_eff"} - set(vals)
                 if miss:
                     raise ValueError(
                         f"Tracer config for {key!r}: data_release/{rel} missing "
@@ -100,12 +101,16 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
         # bF0, gamma_bF, Sigma_perp_fid, etc.), then coerce the mandatory ones.
         entry: Dict[str, object] = dict(cfg)
         entry["zrange"] = (float(zrange[0]), float(zrange[1]))
-        entry["z_eff"] = float(cfg["z_eff"])
-        entry["data_release"] = {
-            str(rel): {"low": float(v["low"]), "high": float(v["high"]),
-                       **{k2: v2 for k2, v2 in v.items() if k2 not in ("low", "high")}}
-            for rel, v in cfg["data_release"].items()
-        }
+        def _coerce_release(v):
+            out = dict(v)
+            for k2 in ("low", "high", "z_eff"):
+                out[k2] = float(v[k2])
+            if "area_deg2" in v:
+                out["area_deg2"] = float(v["area_deg2"])
+            return out
+
+        entry["data_release"] = {str(rel): _coerce_release(v)
+                                 for rel, v in cfg["data_release"].items()}
         if "bias_recon" in cfg:
             entry["bias_recon"] = float(cfg["bias_recon"])
         if "smoothing_scale" in cfg:
@@ -232,6 +237,11 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
     # S58 failure mode. Left unresolved when no release is requested, so the
     # many callers that never read these keys are untouched.
     by_release = cfg.pop("data_release", None)
+    if by_release is not None and data_release is None:
+        raise ValueError(
+            f"get_tracer_config({tracer_bin!r}) needs `data_release=`: "
+            f"z_eff, area_deg2 and the N_tracers box are RELEASE-scoped (S95). "
+            f"Available: {sorted(by_release)}.")
     if by_release is not None and data_release is not None:
         if data_release not in by_release:
             raise ValueError(
@@ -241,8 +251,6 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
                 f"see the header note -- so there is deliberately no fallback.")
         cfg.update(dict(by_release[data_release]))
         cfg["data_release"] = data_release
-    elif by_release is not None:
-        cfg["data_release"] = by_release
     return cfg
 
 
@@ -332,7 +340,12 @@ def tracer_area(tracer_bin: str, data_release: str = "dr1") -> float:
     Falls back to the release footprint, with a warning, for bins carrying no
     `area_deg2` (e.g. Lya_QSO).
     """
-    cfg = TRACER_CONFIGS.get(tracer_bin.strip(), {})
+    # area_deg2 moved under the per-release block (S95); resolve through
+    # get_tracer_config so the release actually selects it.
+    try:
+        cfg = get_tracer_config(tracer_bin, data_release=data_release)
+    except ValueError:
+        cfg = {}
     area = cfg.get("area_deg2")
     if area is not None:
         return float(area)
@@ -575,7 +588,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
     """
     _here = os.path.dirname(os.path.abspath(__file__))
 
-    tracer_bin_cfg = get_tracer_config(tracer_bin) if tracer_bin else None
+    tracer_bin_cfg = (get_tracer_config(tracer_bin, data_release="dr1")
+                      if tracer_bin else None)
 
     if analysis == "shapefit":
         if quantity not in ("covar", "mean"):

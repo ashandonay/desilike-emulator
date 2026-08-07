@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 
 import core
 import fourier_space
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, get_tracer_config
 
 # ---------------------------------------------------------------------------
 # Fixed analysis settings
@@ -94,7 +94,7 @@ def _read_bao_recon(tracer):
 # ---------------------------------------------------------------------------
 def _prod_fisher_sigmas(tracer):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from production Fisher."""
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     sample = {**core.PARAM_DEFAULTS, **_FID, "N_tracers": _get_ntracers(tracer)}
     res = fourier_space.run_fisher(
         sample, tracer_bin=tracer,

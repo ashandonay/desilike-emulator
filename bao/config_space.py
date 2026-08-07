@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 warnings.filterwarnings("ignore")
 
 import core
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, get_tracer_config
 from desilike.theories.galaxy_clustering import (
     DampedBAOWigglesTracerCorrelationFunctionMultipoles,
     DampedBAOWigglesTracerPowerSpectrumMultipoles,
@@ -124,7 +124,8 @@ def _assert_bundle_zeff(tracer, z_bundle):
     (0.930, 1.317, 1.491). Small, but exactly the kind of drift that is
     invisible until it is expensive, so it is now an assertion.
     """
-    z_cfg = float(TRACER_CONFIGS[tracer]["z_eff"])
+    # config space is DR1-only by construction (see the module header).
+    z_cfg = float(get_tracer_config(tracer, data_release="dr1")["z_eff"])
     if abs(z_cfg - float(z_bundle)) > 1e-3:
         raise ValueError(
             f"z_eff mismatch for {tracer}: tracers.yaml has {z_cfg}, the DESI "
@@ -427,7 +428,7 @@ def _wide_Pell(tracer, info):
 
     Reuses the fid template from `info` so the cosmology matches exactly.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     template = info["template"]
     # broadband="power" not "pcs": the cov uses only the FIDUCIAL P_ℓ(k) (BB
     # nuisance = 0), where the two bases give byte-identical P. "power" avoids a
@@ -456,7 +457,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     Returns (C_obsgrid, C_windowed) where C_windowed = W @ C_theory @ W^T is
     the survey-window-convolved cov on the observable grid.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
     cosmo = core.get_cosmo(("DESI", dict(theta)))
     slices, _ = _nz_slices_nx(
@@ -565,7 +566,7 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, data
     generator builds these ONCE per cosmology (info) / ONCE total (bundle) and
     passes them in, so this function doesn't redundantly rebuild the template.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
     if info is None:
         # lean=True: skip the desilike observable/Fourier-cov/likelihood build.
@@ -729,7 +730,7 @@ class XiSigmaGenerator:
     def __init__(self, tracer, data_release="dr1"):
         self.tracer = tracer
         self.data_release = data_release
-        self.cfg = TRACER_CONFIGS[tracer]
+        self.cfg = get_tracer_config(tracer, data_release=data_release)
         self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
         self.bundle = load_bundle(tracer)
 
@@ -846,7 +847,7 @@ def build_native_theory_mcmc(tracer, apmode):
 
     Uses the same fiducial (_FID) as the Fisher / Grieb-cov path.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     theta, hrdrag_eff = core._to_bao_cosmo_params(
         {**core.PARAM_DEFAULTS, **_FID})
     info = core.build_bao_likelihood(

@@ -37,7 +37,7 @@ from desilike.theories.primordial_cosmology import get_cosmo
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 
 from bao import prep_covar as bao_prep_covar
-from util import TRACER_CONFIGS, ntracers_range, plots_dir
+from util import TRACER_CONFIGS, get_tracer_config, ntracers_range, plots_dir
 from scale_data import (
     eval_scale_expression,
     scale_expression_latex,
@@ -326,7 +326,7 @@ def main():
         f"(available: {model_params})"
     )
 
-    _cfg = TRACER_CONFIGS[tracer_bin]
+    _cfg = get_tracer_config(tracer_bin, data_release="dr1")
     z_min, z_max = _cfg["zrange"]
     z_eff = _cfg["z_eff"]
     # tracers.yaml low/high are factors on the DESI passed count -> absolute box.

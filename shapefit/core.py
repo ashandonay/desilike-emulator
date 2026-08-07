@@ -317,7 +317,8 @@ _REPT_TRACER_PRESET = {"BGS": "BGS", "LRG": "LRG", "ELG": "ELG",
                        "QSO": "QSO", "MIX": "LRG"}
 
 
-def default_theory_kwargs(theory_cls, tracer_bin: str) -> Dict:
+def default_theory_kwargs(theory_cls, tracer_bin: str,
+                          data_release: str = "dr1") -> Dict:
     """Theory kwargs when the caller passes none.
 
     Kaiser takes none. REPT needs prior_basis='physical' (so its nuisances are
@@ -328,7 +329,8 @@ def default_theory_kwargs(theory_cls, tracer_bin: str) -> Dict:
     """
     if "Velocileptors" not in theory_cls.__name__:
         return {}
-    ttype = str(get_tracer_config(tracer_bin).get("tracer_type", "")).strip().upper()
+    ttype = str(get_tracer_config(tracer_bin, data_release=data_release)
+               .get("tracer_type", "")).strip().upper()
     if ttype not in _REPT_TRACER_PRESET:
         raise ValueError(
             f"No REPT tracer preset for tracer_type {ttype!r} (bin "
@@ -489,7 +491,7 @@ def build_shapefit_likelihood(
         m_fid        : float (template fiducial slope; m = m_fid + dm)
         cov_components : {"C_gauss", "C_SSC", "C_total"}
     """
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     if tracer_config is not None:
         cfg.update(tracer_config)
     if zrange is None:

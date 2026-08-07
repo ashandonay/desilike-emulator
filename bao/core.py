@@ -217,7 +217,7 @@ def _load_nz_slice_fractions(tracer_bin: str, *, data_release: str
 Z_EFF_CONVENTION = "desi_eq21"
 
 
-def _fkp_p0_for_tracer(tracer_bin: str) -> float:
+def _fkp_p0_for_tracer(tracer_bin: str, data_release: str = "dr1") -> float:
     """FKP pivot P0(k=0.14) for a tracer BIN, from tracers.yaml.
 
     Per BIN, not per tracer_type: DESI 2024 III Table 2 gives LRG1 and LRG2
@@ -225,7 +225,9 @@ def _fkp_p0_for_tracer(tracer_bin: str) -> float:
     values are DESI's own, "rounded numbers taken from the DR1 P0(k)
     measurements" at k = 0.14 h/Mpc.
     """
-    cfg = get_tracer_config(tracer_bin)
+    # `fkp_p0` is not release-scoped, but the resolver now requires a release
+    # (S95) -- forward the caller's rather than pinning one here.
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     p0 = cfg.get("fkp_p0")
     if p0 is None:
         raise KeyError(
@@ -1629,7 +1631,7 @@ def build_bao_likelihood(
 
     # Load tracer-specific configuration from tracers.yaml
     # (bias, smoothing scale, z-bin, fiducial number-density range, etc.)
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
 
     # Allow caller-side overrides of tracer config entries.
     if tracer_config is not None:
@@ -2335,7 +2337,7 @@ def compute_pipeline_sigmas(
     N_tracers = float(sample["N_tracers"])
     theta_cosmo, _hrdrag = _to_bao_cosmo_params(sample)
 
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     if zrange is None:
         zrange = tuple(cfg["zrange"])
 

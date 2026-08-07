@@ -4259,3 +4259,55 @@ internal mix does move: the LRG3 fraction runs 0.182-0.609 against a nominal
 0.383, and only **6.8%** of designs sit within 2% of nominal. A single
 `N_tracers` input cannot express that; it needs a second input per parent,
 which S87/S88's ELG1 and LRG3p tables now make possible. Open.
+
+## §95 — area_deg2 and z_eff move under the release block too
+
+S94 scoped only `low`/`high` per release, on the reasoning that `area_deg2` and
+`z_eff` had "89 consumers plus 19 resolver bypasses" and could wait. **That
+count was wrong.** It came from grepping raw string occurrences -- 442 of them,
+mostly local variables and function kwargs named `area_deg2`/`z_eff`. The real
+config reads are 4 direct + 24 via the resolver, and 17 call sites needed a
+release threaded. An order of magnitude smaller, so the deferral was based on a
+bad measurement.
+
+Both keys are release-dependent for the same reason `low`/`high` are: DR2 has a
+larger footprint and a different n(z), hence a different z_eff. They now live
+under `data_release:` beside the box, and `get_tracer_config` RAISES without a
+release rather than returning a config silently missing them.
+
+`area_deg2` is optional per release: the gated Lya block has no footprint,
+because Lya bypasses the n(z)/footprint derivation entirely.
+
+### The under-count that mattered, and how it surfaced
+
+The first dump attempt died at `config_space.py:802` with `KeyError: 'z_eff'`.
+`self.cfg` there came from `TRACER_CONFIGS[tracer]` -- the WHOLE dict -- with
+the key read happening ~70 lines later. The grep that found "4 bypasses" only
+matched `TRACER_CONFIGS[...][` (immediate key reads), so it missed every
+whole-dict access. There were **14**, and all 14 would have raised at runtime:
+config_space x5, comparison_plots x3, alpha_sn_check, desi_reference,
+plot_nz_cov_scaling, regress_sigmas, test_cov_scaling, mcmc.
+
+All are now on `get_tracer_config(..., data_release=)`: threaded where the
+caller has a release (XiSigmaGenerator, _sweep_fourier, the four builders),
+pinned to "dr1" with a stated reason where the module is DR1-only by
+construction (config_space's header, desi_reference's _DR1_DIR, the DR1 grids
+in the regress harnesses and plot tools). `util.tracer_area` also read
+`area_deg2` straight off TRACER_CONFIGS and now resolves through the release,
+keeping its documented Lya fallback.
+
+Three self-inflicted bugs on the way, all caught before the dump: a duplicated
+`data_release=` kwarg, a NameError from using a release not in scope, and a
+positional-after-keyword syntax error from inserting a kwarg mid-call.
+
+### Verification
+
+Moving a value between yaml nesting levels cannot change a number, so the bar
+is identity, not agreement: the full regress dump is **all 1024 arrays
+bit-identical** to head_S92. 24 modules import; tests 2/2;
+`XiSigmaGenerator('LRG2').sigma_triplet()` returns DV 0.132431, matching S90's
+recorded 0.13243.
+
+Nothing is left at the tracer level that varies by release. What remains there
+-- tracer_type, zrange, fkp_p0, bias_recon, smoothing_scale, f_interloper,
+analyses -- is release-invariant physics.

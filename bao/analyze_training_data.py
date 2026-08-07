@@ -31,7 +31,7 @@ sys.path.insert(0, str(_BAO.parent))
 
 import config_space as cc          # noqa: E402
 import desi_reference as desi_ref      # noqa: E402
-from util import TRACER_CONFIGS, plots_dir    # noqa: E402
+from util import TRACER_CONFIGS, get_tracer_config, plots_dir    # noqa: E402
 
 _DEFAULT_DIR = "/home/ashandonay/scratch/bedcosmo/num_tracers/emulator/bao/training_data/dr1/base/config/v1"
 TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -90,7 +90,7 @@ def analyze(data_dir):
         x, y, tnames = _load(data_dir, t)
         k = min(200, len(x) // 3)
         passed = cc._get_ntracers(t)
-        z = float(TRACER_CONFIGS[t]["z_eff"])
+        z = float(get_tracer_config(t, data_release="dr1")["z_eff"])
         lo, hi = x[:, 0].min(), x[:, 0].max()
         coeffs = {tg: _powerlaw(x, y[:, j]) for j, tg in enumerate(tnames)}
         fid = np.array([passed, FID_OM, FID_HRD])

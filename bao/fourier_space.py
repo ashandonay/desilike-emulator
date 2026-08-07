@@ -263,7 +263,7 @@ def get_bao_fisher_covariance_sliced_nz(
     """
     slices = _load_nz_slices(nz_slices_path)
 
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     if z_eff_bin is None:
         z_eff_bin = float(cfg["z_eff"])
 
@@ -595,7 +595,7 @@ def main() -> None:
     sys.argv = [a for a in sys.argv if a.strip()]
     args = parser.parse_args()
 
-    tracer_bin_cfg = get_tracer_config(args.tracer_bin)
+    tracer_bin_cfg = get_tracer_config(args.tracer_bin, data_release=args.data_release)
     zrange = tuple(args.zrange) if args.zrange is not None else tuple(tracer_bin_cfg["zrange"])
     z_eff = args.z_eff if args.z_eff is not None else float(tracer_bin_cfg["z_eff"])
 

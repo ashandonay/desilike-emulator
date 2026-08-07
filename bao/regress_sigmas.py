@@ -119,7 +119,7 @@ def _dump_fourier(out: Dict[str, np.ndarray], tracer: str) -> None:
     observable's k-grid, since those are exactly what the lsstypes /
     2-D-bin-edge refactor could perturb, then the marginalized Fisher on top.
     """
-    cfg = core.TRACER_CONFIGS[tracer]
+    cfg = core.get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if core.is_iso_tracer_bin(tracer, "dr1") else "qparqper"
     N_fid = float(ntracers(tracer, "dr1"))
     for row in COSMO_GRID:
