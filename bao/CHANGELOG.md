@@ -4180,3 +4180,82 @@ Anyone diffing shapefit across commits must use the shim. Two independent
 tells that something was wrong: both .npz files were byte-identical in size,
 and z_eff read +0.00% for the combined bin when the bao side already showed it
 moving -2.0%.
+
+## §94 — per-release N_tracers box, and the rename that made it unambiguous
+
+Two changes, committed separately so the mechanical one could be proven inert.
+
+### The N_tracers box was mismatched to the design space
+
+`(0.5, 1.5)` for every tracer was never derived; it was a symmetric default.
+Measured against bedcosmo's actual DR1 design (`design_args_dr1.yaml`, a simplex
+with `sum = 1`), it covers **86.6%** of designs -- not the ~70% a stale note
+claimed, because reading the per-class box bounds in isolation ignores that a
+class can only sit at its floor if the others absorb the slack. The achievable
+ranges are tighter than the raw bounds:
+
+```
+class   box alone      achievable     binding      ceiling set by
+BGS     0.537-1.572    0.537-1.572    box,box      TARGETS  (1/comp)
+LRG     0.378-1.443    0.425-1.443    sum,box      TARGETS  (1/comp)
+ELG     0.244-1.218    0.561-1.218    sum,box      BUDGET CAP
+QSO     0.348-1.144    0.348-1.144    box,box      TARGETS  (1/comp)
+```
+
+Two real gaps: BGS runs to 1.572 (8.0% of designs above our 1.5) and QSO down
+to 0.348 (5.9% below our 0.5). ELG2 and QSO also waste range -- trained to 1.5,
+never designed above 1.218 / 1.144.
+
+**The ceilings are physical.** For BGS/LRG/QSO the design maximum equals
+`1/comp` exactly -- "observe every target of that class" -- verified: the upper
+bound in absolute counts is 476,856 against 476,972 BGS targets (ratio 1.000),
+and likewise for LRG and QSO. ELG is the exception: its target pool is
+9,503,845 = **1.166x the entire observing budget**, so full completeness is
+unreachable and its 1.218 comes from a policy cap at 50% of budget (structural
+max 1.901 if that cap were lifted). All targets together are 1.94x the budget,
+which is why this is an allocation problem at all.
+
+The FLOORS are not physical: `design.py:51` hard-codes
+`DEFAULT_LOWER = [0.02, 0.1, 0.1, 0.1]`, round numbers with no derivation. So
+`high` is anchored tight to target availability and `low` carries margin.
+
+New DR1 factors: BGS (0.45, 1.60), LRG1/2/3 (0.35, 1.50), LRG3_ELG1
+(0.50, 1.45), ELG2 (0.45, 1.35), QSO (0.28, 1.25). Roughly sample-neutral --
+BGS/LRG widen ~15%, ELG2 narrows ~10% -- since the draw is UNIFORM, so a wider
+box at fixed sample count only thins density.
+
+### Why it needed a schema, not just new numbers
+
+The factors are NOT release-portable, which the old header explicitly (and
+wrongly) claimed. Only the ANCHOR is per-release; the FACTORS follow bedcosmo's
+design bounds, and `design_args_dr2.yaml` differs in every class but ELG, QSO
+at both ends. So they live under a per-release block:
+
+```yaml
+BGS:
+  data_release:
+    dr1:
+      low: 0.45
+      high: 1.60
+```
+
+`get_tracer_config(..., data_release=)` SELECTS and **raises** on a missing
+release -- never merges-with-fallback, because a silently-wrong N box is the
+S58 failure mode. The loader validates every release entry has both keys with
+low < high, so a half-filled block fails at import. `ntracers_range` now
+threads the release through; omitting it previously returned the raw mapping.
+
+Scoped to `low`/`high` deliberately: they have **2** consumer sites, both in
+util.py. `area_deg2` and `z_eff` are equally release-dependent but have **89**,
+plus 19 direct `TRACER_CONFIGS[...]` accesses that bypass the resolver
+entirely. Moving those is a real refactor and does not belong days before a
+regeneration; it is queued behind it, guarded by the regress harness.
+
+### LRG3_ELG1 needs no box change, and cannot be fixed by one
+
+Its TOTAL N multiple spans only 0.899-1.299 -- 0.0% outside the current box,
+because it sums two anti-correlated classes whose extremes cancel. But its
+internal mix does move: the LRG3 fraction runs 0.182-0.609 against a nominal
+0.383, and only **6.8%** of designs sit within 2% of nominal. A single
+`N_tracers` input cannot express that; it needs a second input per parent,
+which S87/S88's ELG1 and LRG3p tables now make possible. Open.

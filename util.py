@@ -43,8 +43,9 @@ _TRACER_CONFIG_PATH = _THIS_DIR / "tracers.yaml"
 _REQUIRED_TRACER_KEYS = {
     "zrange",
     "z_eff",
-    "low",
-    "high",
+    # `low`/`high` are NOT here: they moved under the per-release
+    # `data_release:` block in S94 and are validated there instead.
+    "data_release",
 }
 
 
@@ -68,6 +69,29 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
         if missing:
             raise ValueError(f"Tracer config for {key!r} missing keys: {sorted(missing)}")
 
+        # `low`/`high` moved under a per-release block (S94). Validate them
+        # there instead: every release entry must carry both, so a half-filled
+        # block fails at import rather than at sampling time.
+        by_release = cfg.get("data_release")
+        if by_release is not None:
+            if not isinstance(by_release, dict) or not by_release:
+                raise ValueError(
+                    f"Tracer config for {key!r}: `data_release` must be a "
+                    f"non-empty mapping of release -> values")
+            for rel, vals in by_release.items():
+                if not isinstance(vals, dict):
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} must be a mapping")
+                miss = {"low", "high"} - set(vals)
+                if miss:
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} missing "
+                        f"{sorted(miss)}")
+                if float(vals["low"]) >= float(vals["high"]):
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} has "
+                        f"low {vals['low']} >= high {vals['high']}")
+
         zrange = cfg["zrange"]
         if not isinstance(zrange, (list, tuple)) or len(zrange) != 2:
             raise ValueError(f"Tracer config for {key!r} must have zrange as length-2 list")
@@ -77,8 +101,11 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
         entry: Dict[str, object] = dict(cfg)
         entry["zrange"] = (float(zrange[0]), float(zrange[1]))
         entry["z_eff"] = float(cfg["z_eff"])
-        entry["low"] = float(cfg["low"])
-        entry["high"] = float(cfg["high"])
+        entry["data_release"] = {
+            str(rel): {"low": float(v["low"]), "high": float(v["high"]),
+                       **{k2: v2 for k2, v2 in v.items() if k2 not in ("low", "high")}}
+            for rel, v in cfg["data_release"].items()
+        }
         if "bias_recon" in cfg:
             entry["bias_recon"] = float(cfg["bias_recon"])
         if "smoothing_scale" in cfg:
@@ -167,16 +194,16 @@ def tracers_for(analysis: str) -> List[str]:
 
 
 def get_tracer_config(tracer_bin: str, analysis: str | None = None,
-                      dataset: str | None = None) -> Dict[str, object]:
+                      data_release: str | None = None) -> Dict[str, object]:
     """Return validated tracer config dict.
 
-    With ``analysis``/``dataset`` omitted this is exactly the historical
+    With ``analysis``/``data_release`` omitted this is exactly the historical
     behaviour — the base yaml block, minus bookkeeping keys — so existing
     callers (all of ``bao/``, which is regression-frozen) are untouched.
 
     Passing ``analysis`` validates the bin against the block's ``analyses``
     list and merges any ``overrides`` on top, in the order ``<analysis>`` then
-    ``<analysis>/<dataset>``. The override mechanism is wired but only DR1
+    ``<analysis>/<data_release>``. The override mechanism is wired but only DR1
     values are populated (DR1-first rule).
     """
     key = tracer_bin.strip()
@@ -194,15 +221,34 @@ def get_tracer_config(tracer_bin: str, analysis: str | None = None,
                 f"Tracer bin {tracer_bin!r} is not part of the {analysis!r} analysis "
                 f"(tracers.yaml declares analyses={list(allowed)}). "
                 f"Valid bins: {tracers_for(analysis)}")
-        for okey in (analysis, f"{analysis}/{dataset}" if dataset else None):
+        for okey in (analysis, f"{analysis}/{data_release}" if data_release else None):
             if okey and okey in overrides:
                 cfg.update(dict(overrides[okey]))
+
+    # Per-release block (S94). Selected, never merged-with-fallback: if the
+    # requested release has no entry we RAISE, because the values are not
+    # release-portable (the factors follow bedcosmo's per-class design bounds,
+    # which differ between releases) and a silently-wrong N box is exactly the
+    # S58 failure mode. Left unresolved when no release is requested, so the
+    # many callers that never read these keys are untouched.
+    by_release = cfg.pop("data_release", None)
+    if by_release is not None and data_release is not None:
+        if data_release not in by_release:
+            raise ValueError(
+                f"Tracer bin {tracer_bin!r} has no {data_release!r} block under "
+                f"`data_release:` in tracers.yaml (present: "
+                f"{sorted(by_release)}). These values are release-specific -- "
+                f"see the header note -- so there is deliberately no fallback.")
+        cfg.update(dict(by_release[data_release]))
+        cfg["data_release"] = data_release
+    elif by_release is not None:
+        cfg["data_release"] = by_release
     return cfg
 
 
 _CSV_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
-_NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {csv_label: passed}
-_COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {component: passed}
+_NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # data_release -> {csv_label: passed}
+_COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # data_release -> {component: passed}
 
 _DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
 
@@ -222,10 +268,10 @@ REPO_DATA_DIR = Path(os.environ.get(
     "DESI_REF_DATA_DIR", Path(__file__).resolve().parent / "data"))
 
 
-def reference_table_path(dataset: str, *parts: str) -> Path:
+def reference_table_path(data_release: str, *parts: str) -> Path:
     """Path to a vendored reference table, raising with the regeneration
     recipe rather than a bare FileNotFoundError."""
-    p = REPO_DATA_DIR.joinpath(str(dataset), *parts)
+    p = REPO_DATA_DIR.joinpath(str(data_release), *parts)
     if not p.exists():
         raise FileNotFoundError(
             f"Missing reference table {p}. These ship with the repo; if it is "
@@ -235,12 +281,12 @@ def reference_table_path(dataset: str, *parts: str) -> Path:
     return p
 
 
-def nz_slices_path(filename: str, dataset: str,
+def nz_slices_path(filename: str, data_release: str,
                    base_dir=None) -> Path:
-    """Resolve a release-scoped n(z) file: ``{base}/{dataset}/{filename}``.
+    """Resolve a release-scoped n(z) file: ``{base}/{data_release}/{filename}``.
 
     Release-scoped since S62c, because `ntracers`, `tracer_area` and
-    `get_default_save_path` all switch on `dataset` -- a release-mixing bug in
+    `get_default_save_path` all switch on `data_release` -- a release-mixing bug in
     the n(z) layer would surface only as a subtly wrong covariance, the same
     silent class as S58 (a fallback that never fired) and S59 (a caller never
     updated).
@@ -256,14 +302,14 @@ def nz_slices_path(filename: str, dataset: str,
     whenever cwd is shapefit/.
     """
     if base_dir is not None:
-        p = Path(base_dir) / str(dataset) / filename
+        p = Path(base_dir) / str(data_release) / filename
         if not p.exists():
-            raise FileNotFoundError(f"No n(z) file {filename!r} under {base_dir}/{dataset}")
+            raise FileNotFoundError(f"No n(z) file {filename!r} under {base_dir}/{data_release}")
         return p
-    return reference_table_path(dataset, "nz_slices", filename)
+    return reference_table_path(data_release, "nz_slices", filename)
 
 
-def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
+def tracer_area(tracer_bin: str, data_release: str = "dr1") -> float:
     """Footprint in deg^2 for ``tracer_bin``: `area_deg2` from tracers.yaml.
 
     The area is NOT one number per release. DESI 2024 II Table 2 gives it per
@@ -291,21 +337,21 @@ def tracer_area(tracer_bin: str, dataset: str = "dr1") -> float:
     if area is not None:
         return float(area)
     try:
-        fallback = _DATASET_AREA_FALLBACK[dataset]
+        fallback = _DATASET_AREA_FALLBACK[data_release]
     except KeyError:
         raise ValueError(
-            f"Unknown dataset {dataset!r}; "
+            f"Unknown data_release {data_release!r}; "
             f"known: {sorted(_DATASET_AREA_FALLBACK)}") from None
     warnings.warn(
         f"tracers.yaml has no `area_deg2` for {tracer_bin!r}; falling back to "
-        f"the {dataset} footprint ({fallback:.0f} deg^2). Per-tracer areas are "
+        f"the {data_release} footprint ({fallback:.0f} deg^2). Per-tracer areas are "
         "DESI 2024 II Table 2 -- see shapefit CHANGELOG S54.")
     return float(fallback)
 
 
-def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
+def ntracers(tracer_bin: str, data_release: str = "dr1") -> float:
     """Return the DESI 'passed' N_tracers for ``tracer_bin`` from
-    ``data/{dataset}/desi_data.csv`` in the repo (dataset in {dr1, dr2}).
+    ``data/{data_release}/desi_data.csv`` in the repo (data_release in {dr1, dr2}).
 
     The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
     pipeline configuration that compares predictions against bundle data must
@@ -321,27 +367,27 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     cfg = TRACER_CONFIGS.get(tracer_bin.strip(), {})
     components = cfg.get("components")
     if components:
-        if dataset not in _COMPONENTS_CACHE:
+        if data_release not in _COMPONENTS_CACHE:
             import pandas as pd
-            tdf = pd.read_csv(reference_table_path(dataset, "desi_tracers.csv"))
-            _COMPONENTS_CACHE[dataset] = {
+            tdf = pd.read_csv(reference_table_path(data_release, "desi_tracers.csv"))
+            _COMPONENTS_CACHE[data_release] = {
                 str(r["tracer"]): float(r["targets"]) * float(r["comp"]) * float(r["efficiency"])
                 for _, r in tdf.iterrows()}
-        ccache = _COMPONENTS_CACHE[dataset]
+        ccache = _COMPONENTS_CACHE[data_release]
         missing = [c for c in components if c not in ccache]
         if missing:
-            raise KeyError(f"desi_tracers.csv ({dataset}) has no rows {missing} for "
+            raise KeyError(f"desi_tracers.csv ({data_release}) has no rows {missing} for "
                            f"{tracer_bin!r}; available: {sorted(ccache)}")
         return float(sum(ccache[c] for c in components))
 
-    if dataset not in _NTRACERS_CACHE:
+    if data_release not in _NTRACERS_CACHE:
         import pandas as pd
-        df = pd.read_csv(reference_table_path(dataset, "desi_data.csv"))[["tracer", "passed"]].drop_duplicates("tracer")
-        _NTRACERS_CACHE[dataset] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
-    cache = _NTRACERS_CACHE[dataset]
+        df = pd.read_csv(reference_table_path(data_release, "desi_data.csv"))[["tracer", "passed"]].drop_duplicates("tracer")
+        _NTRACERS_CACHE[data_release] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
+    cache = _NTRACERS_CACHE[data_release]
     key = _CSV_NAME_MAP.get(tracer_bin, tracer_bin)
     if key not in cache:
-        raise KeyError(f"No {dataset} N_tracers for {tracer_bin!r} (looked up as {key!r}). "
+        raise KeyError(f"No {data_release} N_tracers for {tracer_bin!r} (looked up as {key!r}). "
                        f"Available: {sorted(cache)}")
     return cache[key]
 
@@ -351,13 +397,17 @@ def dr1_ntracers(tracer_bin: str) -> float:
     return ntracers(tracer_bin, "dr1")
 
 
-def ntracers_range(tracer_bin: str, dataset: str = "dr1") -> Tuple[float, float]:
+def ntracers_range(tracer_bin: str, data_release: str = "dr1") -> Tuple[float, float]:
     """Absolute N_tracers LHS bounds for ``tracer_bin``: the per-tracer
     ``low``/``high`` *multiplicative factors* in tracers.yaml times the DESI
-    ``passed`` count for ``dataset``. E.g. factors (0.5, 1.5) -> [0.5*passed,
-    1.5*passed], a box centred on the passed count."""
-    cfg = get_tracer_config(tracer_bin)
-    p = ntracers(tracer_bin, dataset)
+    ``passed`` count for ``data_release``.
+
+    The factors now live under a per-release block and are NOT portable across
+    releases (S94), so the release is threaded into `get_tracer_config` rather
+    than defaulted -- omitting it silently returned the raw mapping instead of
+    the values, which is the bug this signature change closes."""
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
+    p = ntracers(tracer_bin, data_release)
     return float(cfg["low"]) * p, float(cfg["high"]) * p
 
 
@@ -567,7 +617,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
         # and the second one made shapefit mean eval raise on every sample:
         #
         #   1. the task tuple is 6 fields (sample, tracer, z_eff,
-        #      param_defaults, area, dataset). It was passing 4, so
+        #      param_defaults, area, data_release). It was passing 4, so
         #      _worker_run_mean_targets died on the unpack -- which happens
         #      BEFORE its try/except, so the failure was a hard ValueError, not
         #      the (None, None, traceback) the contract promises. Verified:
@@ -582,8 +632,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
         #
         # The area is this TRACER's footprint (S54/S58), not the release's; it
         # is the argument the worker hands to _fs_compute_z_eff. shapefit is
-        # DR1-only (generate_covar_data.py restricts --dataset), so pin DR1
-        # rather than thread a dataset argument through get_pipeline.
+        # DR1-only (generate_covar_data.py restricts --data-release), so pin DR1
+        # rather than thread a data_release argument through get_pipeline.
         _area = tracer_area(tracer_bin, "dr1")
 
         def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _area=_area):
@@ -612,7 +662,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             sys.path.insert(0, _bao_dir)
         import core as bao_core
 
-        target_names = list(bao_core.emulator_target_names(tracer_bin, dataset="dr1"))
+        target_names = list(bao_core.emulator_target_names(tracer_bin, data_release="dr1"))
 
         # Restrict priors to the trained model's varied params (param_names),
         # else default to N_tracers + the base cosmo set. N_tracers bounds come
@@ -708,18 +758,18 @@ def logs_dir(analysis: str) -> str:
 
 def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
                           cosmo_model: str | None = None,
-                          dataset: str | None = None) -> str:
+                          data_release: str | None = None) -> str:
     scratch = os.environ.get("SCRATCH")
     if not scratch:
         raise EnvironmentError("SCRATCH is not set; please pass --save-path explicitly.")
-    # {analysis}/training_data/[{dataset}/][{cosmo_model}/]{quantity}
+    # {analysis}/training_data/[{data_release}/][{cosmo_model}/]{quantity}
     # The analysis segment is the TOP level under emulator/ so that each
     # pipeline owns its own training_data/, models/ and logs/ subtree. It must
     # stay above the quantity: 'covar' is a valid quantity for both bao (the
     # Fourier Fisher backend) and shapefit, so an analysis-last layout collides.
     parts = [scratch, "bedcosmo", "num_tracers", "emulator", analysis, "training_data"]
-    if dataset is not None:
-        parts.append(dataset)
+    if data_release is not None:
+        parts.append(data_release)
     if cosmo_model is not None:
         parts.append(cosmo_model)
     parts.append(quantity)
