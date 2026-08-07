@@ -4484,3 +4484,90 @@ since deleting a never-executed path cannot move a number. Tests 2/2. Spot-
 checked that the four behaviours adjacent to the removed loop still hold:
 LRG3/shapefit resolves, `tracers_for('shapefit')` filters, the bao-only
 combined bin is rejected for shapefit, and the gated Lya bin raises.
+
+## §99 — the regress harnesses pin BLAS threads, because unpinned they lie
+
+The S98 merge review needed a shapefit regress dump at HEAD (the last coverage
+gap: §94-§98 touched `shapefit/core.py` and `fkp_p0_for`, and only bao had been
+re-verified). It came back **FAIL: 527 of 1158 arrays differ**. It was a false
+alarm, and the harness itself caused it.
+
+### The tell
+
+The deltas were ≤2.2e-10 relative, but the *partition* was the informative
+part, not the size:
+
+| group | differ | max rel |
+|---|---|---|
+| `C_gauss`, `C_SSC`, `C_total` | 0/144 | 0 |
+| `z_eff`, `obs_k`, `obs_ells`, `obs_flatdata` | 0/198 | 0 |
+| mean pipeline (`qiso`, `qap`, `f_sigmar`, `m`, fids) | 0/240 | 0 |
+| `cov_phys` + the 10 sigma/rho targets | 527/528 | 2.2e-10 |
+
+Bit-identical covariances rule out the FKP/pivot path outright -- a pivot shift
+reaches `C_gauss` before it reaches anything else, so §97's LRG3_ELG1
+correction demonstrably never touches shapefit (which bins LRG3 and ELG2
+separately, and their measured pivots round-trip to the old configured values).
+Everything that moved sat strictly *downstream* of the covariance, in the
+Fisher. And `sigma` moved ~1e-12 while `rho_f_sigmar_m` moved 2.2e-10: a ~300x
+amplification, the signature of a tiny perturbation projected through the
+known near-degenerate f_sigmar-m direction.
+
+### Two wrong answers before the right one
+
+First guess was run-to-run nondeterminism. **Refuted**: a second dump at
+identical HEAD was 0/1158 bit-identical. Second guess was a changed Fisher
+input; a probe of S92 vs HEAD (git worktree + a `desilike_emulator` symlink
+shim, since the package otherwise resolves to the live tree and the worktree
+silently runs HEAD's `bao/core.py`) showed every input identical at full float
+precision -- N_tracers, z_eff, `f_sigmar_fid`, `m_fid`, area, and all 21
+parameters' values, priors, refs and fixed flags. Same covariance, same inputs,
+different answer.
+
+### Cause
+
+Thread pinning existed only in `core._worker_init` (`core.py:2419`), which runs
+in the **generators' spawn pool**. `regress_sigmas.py` runs single-process in
+the parent and never pinned anything, so it inherited whatever the shell had.
+Multi-threaded BLAS reduction order is not fixed, and measured directly on one
+cell:
+
+```
+threads=1      cov_phys[0,0] = 0.0007517152310799642   (reproducible)
+threads=1      cov_phys[0,0] = 0.0007517152310799642
+threads=4      cov_phys[0,0] = 0.0007517152310711727
+threads=8      cov_phys[0,0] = 0.0007517152310833671
+unset          cov_phys[0,0] = 0.0007517152310799684
+```
+
+~1e-10 of spread, which is the entire discrepancy. Re-running the seven-commit
+bisect *with threads pinned* collapses it: `fd32122` (S92) and `3c86f15` (HEAD)
+produce bit-identical `cov_phys`. shapefit is insulated from §94-§98 after all.
+
+This matters beyond one false alarm. The harness exists to catch silent numeric
+shifts across dependency upgrades, and a dep upgrade routinely changes BLAS
+threading defaults -- so the noise was landing exactly on the signal, and any
+real ~1e-10 regression would have been indistinguishable from it.
+
+### The fix
+
+Both `bao/regress_sigmas.py` and `shapefit/regress_sigmas.py` pin the four
+thread variables at module top, **before `import numpy`** (BLAS reads them at
+load time; setting them afterwards is a silent no-op). Forced rather than
+`setdefault`, since an inherited `OMP_NUM_THREADS` is precisely what defeats
+the pin -- but it prints to stderr when it overrides a conflicting value,
+because overriding the caller's environment silently is its own §96 trap.
+
+### Verification
+
+`threadpoolctl` confirms all four pools at 1 thread in-process under an
+inherited `OMP_NUM_THREADS=4`, and the NOTE fires only on conflict. Compare of
+the two HEAD dumps still reports 1158/1158 bit-identical.
+
+### Not done here
+
+Two intermediate commits (`d3920f7`, `70ebfcc`) show a pinned `cov_phys` that
+differs from the baseline both endpoints share -- consistent with a transient
+mid-series state, since `d3920f7` moved the N_tracers box before §95/§96
+finished wiring `data_release` through `shapefit/core.py`. The endpoints match,
+so it does not gate the merge, and it is recorded rather than assumed away.

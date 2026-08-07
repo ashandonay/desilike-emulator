@@ -19,13 +19,39 @@ Usage
 reports max absolute and relative deltas so a real regression is separable
 from last-bit noise, but deliberately auto-accepts neither.
 
+Threading is pinned to one BLAS thread below, and that is load-bearing rather
+than a performance choice: multi-threaded reduction order is not fixed, so the
+Fisher step alone moves by ~1e-10 relative between thread counts. That is small
+in absolute terms but it lands squarely on top of the signal this harness
+exists to detect, and it is amplified by the near-degenerate f_sigmar-m
+direction (sigma moves ~1e-12 while rho_f_sigmar_m moves ~2e-10). Unpinned, an
+otherwise byte-identical rerun reports hundreds of differing arrays -- which is
+exactly the false FAIL that surfaced comparing the S92 and S98 dumps (S99).
+The generators pin this already, in bao.core._worker_init, but that runs in the
+spawn pool and never covered this single-process harness.
+
 Run from the ``shapefit/`` directory.
 """
 
 from __future__ import annotations
 
-import argparse
+import os
 import sys
+
+# Must precede `import numpy`: BLAS reads these at load time, so setting them
+# afterwards is a silent no-op. Forced rather than setdefault -- an inherited
+# OMP_NUM_THREADS is precisely what would defeat the pin -- but audible, since
+# overriding the caller's environment without saying so is its own trap (S96).
+_THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+for _v in _THREAD_VARS:
+    _prev = os.environ.get(_v)
+    if _prev not in (None, "1"):
+        print(f"NOTE: {_v}={_prev} overridden to 1 -- this harness requires "
+              f"deterministic BLAS reduction order (S99).", file=sys.stderr)
+    os.environ[_v] = "1"
+
+import argparse
 import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple
