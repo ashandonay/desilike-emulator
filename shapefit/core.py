@@ -568,6 +568,10 @@ def build_shapefit_likelihood(
         nbar_slice, _nbar_src = bao_core.cov_nbar_per_slice(
             tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
             data_release=data_release, cosmo=cosmo)
+        if not str(_nbar_src).startswith("NX"):
+            print(f"WARNING {tracer_bin}: covariance density fell back to "
+                  f"'{_nbar_src}' instead of DESI NX (S96).",
+                  file=sys.stderr, flush=True)
 
         fkp_wsq_list = []
         for zi, ni in zip(z_mid_slice, nbar_slice):

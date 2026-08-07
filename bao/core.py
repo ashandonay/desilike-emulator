@@ -225,17 +225,14 @@ def _fkp_p0_for_tracer(tracer_bin: str, data_release: str = "dr1") -> float:
     values are DESI's own, "rounded numbers taken from the DR1 P0(k)
     measurements" at k = 0.14 h/Mpc.
     """
-    # `fkp_p0` is not release-scoped, but the resolver now requires a release
-    # (S95) -- forward the caller's rather than pinning one here.
-    cfg = get_tracer_config(tracer_bin, data_release=data_release)
-    p0 = cfg.get("fkp_p0")
-    if p0 is None:
-        raise KeyError(
-            f"tracers.yaml entry for {tracer_bin!r} has no `fkp_p0`. It is "
-            "DESI 2024 III Table 2's P0(k=0.14) and there is no safe default "
-            "-- a wrong pivot silently biases z_eff."
-        )
-    return float(p0)
+    # Delegates to fkp_analytic_cov.fkp_p0_for so there is ONE definition of
+    # this lookup (S96). There were two, with OPPOSITE failure policies: this
+    # one raised, the other warned and fell back to LRG's pivot -- and that
+    # warning was swallowed by config_space's filterwarnings("ignore"). Both
+    # raise now. Safe import: fkp_analytic_cov is numpy-only and never imports
+    # core, so there is no cycle.
+    from fkp_analytic_cov import fkp_p0_for
+    return fkp_p0_for(tracer_bin, data_release=data_release)
 
 
 def _nz_scale_factor(tracer_bin: str, n_tracers, data_release: str = "dr1") -> float:
@@ -327,16 +324,19 @@ def _desi_nz_geometry(tracer_bin: str, nbar_file, *, data_release: str):
             if ok:
                 entry = (nx, s1, p0e, ntot)
             else:
-                warnings.warn(
-                    f"{path.name}: {nx.size} rows vs {len(nbar_file)} slices, "
-                    "or non-positive values; falling back to nbar_file.")
+                # stderr, not warnings.warn: this module calls
+                # filterwarnings("ignore") at import (l.32), so a warning here
+                # is swallowed by its OWN module (S96).
+                print(f"WARNING {path.name}: {nx.size} rows vs "
+                      f"{len(nbar_file)} slices, or non-positive values; "
+                      "falling back to nbar_file.", file=sys.stderr, flush=True)
         _DESI_NX_CACHE[cache_key] = entry
     entry = _DESI_NX_CACHE[cache_key]
     if entry is None:
-        warnings.warn(
-            f"No DESI n(z) geometry table for {tracer_bin!r}; z_eff falls back "
-            "to `nbar_file`, which runs high and degrades agreement with "
-            "DESI's published z_eff (shapefit CHANGELOG S53).")
+        print(f"WARNING no DESI n(z) geometry table for {tracer_bin!r}; z_eff "
+              "falls back to `nbar_file`, which runs 1.19-2.37x high and "
+              "degrades agreement with DESI's published z_eff (S53).",
+              file=sys.stderr, flush=True)
         return np.asarray(nbar_file, dtype=np.float64), None, None, None
     return entry
 
@@ -1703,6 +1703,13 @@ def build_bao_likelihood(
             nbar_slice, _nbar_src = cov_nbar_per_slice(
                 tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
                 data_release=data_release, cosmo=cosmo)
+            if not str(_nbar_src).startswith("NX"):
+                # cov_nbar_per_slice's docstring promises the fallback "says
+                # so"; it returned a source string that this call site threw
+                # away, so it never did (S96).
+                print(f"WARNING {tracer_bin}: covariance density fell back to "
+                      f"'{_nbar_src}' instead of DESI NX -- this sigma is NOT "
+                      "the S85/S87 density.", file=sys.stderr, flush=True)
             tracer_type_slice = str(cfg.get("tracer_type", "")).strip()
             if not tracer_type_slice:
                 raise ValueError(

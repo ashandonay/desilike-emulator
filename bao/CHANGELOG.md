@@ -4311,3 +4311,58 @@ recorded 0.13243.
 Nothing is left at the tracer level that varies by release. What remains there
 -- tracer_type, zrange, fkp_p0, bias_recon, smoothing_scale, f_interloper,
 analyses -- is release-invariant physics.
+
+## §96 — four silent fallbacks made audible, and one pivot lookup instead of two
+
+Prompted by "wouldn't it be better to properly fail than silently fall back".
+It was, and there were more of them than the question implied.
+
+**Two functions, opposite policies, same lookup.**
+`core._fkp_p0_for_tracer` RAISED on a missing `fkp_p0` ("there is no safe
+default -- a wrong pivot silently biases z_eff"), while
+`fkp_analytic_cov.fkp_p0_for` WARNED and fell back to `P_FKP_DEFAULT` = LRG's
+1e4, i.e. it would weight a BGS or ELG sample at 1.4-2.5x its correct pivot.
+The lenient one served the covariance. Both raise now, and `core` delegates, so
+there is genuinely ONE definition -- which `config_space._pivot`'s docstring
+had already claimed there was.
+
+**Three warnings that could never be seen.** `warnings.warn` is useless here:
+  - `config_space.py:42` calls `filterwarnings("ignore")` -> `fkp_p0_for`'s
+    warning was dead in its main consumer;
+  - `core.py:32` does the same -> `_desi_nz_geometry`'s two "falling back to
+    nbar_file" warnings were swallowed BY THEIR OWN MODULE.
+All now print to stderr, matching the S90 precedent.
+
+**A promise the code did not keep.** `cov_nbar_per_slice`'s docstring says the
+fallback "says so, because a silent fallback here is the S58 failure mode". It
+returned a source string that BOTH call sites captured as `_nbar_src` and threw
+away. Both now report a non-NX source.
+
+### What that was hiding
+
+With `LRG2_desi_nx.csv` removed, the pipeline returned DV 0.133191 against the
+correct 0.132431 -- **0.57% wrong, silently**. No crash, no warning, just a
+plausible number. Precisely the S58 failure mode, inside the code that
+documents S58. It now emits four warnings across the z_eff and covariance
+paths.
+
+Graceful degradation is KEPT rather than converted to a raise: a partial
+dataset is a supported state. The fix is to honour what the docstring promised.
+
+### Verification
+
+All 1024 regress arrays bit-identical to head_S92 -- the right bar, since
+logging and a delegation cannot move a number. Fallback behaviour tested by
+hiding a table and confirming the warnings fire, then restoring it.
+
+### Follow-on, not done here
+
+`fkp_p0` in tracers.yaml is now REDUNDANT for 6 of 7 tracers: the measured
+`p0_eff` column reproduces 7000/10000/4000/6000 exactly, to machine precision.
+Only LRG3_ELG1 differs, and there the yaml's 10000 is not even inside the
+measured 11299-19501 -- so the covariance uses a pivot that is wrong for that
+bin while z_eff uses the right one. `_fkp_integrals` computes
+`1/(1 + n*P_FKP)**2` with n an array, so it ALREADY broadcasts a per-slice
+pivot (verified: constant-array == scalar to 1e-12). Dropping `fkp_p0`
+altogether is therefore mostly mechanical, but it is not a pure refactor --
+it would change LRG3_ELG1's sigma, which is the point.

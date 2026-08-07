@@ -62,8 +62,13 @@ P_FKP_DEFAULT = 1.0e4
 def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
     """DESI's Eq. (8.4) FKP pivot for this tracer, from tracers.yaml.
 
-    Falls back to P_FKP_DEFAULT with a warning if the tracer has no `fkp_p0`,
-    rather than silently weighting a BGS/ELG/QSO sample at the LRG pivot.
+    RAISES on a missing `fkp_p0` -- there is no safe default (S96). This used to
+    warn and fall back to P_FKP_DEFAULT, which is LRG's 1e4, i.e. it would weight
+    a BGS/ELG/QSO sample at the LRG pivot. Two things made that indefensible:
+    `core._fkp_p0_for_tracer` already raised on the same lookup, so one pipeline
+    failed loudly and the other did not; and the warning was DEAD, because
+    config_space -- the main consumer -- calls warnings.filterwarnings("ignore")
+    at import, so the fallback was silent exactly where it mattered.
 
     `analysis` is deliberately NOT passed to get_tracer_config: this helper
     serves both pipelines, and the bins differ between them (bao uses the
@@ -72,18 +77,16 @@ def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
     pivot without a word. Config errors propagate; only a MISSING `fkp_p0`
     warns and falls back.
     """
-    import warnings
-
     from util import get_tracer_config
 
     cfg = get_tracer_config(tracer_bin, data_release=data_release)
     p0 = cfg.get("fkp_p0")
     if p0 is None:
-        warnings.warn(
-            f"No `fkp_p0` in tracers.yaml for {tracer_bin!r}; falling back to "
-            f"the LRG pivot {P_FKP_DEFAULT:g}. DESI 2024 II Eq. (8.4) wants "
-            "7000/10000/4000/6000 for BGS/LRG/ELG/QSO.")
-        return float(P_FKP_DEFAULT)
+        raise KeyError(
+            f"No `fkp_p0` in tracers.yaml for {tracer_bin!r}. DESI 2024 II "
+            "Eq. (8.4) wants 7000/10000/4000/6000 for BGS/LRG/ELG/QSO and "
+            "there is no safe default -- the old fallback was LRG's 1e4, which "
+            "would weight a BGS or ELG sample at 1.4-2.5x its correct pivot.")
     return float(p0)
 
 # Calibration knob — initialized to 1.0 (pure FKP-1994 formula). After
