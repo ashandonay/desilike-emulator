@@ -19,13 +19,39 @@ Usage
 reports max absolute and relative deltas so a real regression is separable
 from last-bit noise, but deliberately auto-accepts neither.
 
+Threading is pinned to one BLAS thread below, and that is load-bearing rather
+than a performance choice: multi-threaded reduction order is not fixed, so the
+Fisher step alone moves by ~1e-10 relative between thread counts. That is small
+in absolute terms but it lands squarely on top of the signal this harness
+exists to detect, and it is amplified by the near-degenerate f_sigmar-m
+direction (sigma moves ~1e-12 while rho_f_sigmar_m moves ~2e-10). Unpinned, an
+otherwise byte-identical rerun reports hundreds of differing arrays -- which is
+exactly the false FAIL that surfaced comparing the S92 and S98 dumps (S99).
+The generators pin this already, in bao.core._worker_init, but that runs in the
+spawn pool and never covered this single-process harness.
+
 Run from the ``shapefit/`` directory.
 """
 
 from __future__ import annotations
 
-import argparse
+import os
 import sys
+
+# Must precede `import numpy`: BLAS reads these at load time, so setting them
+# afterwards is a silent no-op. Forced rather than setdefault -- an inherited
+# OMP_NUM_THREADS is precisely what would defeat the pin -- but audible, since
+# overriding the caller's environment without saying so is its own trap (S96).
+_THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+for _v in _THREAD_VARS:
+    _prev = os.environ.get(_v)
+    if _prev not in (None, "1"):
+        print(f"NOTE: {_v}={_prev} overridden to 1 -- this harness requires "
+              f"deterministic BLAS reduction order (S99).", file=sys.stderr)
+    os.environ[_v] = "1"
+
+import argparse
 import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -39,7 +65,7 @@ warnings.filterwarnings("ignore")
 
 import fourier_space
 from fourier_space import sf_core
-from util import ntracers
+from util import ntracers, tracer_area
 
 
 # ---------------------------------------------------------------------------
@@ -50,22 +76,33 @@ from util import ntracers
 # dict ordering, or an env-dependent default. Every point stays inside
 # DEFAULT_PRIORS (omega basis) and respects high_z_matter_dom (w0 + wa <= 0).
 
-TRACERS: Tuple[str, ...] = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS: Tuple[str, ...] = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
 # (label, omega_cdm, omega_b, h, ln10A_s, n_s, w0, wa, N_factor)
 #   N = N_factor * dr1 passed count
 COSMO_GRID: Tuple[Tuple[str, float, float, float, float, float, float, float, float], ...] = (
-    ("fid",     0.1200, 0.02237, 0.6736, 3.044, 0.9649, -1.00,  0.00, 1.00),
-    ("lowOc",   0.0500, 0.02237, 0.6736, 3.044, 0.9649, -1.00,  0.00, 1.00),
-    ("highOc",  0.3000, 0.02237, 0.6736, 3.044, 0.9649, -1.00,  0.00, 1.00),
-    ("lowH",    0.1200, 0.02180, 0.4500, 3.044, 0.9649, -1.00,  0.00, 1.00),
-    ("highH",   0.1200, 0.02290, 0.9000, 3.044, 0.9649, -1.00,  0.00, 1.00),
+    ("fid",     0.1200, 0.02237, 0.6736, 3.036394, 0.9649, -1.00,  0.00, 1.00),
+    ("lowOc",   0.0500, 0.02237, 0.6736, 3.036394, 0.9649, -1.00,  0.00, 1.00),
+    ("highOc",  0.3000, 0.02237, 0.6736, 3.036394, 0.9649, -1.00,  0.00, 1.00),
+    ("lowH",    0.1200, 0.02180, 0.4500, 3.036394, 0.9649, -1.00,  0.00, 1.00),
+    ("highH",   0.1200, 0.02290, 0.9000, 3.036394, 0.9649, -1.00,  0.00, 1.00),
     ("lowA",    0.1200, 0.02237, 0.6736, 2.300, 0.9000, -1.00,  0.00, 1.00),
     ("highA",   0.1250, 0.02237, 0.6736, 3.700, 1.0300, -1.00,  0.00, 0.55),
-    ("w0wa",    0.1200, 0.02237, 0.6736, 3.044, 0.9649, -0.80, -0.60, 1.45),
+    ("w0wa",    0.1200, 0.02237, 0.6736, 3.036394, 0.9649, -0.80, -0.60, 1.45),
 )
 
-_AREA = 14000.0
+# The footprint is per TRACER, not per release (S54), so this cannot be a
+# module constant at all. It was `dataset_area("dr1")` = 7500 for every tracer,
+# which is 1.31x the true LRG area and 1.27x the ELG area -- and because
+# build_shapefit_likelihood only falls back to tracer_area when `area is None`,
+# passing it explicitly OVERRODE the corrected geometry. The golden was
+# therefore pinning a footprint production does not use, and would have gone on
+# passing while the real path changed underneath it.
+#
+# Same failure as the bao golden pinning z_eff (commit 19dc4b3): a harness that
+# freezes an input stops testing the code that derives it.
+def _area(tracer: str) -> float:
+    return tracer_area(tracer, "dr1")
 
 
 def _sample_for(row) -> Dict[str, float]:
@@ -96,7 +133,7 @@ def _dump_covar(out: Dict[str, np.ndarray], tracer: str) -> None:
             N_tracers=N_factor * N_fid,
             theta_cosmo=theta,
             tracer_bin=tracer,
-            area=_AREA,
+            area=_area(tracer),
         )
         pfx = f"covar/{tracer}/{label}"
 
@@ -124,30 +161,42 @@ def _dump_covar(out: Dict[str, np.ndarray], tracer: str) -> None:
 
 def _dump_mean(out: Dict[str, np.ndarray], tracer: str) -> None:
     """Mean-pipeline path: per-tracer extractor at the fiducial-cosmology
-    z_eff (the same convention generate_mean_data.py uses)."""
+    z_eff derived per sample, the same convention generate_mean_data.py uses."""
     fid_sample = _sample_for(COSMO_GRID[0])
     theta_fid = sf_core._to_shapefit_cosmo_params(fid_sample)
     from desilike.theories.primordial_cosmology import get_cosmo
 
     cosmo_fid = get_cosmo(("DESI", dict(theta_fid)))
     fo_fid = cosmo_fid.get_fourier()
-    from util import get_tracer_config
+    from util import get_tracer_config, ntracers
 
-    cfg = get_tracer_config(tracer)
+    # DR1-only harness (COSMO_GRID is a DR1 box), so the release is pinned.
+    cfg = get_tracer_config(tracer, data_release="dr1")
+    # Record the fiducial-cosmology, DR1-count z_eff as a diagnostic anchor
+    # only. Production no longer uses a single frozen z_eff (S42), so this is
+    # NOT the z the rows below are evaluated at -- passing z_eff=None makes the
+    # worker derive it per sample from that sample's cosmology AND N_tracers,
+    # which is what generate_mean_data.py does. Pinning it here would leave the
+    # harness blind to the very dependence S42 added.
     try:
         z_eff = sf_core._fs_compute_z_eff(
             tracer_bin=tracer, cosmo=cosmo_fid, fo=fo_fid,
-            area_deg2=_AREA, b1=float(cfg.get("bias_recon", 2.0)),
+            area_deg2=_area(tracer), b1=float(cfg.get("bias_recon", 2.0)),
+            n_tracers=ntracers(tracer, "dr1"), data_release="dr1",
         )
     except (FileNotFoundError, ValueError):
         z_eff = float(cfg["z_eff"])
     _record(out, f"mean/{tracer}/z_eff", z_eff)
 
+    N_fid = float(ntracers(tracer, "dr1"))
     for row in COSMO_GRID:
-        label = row[0]
-        sample = _sample_for(row)
+        label, N_factor = row[0], row[8]
+        # N_tracers is a mean-emulator INPUT since S42 and it moves z_eff, so
+        # the grid's lowN/highN rows must reach the mean dump too -- otherwise
+        # the golden pins a dependence it never exercises.
+        sample = {**_sample_for(row), "N_tracers": N_factor * N_fid}
         _s, vals, tb = fourier_space._worker_run_mean_targets(
-            (sample, tracer, z_eff, None)
+            (sample, tracer, None, None, _area(tracer), "dr1")
         )
         if vals is None:
             raise RuntimeError(f"mean extractor failed for {tracer}/{label}:\n{tb}")

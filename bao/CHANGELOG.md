@@ -3917,3 +3917,664 @@ Config space is untouched (z_eff pinned by bundle). Fourier σ move. The
 `bao/regress_sigmas.py` fourier dump PINS `z_eff=cfg["z_eff"]` (line ~133), so
 the golden does not exercise this path at all — a known blind spot, not
 evidence of no change.
+
+## §89 — remove the dead published-σ reader from desi_reference
+
+`_read_desi_csv` and `_csv_sigma` were defined and never called -- no call site
+in this repo, in bedcosmo, or anywhere else under $HOME. They are removed, along
+with what they orphaned: `_NAME_MAP_TO_DATA` (their only user) and the `pandas`
+import.
+
+This is not tidying. The pair read `~/data/desi/bao_dr1/desi_data.csv` -- the
+un-vendored copy, bypassing `data/dr1/` entirely -- and returned DESI's
+*published* σ. bao-recon's post-marginalisation α-covariance is what this
+pipeline is compared against, and the two are differently defined. A dead
+function with an inviting name next to the live one is how the wrong reference
+gets picked up later.
+
+`_DR1_DIR` stays: it still resolves `_LIK_DIR` for the bao-recon .h5 bundles,
+which have no in-repo copy. Noted inline so it is not mistaken for the vendored
+table path.
+
+### Verification
+
+Dumped `_read_bao_recon` for all six tracers plus `DESI_SYST_INFLATION` at HEAD
+and after the edit: **numeric payload identical**. Module API differs by exactly
+`_read_desi_csv`, `_csv_sigma`, `_NAME_MAP_TO_DATA`, `pd` and nothing else. All
+eleven importers of `desi_reference` import clean.
+
+### Context
+
+`desi_data.csv` itself is NOT trimmed. Only `tracer`/`passed` is live in this
+repo (util.py:339 subsets to exactly those), but the remaining columns are the
+bedcosmo interface -- `quantity`, `value_at_z`, `observed`, `efficiency`, and
+the `Lya QSO` rows -- and `observed`x`efficiency` = `passed` is the only
+independent check on the count. Trimming would foreclose pointing bedcosmo at
+the vendored copy, which is the fix for the two-copy divergence risk (the repo
+reads `data/dr1/`, bedcosmo reads `~/data/desi/bao_dr1/`; byte-identical today,
+nothing keeps them so).
+
+## §90 — the config-space σ-driver moves onto DESI's NX (S85/S87 finally reach it)
+
+S85 moved the covariance density onto DESI's `NX` and S87 onto `nbar_total`, but
+both stopped at the Fourier path. `config_space.py` -- which
+`generate_covar_data.py` documents as "the emulator σ-driver" -- never called
+`cov_nbar_per_slice` at all; it built `n = N*frac/V` via
+`fkp_analytic_cov.load_nz_slices`. So the BAO training labels were still being
+produced with the pre-S85 density while shapefit used the new one, and S87's
+"one code path" claim was true only within `cov_nbar_per_slice`.
+
+The wiring was clearly intended -- `cov_nbar_per_slice`'s own docstring says
+"exactly linear in N_tracers, which `config_space` relies on when it caches
+`nbar_per_N`" -- it was simply never done, and `core.py`'s three-density comment
+made the gap look like a documented fact rather than a TODO.
+
+`_nz_slices_nx(tracer, cosmo, area, N, *, dataset)` is the new single choke
+point: `load_nz_slices` supplies GEOMETRY (z_mid, V_shell at this cosmology and
+area), `core.cov_nbar_per_slice` supplies DENSITY. It lives in `config_space`,
+not `fkp_analytic_cov`, deliberately -- that module is numpy-only and must not
+acquire a `core` (desilike) dependency.
+
+Wired at all four sites: `XiSigmaGenerator.__init__`,
+`gaussxi_cov_on_bundle_grid`, `alpha_sn_check`, and both in
+`shapefit/compare_to_desi`. The last two are diagnostics, and they matter: a
+diagnostic on a different n-bar than the pipeline it audits measures nothing.
+The only surviving `load_nz_slices` call is inside `_nz_slices_nx` itself.
+
+### Verification
+
+  - all six tracers report `NX total`; no fallbacks;
+  - **linearity in N exact (0.0e+00)** at N=2.3xN_fid, so `_nbar_per_N` caching
+    stays valid -- this was the one thing that could have broken silently;
+  - geometry (z_mid, V) bit-identical to the old path for every tracer;
+  - density ratio new/old: BGS 1.014, LRG1 1.002, LRG2 1.020, QSO 1.003,
+    ELG2 1.173, LRG3_ELG1 0.921-1.243 (matching S87's independent measurement).
+
+σ through the actual driver (`XiSigmaGenerator.sigma_triplet`, fiducial N):
+
+```
+            DH        DM        DV
+BGS       -0.45%    -0.45%    -0.45%
+LRG1      -0.05%    -0.08%    -0.07%
+LRG2      -0.46%    -0.63%    -0.57%
+LRG3_ELG1 -2.15%    -2.85%    -2.65%
+ELG2      -8.62%   -10.24%    -9.91%
+QSO       -0.24%    -0.24%    -0.24%
+```
+
+**This makes the DESI comparison worse, not better.** σ tightens everywhere
+(more density -> less shot noise) and our BAO σ already under-predicts DESI, so
+the deficit widens, most of all for ELG2. That is not an argument against the
+change -- the density is measured from DESI's own randoms and the old one was
+never defensible -- but it must not be reported as an improvement. Whatever
+explains the deficit, it is not this.
+
+A fallback here now prints to **stderr**, not `warnings.warn`: this module calls
+`warnings.filterwarnings("ignore")` at import, which would have swallowed
+precisely the message that must never be swallowed (the S58 failure mode).
+
+Every covar σ moves, so this lands with the golden + v2 regeneration alongside
+S58, S76, S77, S85 and S87.
+
+## §91 — the last two stale densities, in the diagnostic that plots the design axis
+
+Asked whether the n(z) transition was complete across bao-Fourier, config and
+shapefit, the audit said no. The three sigma-producing paths were done
+(`core.py:1644`, `config_space` via S90, `shapefit/core.py:564`), but
+`plot_nz_cov_scaling.py` -- the figure set whose stated purpose is "how the
+emulator inputs/outputs respond to N_tracers" -- carried two stale definitions:
+
+  - `nbar_of_z` built `N*frac/V`, with a docstring asserting it was "exactly as
+    build_bao_likelihood does (core.py:1201)". True when written, false from S85
+    on, and pointing at a line number that had also moved (now 1644). A comment
+    claiming parity is worse than none: it stops the reader checking.
+  - `nP_of_z` used the raw `nbar_file` column -- 1.19-2.37x the n_ran DESI's own
+    weights are built from. This figure's entire point is where nP ~ 1 puts the
+    shot-noise/sample-variance crossover, so it was drawing that crossover in
+    the wrong place.
+
+Both now call `core.cov_nbar_per_slice`. `nP_of_z` gains an `N_tracers`
+argument defaulting to DESI's `passed`.
+
+### A second bug this exposed
+
+`N*frac/V` needs an area; this module passes the NOMINAL `_AREA` (7500 deg²) for
+every tracer, not the per-tracer footprint, so the old density carried a
+per-tracer error of (true_area/7500) on top of the definition error. Hence
+ratios here (LRG1 1.309) differ from S90's config-space measurement (1.002),
+which used `_tracer_area`. `cov_nbar_per_slice` returns NX x alpha(N) and is
+area-INDEPENDENT, so the new path cannot express this bug at all.
+
+### Effect on the figures
+
+```
+             nbar new/old   nP_eff old -> new
+BGS              1.018        1.938 -> 1.964
+LRG1             1.309        1.765 -> 1.783
+LRG2             1.333        1.456 -> 1.471
+LRG3_ELG1        1.354        2.386 -> 1.550
+ELG2             1.485        0.381 -> 0.452
+QSO             *1.037        0.066 -> 0.067
+```
+
+LRG3_ELG1 moves most: 2.39 -> 1.55 drops it from comfortably sample-variance
+dominated to near the crossover, because `nbar_file` badly overstated the
+combined bin. No sigma changes here -- these figures feed no labels.
+
+`bao_nz_vs_ntracers.png` regenerated and checked.
+
+With this the transition is complete for every consumer of a per-slice density:
+three sigma paths, three diagnostics (`alpha_sn_check`, `compare_to_desi` x2,
+`plot_nz_cov_scaling` x2), one plot (`shapefit/plot_nz`). The only remaining
+`nbar_file`/`N*frac/V` code is in the TABLE GENERATORS that define those columns
+(`make_nz_slices`, `parse_desi_nz`) and in `load_nz_slices`, now used solely for
+geometry behind `_nz_slices_nx`.
+
+## §92 — restore the cosmology scaling of n-bar that §85 silently removed
+
+The first run of the regress harness since the build plan asked for it caught
+this immediately, which is the entire argument for having built it.
+
+`cov_nbar_per_slice` takes `V_bin`, but on the `NX total` branch it never used
+it -- the argument was computed by the caller at the SAMPLED cosmology and
+discarded. So from §85 the Fourier path's n-bar was frozen in DESI's fiducial
+frame:
+
+  - before §85:  n = N*frac/V(sampled)  -- cosmology-scaled, wrong normalisation
+  - §85..§91:    n = NX*alpha(N)        -- right normalisation, NO cosmology scaling
+
+Invisible at the fiducial, and it grows to tens of percent at the prior edges
+**with the sign flipping**: measured against the pre-§81 dump, QSO's sigma went
+-36% at lowOm and +64% at highOm; ELG2 -41%/+14%. A change advertised as a
+normalisation fix was silently altering how sigma responds to cosmology, which
+for a cosmology-conditioned emulator is the response being learned.
+
+`NX` is a COMOVING density in DESI's fiducial frame, NX = N_gal/V_fid. At
+another cosmology the same galaxies fill a different comoving volume, so
+
+    nbar(X) = NX * alpha(N) * V_fid/V(X)
+
+`_fid_volume_ratio` supplies that factor; `_fid_shell_chi3` caches the fiducial
+shell (chi_hi^3 - chi_lo^3) per tracer. Area-free by construction -- only the
+ratio is used and the sky fraction cancels -- so it never needs to know which
+footprint a caller assumed. This is a unit conversion, not a tuned factor: the
+old formula had the scaling right and the normalisation wrong, and this keeps
+both.
+
+`cosmo=None` means "already fiducial, do not rescale". The config path passes
+None deliberately: it fixes window and FKP volume at _FID by design and admits
+cosmology only through P + AP, so rescaling n-bar alone would make it
+internally inconsistent.
+
+### Verification (LRG2, sigma vs the pre-§81 cosmology-scaled reference)
+
+```
+cosmo        S91 frozen     S92 ratio
+fid             -6.60%       -6.60%     <- unchanged, ratio is 1 at fiducial
+lowOm          -15.57%       -8.17%
+highOm          +2.23%       -3.98%     <- sign flip gone
+spread          17.8 pp       5.1 pp
+```
+
+What is left is a near-uniform normalisation offset, which is what §85 claimed
+to be. Also verified: ratio == 1 at the fiducial to 2.6e-5 (the CLASS shooting
+residual, §66's scale, not a defect); `cosmo=None` returns exactly 1.0; and the
+config sigmas are IDENTICAL across §91 and §92 for all 8 cosmologies.
+
+Wired at the two cosmology-varying callers: `core.build_bao_likelihood` and
+`shapefit/core.py`. The config path and the plots are frame-fixed and unchanged.
+
+### §92 addendum — full-grid verification
+
+The entry above documented an LRG2 spot-check. The complete 6-tracer x
+8-cosmology dumps are now in, and they confirm it more strongly than the
+single tracer did.
+
+Spread of the change across the 8 cosmologies, measured against the pre-§81
+(cosmology-scaled) dump. A SMALL spread means the change is a normalisation;
+a large one means the cosmology response itself moved:
+
+```
+tracer        S91 frozen     S92 fixed
+BGS               9.0 pp        0.3 pp
+LRG1             13.8 pp        4.9 pp
+LRG2             17.8 pp        5.1 pp
+LRG3_ELG1        27.8 pp        7.9 pp
+ELG2             48.9 pp        5.2 pp
+QSO              99.7 pp        0.2 pp
+```
+
+QSO collapses from a 99.7-point swing (-36% at lowOm, +64% at highOm) to 0.2.
+
+**The control that makes this conclusive.** Isolating §92 inside shapefit, the
+change is EXACTLY +0.00% at `fid` *and* at `lowA`, and large at
+`lowOc`/`highOc`/`lowH`/`highH`. `lowA` varies only `ln10A_s` and `n_s`, leaving
+`omega_cdm`/`omega_b`/`h` fiducial -- so comoving distances are unchanged and the
+volume ratio is identically 1. `highA` (omega_cdm 0.1250) and `w0wa` show the
+small shifts expected. The correction fires exactly when the comoving volume
+moves and never otherwise, which is the definition it was derived from.
+
+Net effect of §81-§92 on shapefit: `sigma_qiso` -0.06% to -0.57% for
+BGS/LRG1/LRG2/LRG3/QSO, ELG2 -4.1% to -9.8%; z_eff under 0.02% throughout.
+On BAO fourier: BGS -0.4/-0.7%, LRG1 and LRG2 -3 to -9%, LRG3_ELG1 -5 to -13%,
+ELG2 -17 to -23%, QSO ~-3%. ELG2 leads both, consistent with the +17% density
+change §90 measured for it.
+
+### A methodology bug in the harness's own use
+
+The first shapefit "before" dump was INVALID and read +0.00% everywhere --
+nearly reported as "shapefit unaffected". `shapefit/core.py` imports
+`from desilike_emulator.bao import core`, falling back to an `importlib` load of
+`../bao/core.py` only on ImportError. That package resolves to the LIVE tree
+from anywhere, so a git-worktree checkout silently ran worktree-shapefit against
+live-bao; since `shapefit/core.py` itself was unchanged in the range, it compared
+HEAD with HEAD.
+
+Fix: a PYTHONPATH shim directory holding a `desilike_emulator` symlink to the
+worktree. Verified before rerunning by asserting `bao_core.__file__` resolves
+inside the worktree AND that `_fid_volume_ratio` is ABSENT there. `bao/`'s own
+harness was never affected -- it uses a plain `import core` with its directory
+first on sys.path, which is why it caught §92 in the first place.
+
+Anyone diffing shapefit across commits must use the shim. Two independent
+tells that something was wrong: both .npz files were byte-identical in size,
+and z_eff read +0.00% for the combined bin when the bao side already showed it
+moving -2.0%.
+
+## §94 — per-release N_tracers box, and the rename that made it unambiguous
+
+Two changes, committed separately so the mechanical one could be proven inert.
+
+### The N_tracers box was mismatched to the design space
+
+`(0.5, 1.5)` for every tracer was never derived; it was a symmetric default.
+Measured against bedcosmo's actual DR1 design (`design_args_dr1.yaml`, a simplex
+with `sum = 1`), it covers **86.6%** of designs -- not the ~70% a stale note
+claimed, because reading the per-class box bounds in isolation ignores that a
+class can only sit at its floor if the others absorb the slack. The achievable
+ranges are tighter than the raw bounds:
+
+```
+class   box alone      achievable     binding      ceiling set by
+BGS     0.537-1.572    0.537-1.572    box,box      TARGETS  (1/comp)
+LRG     0.378-1.443    0.425-1.443    sum,box      TARGETS  (1/comp)
+ELG     0.244-1.218    0.561-1.218    sum,box      BUDGET CAP
+QSO     0.348-1.144    0.348-1.144    box,box      TARGETS  (1/comp)
+```
+
+Two real gaps: BGS runs to 1.572 (8.0% of designs above our 1.5) and QSO down
+to 0.348 (5.9% below our 0.5). ELG2 and QSO also waste range -- trained to 1.5,
+never designed above 1.218 / 1.144.
+
+**The ceilings are physical.** For BGS/LRG/QSO the design maximum equals
+`1/comp` exactly -- "observe every target of that class" -- verified: the upper
+bound in absolute counts is 476,856 against 476,972 BGS targets (ratio 1.000),
+and likewise for LRG and QSO. ELG is the exception: its target pool is
+9,503,845 = **1.166x the entire observing budget**, so full completeness is
+unreachable and its 1.218 comes from a policy cap at 50% of budget (structural
+max 1.901 if that cap were lifted). All targets together are 1.94x the budget,
+which is why this is an allocation problem at all.
+
+The FLOORS are not physical: `design.py:51` hard-codes
+`DEFAULT_LOWER = [0.02, 0.1, 0.1, 0.1]`, round numbers with no derivation. So
+`high` is anchored tight to target availability and `low` carries margin.
+
+New DR1 factors: BGS (0.45, 1.60), LRG1/2/3 (0.35, 1.50), LRG3_ELG1
+(0.50, 1.45), ELG2 (0.45, 1.35), QSO (0.28, 1.25). Roughly sample-neutral --
+BGS/LRG widen ~15%, ELG2 narrows ~10% -- since the draw is UNIFORM, so a wider
+box at fixed sample count only thins density.
+
+### Why it needed a schema, not just new numbers
+
+The factors are NOT release-portable, which the old header explicitly (and
+wrongly) claimed. Only the ANCHOR is per-release; the FACTORS follow bedcosmo's
+design bounds, and `design_args_dr2.yaml` differs in every class but ELG, QSO
+at both ends. So they live under a per-release block:
+
+```yaml
+BGS:
+  data_release:
+    dr1:
+      low: 0.45
+      high: 1.60
+```
+
+`get_tracer_config(..., data_release=)` SELECTS and **raises** on a missing
+release -- never merges-with-fallback, because a silently-wrong N box is the
+S58 failure mode. The loader validates every release entry has both keys with
+low < high, so a half-filled block fails at import. `ntracers_range` now
+threads the release through; omitting it previously returned the raw mapping.
+
+Scoped to `low`/`high` deliberately: they have **2** consumer sites, both in
+util.py. `area_deg2` and `z_eff` are equally release-dependent but have **89**,
+plus 19 direct `TRACER_CONFIGS[...]` accesses that bypass the resolver
+entirely. Moving those is a real refactor and does not belong days before a
+regeneration; it is queued behind it, guarded by the regress harness.
+
+### LRG3_ELG1 needs no box change, and cannot be fixed by one
+
+Its TOTAL N multiple spans only 0.899-1.299 -- 0.0% outside the current box,
+because it sums two anti-correlated classes whose extremes cancel. But its
+internal mix does move: the LRG3 fraction runs 0.182-0.609 against a nominal
+0.383, and only **6.8%** of designs sit within 2% of nominal. A single
+`N_tracers` input cannot express that; it needs a second input per parent,
+which S87/S88's ELG1 and LRG3p tables now make possible. Open.
+
+## §95 — area_deg2 and z_eff move under the release block too
+
+S94 scoped only `low`/`high` per release, on the reasoning that `area_deg2` and
+`z_eff` had "89 consumers plus 19 resolver bypasses" and could wait. **That
+count was wrong.** It came from grepping raw string occurrences -- 442 of them,
+mostly local variables and function kwargs named `area_deg2`/`z_eff`. The real
+config reads are 4 direct + 24 via the resolver, and 17 call sites needed a
+release threaded. An order of magnitude smaller, so the deferral was based on a
+bad measurement.
+
+Both keys are release-dependent for the same reason `low`/`high` are: DR2 has a
+larger footprint and a different n(z), hence a different z_eff. They now live
+under `data_release:` beside the box, and `get_tracer_config` RAISES without a
+release rather than returning a config silently missing them.
+
+`area_deg2` is optional per release: the gated Lya block has no footprint,
+because Lya bypasses the n(z)/footprint derivation entirely.
+
+### The under-count that mattered, and how it surfaced
+
+The first dump attempt died at `config_space.py:802` with `KeyError: 'z_eff'`.
+`self.cfg` there came from `TRACER_CONFIGS[tracer]` -- the WHOLE dict -- with
+the key read happening ~70 lines later. The grep that found "4 bypasses" only
+matched `TRACER_CONFIGS[...][` (immediate key reads), so it missed every
+whole-dict access. There were **14**, and all 14 would have raised at runtime:
+config_space x5, comparison_plots x3, alpha_sn_check, desi_reference,
+plot_nz_cov_scaling, regress_sigmas, test_cov_scaling, mcmc.
+
+All are now on `get_tracer_config(..., data_release=)`: threaded where the
+caller has a release (XiSigmaGenerator, _sweep_fourier, the four builders),
+pinned to "dr1" with a stated reason where the module is DR1-only by
+construction (config_space's header, desi_reference's _DR1_DIR, the DR1 grids
+in the regress harnesses and plot tools). `util.tracer_area` also read
+`area_deg2` straight off TRACER_CONFIGS and now resolves through the release,
+keeping its documented Lya fallback.
+
+Three self-inflicted bugs on the way, all caught before the dump: a duplicated
+`data_release=` kwarg, a NameError from using a release not in scope, and a
+positional-after-keyword syntax error from inserting a kwarg mid-call.
+
+### Verification
+
+Moving a value between yaml nesting levels cannot change a number, so the bar
+is identity, not agreement: the full regress dump is **all 1024 arrays
+bit-identical** to head_S92. 24 modules import; tests 2/2;
+`XiSigmaGenerator('LRG2').sigma_triplet()` returns DV 0.132431, matching S90's
+recorded 0.13243.
+
+Nothing is left at the tracer level that varies by release. What remains there
+-- tracer_type, zrange, fkp_p0, bias_recon, smoothing_scale, f_interloper,
+analyses -- is release-invariant physics.
+
+## §96 — four silent fallbacks made audible, and one pivot lookup instead of two
+
+Prompted by "wouldn't it be better to properly fail than silently fall back".
+It was, and there were more of them than the question implied.
+
+**Two functions, opposite policies, same lookup.**
+`core._fkp_p0_for_tracer` RAISED on a missing `fkp_p0` ("there is no safe
+default -- a wrong pivot silently biases z_eff"), while
+`fkp_analytic_cov.fkp_p0_for` WARNED and fell back to `P_FKP_DEFAULT` = LRG's
+1e4, i.e. it would weight a BGS or ELG sample at 1.4-2.5x its correct pivot.
+The lenient one served the covariance. Both raise now, and `core` delegates, so
+there is genuinely ONE definition -- which `config_space._pivot`'s docstring
+had already claimed there was.
+
+**Three warnings that could never be seen.** `warnings.warn` is useless here:
+  - `config_space.py:42` calls `filterwarnings("ignore")` -> `fkp_p0_for`'s
+    warning was dead in its main consumer;
+  - `core.py:32` does the same -> `_desi_nz_geometry`'s two "falling back to
+    nbar_file" warnings were swallowed BY THEIR OWN MODULE.
+All now print to stderr, matching the S90 precedent.
+
+**A promise the code did not keep.** `cov_nbar_per_slice`'s docstring says the
+fallback "says so, because a silent fallback here is the S58 failure mode". It
+returned a source string that BOTH call sites captured as `_nbar_src` and threw
+away. Both now report a non-NX source.
+
+### What that was hiding
+
+With `LRG2_desi_nx.csv` removed, the pipeline returned DV 0.133191 against the
+correct 0.132431 -- **0.57% wrong, silently**. No crash, no warning, just a
+plausible number. Precisely the S58 failure mode, inside the code that
+documents S58. It now emits four warnings across the z_eff and covariance
+paths.
+
+Graceful degradation is KEPT rather than converted to a raise: a partial
+dataset is a supported state. The fix is to honour what the docstring promised.
+
+### Verification
+
+All 1024 regress arrays bit-identical to head_S92 -- the right bar, since
+logging and a delegation cannot move a number. Fallback behaviour tested by
+hiding a table and confirming the warnings fire, then restoring it.
+
+### Follow-on, not done here
+
+`fkp_p0` in tracers.yaml is now REDUNDANT for 6 of 7 tracers: the measured
+`p0_eff` column reproduces 7000/10000/4000/6000 exactly, to machine precision.
+Only LRG3_ELG1 differs, and there the yaml's 10000 is not even inside the
+measured 11299-19501 -- so the covariance uses a pivot that is wrong for that
+bin while z_eff uses the right one. `_fkp_integrals` computes
+`1/(1 + n*P_FKP)**2` with n an array, so it ALREADY broadcasts a per-slice
+pivot (verified: constant-array == scalar to 1e-12). Dropping `fkp_p0`
+altogether is therefore mostly mechanical, but it is not a pure refactor --
+it would change LRG3_ELG1's sigma, which is the point.
+
+## §97 — the FKP pivot is measured, not configured; `fkp_p0` deleted
+
+`tracers.yaml`'s `fkp_p0` was a hand-entered transcription of a quantity the
+vendored tables already contain. It is gone; `fkp_p0_for` now back-solves it
+from DESI's own weights:
+
+    P0 = mean[(1 / w_fkp_mean - 1) / nbar_total]
+
+inverting `WEIGHT_FKP = 1/(1 + n P0)` against the density the covariance
+actually uses (`nbar_total`, S87). Flat per tracer to <1%, and it recovers
+Eq. (8.4) from the data: BGS 7000, LRG 10000, ELG 4000, QSO 6000.
+
+### The seventh bin was wrong, and S82's diagnosis of it was too
+
+LRG3_ELG1 carried `fkp_p0: 1.0e4` commented "DESI 2024 II Eq. (8.4)". Eq. (8.4)
+tabulates SINGLE tracers and says nothing about a combined bin -- the value was
+copied from LRG by analogy with the `area_deg2` note directly above it ("take
+LRG's, since LRG dominates; the two differ by 3% so the choice is not
+consequential"). That reasoning is sound for area, where the candidates differ
+by 3%. Carried onto the pivot it is not: the measured value is 6244, so 10000
+was ~60% high, and the covariance's w_fkp was ~30% off for that bin.
+
+The combined-tracer paper (arXiv:2508.05467 Eq. 4.13) prescribes P0 = 6000
+against a bias-weighted n_eff. Back-solving against our `nbar_total` returns
+6244 -- the same prescription in our density convention, 4% apart. That
+agreement is the check that this is the right quantity, not a convenient one.
+
+**S82's headline was an artefact.** "The pivot is z-dependent, 11335->18679, no
+scalar can represent it at ANY value" came from dividing by `nbar_desi_nx` --
+the FKP-weighted mean ACROSS parents -- rather than the summed `nbar_total`.
+Against the right density it is flat: 6208-6268, +-0.5%. The bin was never
+anomalous; the density convention was.
+
+z_eff is unaffected: it uses its own slice-calibrated pivot
+(`_desi_nz_geometry`: `p0e = (1/w_fkp_mean - 1)/nx`), which reproduces
+`w_fkp_mean` identically by construction and never depended on `fkp_p0`. Both
+parameterisations give the same z_eff -- LRG3_ELG1 -0.077% (current) vs -0.058%
+(nbar_total + flat) against DESI's 0.930.
+
+### Verification -- and NOT bit-identical, which the display hid
+
+```
+tracer      max |relative delta|      sigma(DV) change
+LRG3_ELG1        1.1e-02              -0.22% to -0.50%
+LRG2             4.5e-14              +0.000%
+ELG2             3.3e-14              +0.000%
+LRG1             3.2e-14              +0.000%
+BGS              3.9e-15              +0.000%
+QSO              2.8e-15              +0.000%
+```
+
+The six single-parent bins are NOT bit-identical: the back-solve returns
+7000.000000001148 rather than 7000, a ~1e-12 round-trip through the CSV's
+stored precision, propagating to <=4.5e-14 in sigma. Physically nothing, but it
+is not zero, and reporting it as "identical" would have been wrong.
+
+**The sigma impact is modest.** A 30% error in w_fkp moves sigma(DV) by only
+0.22-0.50%, because the pivot enters through 1/(1 + nP0) and V_eff is
+insensitive to it. This is a consistency fix, not a large correction -- an
+earlier note in this session called it "larger than most things we've chased",
+which the measurement does not support.
+
+`s97_check.npz` becomes the regress baseline, since the 4e-14 float drift would
+otherwise make every future exact-equality check fail against head_S92.
+
+Guards, following S96: a missing table raises FileNotFoundError naming the
+rebuild command (the pivot is measured, so there is deliberately no fallback);
+missing columns raise; and a >5% spread prints to stderr saying the returned
+scalar is an average rather than a description -- the honest form of S82's
+concern, quiet for every DR1 bin.
+
+## §98 — delete the `overrides` mechanism; tracers.yaml audit
+
+Asked "is anything else dead in tracers.yaml". One thing was.
+
+`overrides` was documented in the header and implemented in
+`get_tracer_config` (a `cfg.update()` merge keyed `<analysis>` then
+`<analysis>/<release>`), and **no tracer ever populated it** -- zero
+`overrides:` blocks, so the path had never once executed. It is also now
+redundant: the per-release half is what `data_release:` does since S94/S95, and
+the per-analysis half has no use case, because the bins that actually differ
+between analyses (LRG3_ELG1 for bao, LRG3 for full shape) are separate blocks
+by design. An untested path that silently merges config is the S58 failure mode
+with the safety catch removed.
+
+Removed: the merge loop, the header entry, and a stale pointer at line 51 that
+directed future DR2 z_eff values into `overrides` -- now repointed at a `dr2:`
+block under `data_release:`, which is where they belong.
+
+The freed header slot documents `supported`, which was undocumented. That
+mattered: it is what makes the eight Lya keys (`bF0`, `gamma_bF`,
+`Sigma_perp_fid`, `Sigma_par_fid`, `f_fid`, `sigma8_fid`, `sigma2_pix`,
+`delta_r_pix`) look dead. They are not -- they feed the Lya provider at
+`bao/core.py:1429-1450`, real code reachable only once Lya is un-gated.
+
+### Audit result
+
+Nothing else is unreferenced. `components` and `nz_slices` are live (LRG3
+only); `analyses`, `zrange`, `tracer_type`, `f_interloper`, `z_error_kms`,
+`smoothing_scale` all have real consumers -- `smoothing_scale` reaches the
+reconstruction kernel at `core.py:983`.
+
+One smell left, NOT fixed here: `bias_recon` does two jobs. In bao it is
+`b1_recon`, DESI's committed analysis-stage bias, deliberately distinct from
+the HOD-derived `b1` (`core.py:1536-1543`). In shapefit it is read as plain
+`b1` at five sites -- and shapefit is pre-recon by construction, so it borrows
+a recon-named key as a linear bias. Defensible (it IS a linear bias estimate)
+but misleading; a rename to `b1_fid` touches five call sites and is cosmetic,
+so it is left for its own change.
+
+### Verification
+
+All 1024 regress arrays bit-identical to the S97 baseline -- the right bar,
+since deleting a never-executed path cannot move a number. Tests 2/2. Spot-
+checked that the four behaviours adjacent to the removed loop still hold:
+LRG3/shapefit resolves, `tracers_for('shapefit')` filters, the bao-only
+combined bin is rejected for shapefit, and the gated Lya bin raises.
+
+## §99 — the regress harnesses pin BLAS threads, because unpinned they lie
+
+The S98 merge review needed a shapefit regress dump at HEAD (the last coverage
+gap: §94-§98 touched `shapefit/core.py` and `fkp_p0_for`, and only bao had been
+re-verified). It came back **FAIL: 527 of 1158 arrays differ**. It was a false
+alarm, and the harness itself caused it.
+
+### The tell
+
+The deltas were ≤2.2e-10 relative, but the *partition* was the informative
+part, not the size:
+
+| group | differ | max rel |
+|---|---|---|
+| `C_gauss`, `C_SSC`, `C_total` | 0/144 | 0 |
+| `z_eff`, `obs_k`, `obs_ells`, `obs_flatdata` | 0/198 | 0 |
+| mean pipeline (`qiso`, `qap`, `f_sigmar`, `m`, fids) | 0/240 | 0 |
+| `cov_phys` + the 10 sigma/rho targets | 527/528 | 2.2e-10 |
+
+Bit-identical covariances rule out the FKP/pivot path outright -- a pivot shift
+reaches `C_gauss` before it reaches anything else, so §97's LRG3_ELG1
+correction demonstrably never touches shapefit (which bins LRG3 and ELG2
+separately, and their measured pivots round-trip to the old configured values).
+Everything that moved sat strictly *downstream* of the covariance, in the
+Fisher. And `sigma` moved ~1e-12 while `rho_f_sigmar_m` moved 2.2e-10: a ~300x
+amplification, the signature of a tiny perturbation projected through the
+known near-degenerate f_sigmar-m direction.
+
+### Two wrong answers before the right one
+
+First guess was run-to-run nondeterminism. **Refuted**: a second dump at
+identical HEAD was 0/1158 bit-identical. Second guess was a changed Fisher
+input; a probe of S92 vs HEAD (git worktree + a `desilike_emulator` symlink
+shim, since the package otherwise resolves to the live tree and the worktree
+silently runs HEAD's `bao/core.py`) showed every input identical at full float
+precision -- N_tracers, z_eff, `f_sigmar_fid`, `m_fid`, area, and all 21
+parameters' values, priors, refs and fixed flags. Same covariance, same inputs,
+different answer.
+
+### Cause
+
+Thread pinning existed only in `core._worker_init` (`core.py:2419`), which runs
+in the **generators' spawn pool**. `regress_sigmas.py` runs single-process in
+the parent and never pinned anything, so it inherited whatever the shell had.
+Multi-threaded BLAS reduction order is not fixed, and measured directly on one
+cell:
+
+```
+threads=1      cov_phys[0,0] = 0.0007517152310799642   (reproducible)
+threads=1      cov_phys[0,0] = 0.0007517152310799642
+threads=4      cov_phys[0,0] = 0.0007517152310711727
+threads=8      cov_phys[0,0] = 0.0007517152310833671
+unset          cov_phys[0,0] = 0.0007517152310799684
+```
+
+~1e-10 of spread, which is the entire discrepancy. Re-running the seven-commit
+bisect *with threads pinned* collapses it: `fd32122` (S92) and `3c86f15` (HEAD)
+produce bit-identical `cov_phys`. shapefit is insulated from §94-§98 after all.
+
+This matters beyond one false alarm. The harness exists to catch silent numeric
+shifts across dependency upgrades, and a dep upgrade routinely changes BLAS
+threading defaults -- so the noise was landing exactly on the signal, and any
+real ~1e-10 regression would have been indistinguishable from it.
+
+### The fix
+
+Both `bao/regress_sigmas.py` and `shapefit/regress_sigmas.py` pin the four
+thread variables at module top, **before `import numpy`** (BLAS reads them at
+load time; setting them afterwards is a silent no-op). Forced rather than
+`setdefault`, since an inherited `OMP_NUM_THREADS` is precisely what defeats
+the pin -- but it prints to stderr when it overrides a conflicting value,
+because overriding the caller's environment silently is its own §96 trap.
+
+### Verification
+
+`threadpoolctl` confirms all four pools at 1 thread in-process under an
+inherited `OMP_NUM_THREADS=4`, and the NOTE fires only on conflict. Compare of
+the two HEAD dumps still reports 1158/1158 bit-identical.
+
+The claim that shapefit is insulated from §94-§98 is then verified at full
+scale, not just on the one bisect cell: pinned dumps at `fd32122` (S92) and at
+HEAD, over all 6 tracers x 8 cosmologies, compare **1158/1158 bit-identical**.
+That closes the last coverage gap in the S98 merge review -- bao identity
+checks had been reported as though they covered both pipelines, and until now
+they did not.
+
+### Not done here
+
+Two intermediate commits (`d3920f7`, `70ebfcc`) show a pinned `cov_phys` that
+differs from the baseline both endpoints share -- consistent with a transient
+mid-series state, since `d3920f7` moved the N_tracers box before §95/§96
+finished wiring `data_release` through `shapefit/core.py`. The endpoints match,
+so it does not gate the merge, and it is recorded rather than assumed away.

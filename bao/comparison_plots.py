@@ -42,7 +42,7 @@ import core
 import config_space as cc
 import fourier_space
 import desi_reference as desi_ref
-from util import TRACER_CONFIGS, plots_dir
+from util import TRACER_CONFIGS, get_tracer_config, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _HERE = Path(__file__).resolve().parent
@@ -94,7 +94,7 @@ def _fourier_bundle_fisher(tracer):
     (precision = Mᵀ cov_ξ⁻¹ M, M = W·H_Hankel — same path as mcmc --space fourier --cov bundle)."""
     from mcmc import _load_bundle, _build_M, _precision_from_cov_xi
 
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if _is_sparse(tracer) else "qparqper"
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
     info = core.build_bao_likelihood(
@@ -142,7 +142,7 @@ def _gather_config():
     out = {}
     for t in _TRACERS:
         print(f"== {t} (config) ==", flush=True)
-        cfg = TRACER_CONFIGS[t]
+        cfg = get_tracer_config(t, data_release="dr1")
         apmode = "qiso" if _is_sparse(t) else "qparqper"
         theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
         info = core.build_bao_likelihood(
@@ -303,7 +303,7 @@ def _corr(C):
 
 def _covs(tracer):
     """(Cg, Cb): Grieb Gaussian and DESI bundle cov on the bundle observable grid."""
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if _is_sparse(tracer) else "qparqper"
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
     info = core.build_bao_likelihood(

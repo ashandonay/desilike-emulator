@@ -49,6 +49,7 @@ from util import (
     get_tracer_config,
     latin_hypercube_samples,
     ntracers,
+    nz_slices_path,
 )
 
 warnings.filterwarnings("default")
@@ -113,15 +114,15 @@ ANISO_EMULATOR_TARGET_NAMES = [
 _RHO_CLIP = 1.0 - 1e-6
 
 
-def is_iso_tracer_bin(tracer_bin: str, dataset: str = "dr1") -> bool:
+def is_iso_tracer_bin(tracer_bin: str, data_release: str = "dr1") -> bool:
     """True if the tracer uses a single isotropic σ(DV/rd) emulator output."""
-    iso = ISO_TRACER_BINS_BY_DATASET.get(dataset, ISO_TRACER_BINS_BY_DATASET["dr1"])
+    iso = ISO_TRACER_BINS_BY_DATASET.get(data_release, ISO_TRACER_BINS_BY_DATASET["dr1"])
     return tracer_bin in iso
 
 
-def emulator_target_names(tracer_bin: str, dataset: str = "dr1") -> List[str]:
+def emulator_target_names(tracer_bin: str, data_release: str = "dr1") -> List[str]:
     """Emulator output names for a tracer bin and DESI release."""
-    if is_iso_tracer_bin(tracer_bin, dataset):
+    if is_iso_tracer_bin(tracer_bin, data_release):
         return list(ISO_EMULATOR_TARGET_NAMES)
     return list(ANISO_EMULATOR_TARGET_NAMES)
 
@@ -129,10 +130,10 @@ def emulator_target_names(tracer_bin: str, dataset: str = "dr1") -> List[str]:
 def fisher_sigmas_to_emulator_targets(
     sigmas: Dict[str, float],
     tracer_bin: str,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> List[float]:
     """Map a Fisher σ dict to the per-tracer emulator training/inference vector."""
-    if is_iso_tracer_bin(tracer_bin, dataset):
+    if is_iso_tracer_bin(tracer_bin, data_release):
         return [float(sigmas["DV_over_rs"])]
 
     sig_dh = float(sigmas["DH_over_rs"])
@@ -164,11 +165,13 @@ _NMU_DISP = 64
 # not a fit: DESI pipelines use alpha in [20, 50]; 50 is conservative.
 _N_RAND_OVER_N_DATA = 50.0
 
-# Path to the cosmology-independent n(z) slices produced by parse_desi_nz.py.
-_NZ_SLICES_DIR = Path.home() / "data" / "desi" / "nz_slices"
+# n(z) slice tables now live in the REPO (data/{data_release}/nz_slices), resolved by
+# util.nz_slices_path. The old ~/data/desi/nz_slices constant is gone: a second
+# copy is how a machine silently disagrees with what is version-controlled (S80).
 
 
-def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _load_nz_slice_fractions(tracer_bin: str, *, data_release: str
+                             ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load the cosmology-independent n(z) shape for a tracer.
 
     Returns (z_centers, z_edges, slice_fraction, nbar_file) where:
@@ -177,10 +180,12 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
         redshift slice, computed at the file's effective area. This is the
         actual local density of the tracer at that redshift, suitable for
         FKP weighting and shot-noise calculation.
+
+    `data_release` is keyword-only and REQUIRED (S62c): every caller already threads
+    a release for `ntracers`/`tracer_area`, so a missing one here is a bug, and
+    a TypeError at the call site is the cheap way to find it.
     """
-    path = _NZ_SLICES_DIR / f"{tracer_bin}_nz_slices.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"Missing n(z) slice file for {tracer_bin}: {path}")
+    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", data_release)
     df = pd.read_csv(path)
     df = df[df["slice_fraction"] > 0.0].reset_index(drop=True)
     z_lo = df["zlow"].to_numpy(dtype=np.float64)
@@ -194,8 +199,9 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
     return z_mid, np.column_stack([z_lo, z_hi]), frac, nbar_file
 
 
-# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), per tracer BIN
-# (values live in tracers.yaml as `fkp_p0`; DESI 2024 III Table 2).
+# FKP pivot power P_0 used in the weight w = 1/(1 + n̄ P_0), per tracer BIN.
+# Measured from the vendored `*_desi_nx.csv` tables via fkp_p0_for (S97); for
+# single-parent bins this recovers DESI 2024 II Eq. (8.4) / III Table 2.
 # These are DESI's DR1 analysis choices (KP3 / Adame+24), not free parameters:
 # the weight definition is part of how the published measurements — and their
 # quoted z_eff — are constructed.
@@ -212,26 +218,25 @@ def _load_nz_slice_fractions(tracer_bin: str) -> Tuple[np.ndarray, np.ndarray, n
 Z_EFF_CONVENTION = "desi_eq21"
 
 
-def _fkp_p0_for_tracer(tracer_bin: str) -> float:
-    """FKP pivot P0(k=0.14) for a tracer BIN, from tracers.yaml.
+def _fkp_p0_for_tracer(tracer_bin: str, data_release: str = "dr1") -> float:
+    """FKP pivot P0 for a tracer BIN, measured from `*_desi_nx.csv` (S97).
 
     Per BIN, not per tracer_type: DESI 2024 III Table 2 gives LRG1 and LRG2
-    8.9e3 but LRG3 8.4e3, so a type-keyed lookup cannot represent them. The
-    values are DESI's own, "rounded numbers taken from the DR1 P0(k)
-    measurements" at k = 0.14 h/Mpc.
+    8.9e3 but LRG3 8.4e3, so a type-keyed lookup cannot represent them. For
+    single-parent bins the measured values recover DESI 2024 II Eq. (8.4);
+    the combined LRG3_ELG1 bin is measured rather than transcribed.
     """
-    cfg = get_tracer_config(tracer_bin)
-    p0 = cfg.get("fkp_p0")
-    if p0 is None:
-        raise KeyError(
-            f"tracers.yaml entry for {tracer_bin!r} has no `fkp_p0`. It is "
-            "DESI 2024 III Table 2's P0(k=0.14) and there is no safe default "
-            "-- a wrong pivot silently biases z_eff."
-        )
-    return float(p0)
+    # Delegates to fkp_analytic_cov.fkp_p0_for so there is ONE definition of
+    # this lookup (S96). There were two, with OPPOSITE failure policies: this
+    # one raised, the other warned and fell back to LRG's pivot -- and that
+    # warning was swallowed by config_space's filterwarnings("ignore"). Both
+    # raise now. Safe import: fkp_analytic_cov is numpy-only and never imports
+    # core, so there is no cycle.
+    from fkp_analytic_cov import fkp_p0_for
+    return fkp_p0_for(tracer_bin, data_release=data_release)
 
 
-def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
+def _nz_scale_factor(tracer_bin: str, n_tracers, data_release: str = "dr1") -> float:
     """alpha = N_tracers / N_dataset, the uniform rescaling of n(z).
 
     The n(z) slice files record the DESI sample at its own size, so forecasting
@@ -243,14 +248,214 @@ def _nz_scale_factor(tracer_bin: str, n_tracers, dataset: str = "dr1") -> float:
     """
     if n_tracers is None:
         return 1.0
-    ref = float(ntracers(tracer_bin, dataset))
+    ref = float(ntracers(tracer_bin, data_release))
     if not np.isfinite(ref) or ref <= 0.0:
         return 1.0
     return float(n_tracers) / ref
 
 
+_DESI_NX_CACHE: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
+
+
+def _desi_nz_geometry(tracer_bin: str, nbar_file, *, data_release: str):
+    """(nx, S1) for a tracer's slices, from DESI's own random catalogues.
+
+    `{tracer}_desi_nx.csv` is built from the v1.5 randoms and aggregated onto
+    this tracer's slice edges:
+
+      nbar_desi_nx  weighted mean of the `NX` column = n(z) <C_assign>(n_tile)
+                    (2411.12020 Eq. 8.3), the density DESI's own `WEIGHT_FKP`
+                    is built from. A DENSITY: scales with N_tracers.
+      S1_weight     sum of the `WEIGHT` column (completeness x z-failure x
+                    imaging systematics, Eqs. 8.1-8.2). Mask, tiling and
+                    per-region normalization -- survey GEOMETRY, fixed in N.
+
+    Both are randoms-derived: selection function, not clustering. See
+    shapefit CHANGELOG S51-S53.
+
+    Returns `(nbar_file, None)` with a warning when no table exists, so callers
+    fall back to the density form. LRG3_ELG1 (the BAO combined bin) has none --
+    it needs the LRG+ELG_LOPnotqso catalogue, which was never extracted.
+    """
+    # Cache key carries the release (S62c): keyed on tracer alone, a DR2 run
+    # after a DR1 run in the same process would have been served DR1 rows.
+    cache_key = (str(data_release), tracer_bin)
+    if cache_key not in _DESI_NX_CACHE:
+        try:
+            path = nz_slices_path(f"{tracer_bin}_desi_nx.csv", data_release)
+        except FileNotFoundError:
+            path = None
+        entry = None
+        if path is not None:
+            df = pd.read_csv(path)
+            nx = df["nbar_desi_nx"].to_numpy(dtype=np.float64)
+            s1 = df["S1_weight"].to_numpy(dtype=np.float64)
+            # p0_eff (S82): DESI's OWN FKP pivot, back-solved per object from
+            # their WEIGHT_FKP and averaged per slice. Absent in pre-S82 tables,
+            # in which case callers fall back to the scalar tracers.yaml pivot.
+            # CALIBRATED per-slice pivot: the one that reproduces DESI's own
+            # slice-mean FKP weight when combined with this file's <NX>.
+            #
+            #     p0 = (1/<w_fkp> - 1) / <NX>
+            #
+            # NOT the `p0_eff` column, which back-solves per object and then
+            # averages. That was S83's choice and it is wrong for MIXED samples
+            # (S84): <NX> is WEIGHT*WEIGHT_FKP-weighted while a per-object <P0>
+            # is WEIGHT-weighted, and in a mixed bin NX and P0 are correlated
+            # within the slice, so 1/(1+<NX><P0>) != <1/(1+NX P0)>. It cost
+            # LRG3_ELG1 -2.370% where this form gives -0.077%.
+            #
+            # For single-tracer bins the two agree exactly (ratio 1.000), since
+            # w_fkp is then a deterministic function of NX.
+            ntot = (df["nbar_total"].to_numpy(dtype=np.float64)
+                    if "nbar_total" in df.columns else None)
+            p0e = None
+            if "w_fkp_mean" in df.columns:
+                wfm = df["w_fkp_mean"].to_numpy(dtype=np.float64)
+                if np.all(np.isfinite(wfm)) and np.all(wfm > 0) and np.all(wfm < 1):
+                    p0e = (1.0 / wfm - 1.0) / nx
+            ok = (nx.size == len(nbar_file) and np.all(np.isfinite(nx))
+                  and np.all(nx > 0) and np.all(np.isfinite(s1))
+                  and np.all(s1 > 0))
+            if ok and p0e is not None:
+                ok = np.all(np.isfinite(p0e)) and np.all(p0e > 0)
+                if not ok:
+                    warnings.warn(f"{path.name}: non-positive p0_eff; ignoring it")
+                    p0e, ok = None, True
+            if ok:
+                entry = (nx, s1, p0e, ntot)
+            else:
+                # stderr, not warnings.warn: this module calls
+                # filterwarnings("ignore") at import (l.32), so a warning here
+                # is swallowed by its OWN module (S96).
+                print(f"WARNING {path.name}: {nx.size} rows vs "
+                      f"{len(nbar_file)} slices, or non-positive values; "
+                      "falling back to nbar_file.", file=sys.stderr, flush=True)
+        _DESI_NX_CACHE[cache_key] = entry
+    entry = _DESI_NX_CACHE[cache_key]
+    if entry is None:
+        print(f"WARNING no DESI n(z) geometry table for {tracer_bin!r}; z_eff "
+              "falls back to `nbar_file`, which runs 1.19-2.37x high and "
+              "degrades agreement with DESI's published z_eff (S53).",
+              file=sys.stderr, flush=True)
+        return np.asarray(nbar_file, dtype=np.float64), None, None, None
+    return entry
+
+
+def _fid_volume_ratio(tracer_bin: str, cosmo, data_release: str):
+    """V_fid / V(cosmo) per slice -- 1.0 when `cosmo` is None (S92).
+
+    DESI's `NX` is a COMOVING density measured in their fiducial frame, so it
+    carries that frame's volume: NX = N_gal / V_fid. Forecasting at another
+    cosmology the same galaxies fill a different comoving volume, so
+
+        nbar(X) = NX * alpha(N) * V_fid / V(X).
+
+    Dropping the ratio -- which S85 did, by handing `V_bin` to a branch that
+    ignores it -- freezes n-bar in the fiducial frame. That is invisible at the
+    fiducial and grows to tens of percent at the prior edges, with the SIGN
+    FLIPPING between low and high Om (S92 measured QSO sigma at +63% for highOm).
+    The old `N*frac/V` had this scaling right and its normalisation wrong; this
+    keeps DESI's normalisation AND the scaling.
+
+    `cosmo=None` means "already in the fiducial frame, do not rescale" -- the
+    config path evaluates its geometry at _FID by design, so it passes None and
+    is unaffected.
+    """
+    if cosmo is None:
+        return 1.0
+    _, z_edges, _, _ = _load_nz_slice_fractions(tracer_bin, data_release=data_release)
+    chi_lo = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 0]),
+                        dtype=np.float64)
+    chi_hi = np.asarray(cosmo.comoving_radial_distance(z_edges[:, 1]),
+                        dtype=np.float64)
+    chi3 = chi_hi ** 3 - chi_lo ** 3
+    return _fid_shell_chi3(tracer_bin, data_release) / np.maximum(chi3, 1e-30)
+
+
+_FID_CHI3_CACHE: Dict[Tuple[str, str], np.ndarray] = {}
+
+
+def _fid_shell_chi3(tracer_bin: str, data_release: str) -> np.ndarray:
+    """(chi_hi^3 - chi_lo^3) per slice at DESI's FIDUCIAL cosmology (S92).
+
+    Area-free on purpose: only the RATIO against the sampled cosmology is ever
+    used, and the sky fraction cancels in it, so this never has to know which
+    footprint a caller assumed.
+    """
+    key = (tracer_bin, data_release)
+    if key not in _FID_CHI3_CACHE:
+        _, z_edges, _, _ = _load_nz_slice_fractions(tracer_bin, data_release=data_release)
+        cosmo_fid = get_cosmo(("DESI", dict(PARAM_DEFAULTS)))
+        chi_lo = np.asarray(cosmo_fid.comoving_radial_distance(z_edges[:, 0]),
+                            dtype=np.float64)
+        chi_hi = np.asarray(cosmo_fid.comoving_radial_distance(z_edges[:, 1]),
+                            dtype=np.float64)
+        _FID_CHI3_CACHE[key] = chi_hi ** 3 - chi_lo ** 3
+    return _FID_CHI3_CACHE[key]
+
+
+def cov_nbar_per_slice(tracer_bin: str, frac, V_bin, n_tracers, *,
+                       data_release: str = "dr1", cosmo=None):
+    """Per-slice comoving density for the COVARIANCE path (S85).
+
+    Returns (nbar, source) with source in {"NX", "N*frac/V"}.
+
+    Until S85 the covariance built its own density as `N_tracers * frac / V`,
+    a VOLUME AVERAGE over the nominal footprint, while z_eff used DESI's `NX`
+    = n(z)<C_assign> -- the LOCAL density their own weights are built from.
+    Two densities for one sample: z_eff said one thing, the shot noise and FKP
+    weighting another. S54 measured the gap at 0.63-1.01 per tracer.
+
+    Prefers NX, scaled to the requested N by the same `_nz_scale_factor` z_eff
+    uses, so both halves now describe the same sample. Exactly linear in
+    N_tracers, which `config_space` relies on when it caches `nbar_per_N`.
+
+    Falls back to `N*frac/V` when a tracer has no NX table, so a partial
+    data_release degrades to the old behaviour rather than raising -- and says so,
+    because a silent fallback here is the S58 failure mode.
+    """
+    frac = np.asarray(frac, dtype=np.float64)
+    V_bin = np.asarray(V_bin, dtype=np.float64)
+    fallback = (float(n_tracers) * frac) / np.maximum(V_bin, 1.0)
+
+    _, _, _frac_unused, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, data_release=data_release)
+    nx, s1, p0, ntot = _desi_nz_geometry(tracer_bin, nbar_file, data_release=data_release)
+    if s1 is None or np.asarray(nx).shape != frac.shape:
+        return fallback, "N*frac/V"
+
+    # `nbar_total` (S87) is the TOTAL density -- for a combined bin the SUM over
+    # parent populations, identical to <NX> for a single-parent one. That is
+    # what the covariance needs: how many objects are there, not the FKP-weighted
+    # mean across two samples. It removes the S85 mixed-bin special case; the
+    # p0_eff MIXED test below survives only as a guard for tables predating it.
+    if ntot is not None and np.asarray(ntot).shape == frac.shape:
+        return (np.asarray(ntot, dtype=np.float64)
+                * _nz_scale_factor(tracer_bin, n_tracers, data_release)
+                * _fid_volume_ratio(tracer_bin, cosmo, data_release)), "NX total"
+
+    # MIXED bins must NOT use NX here (S85). For a combined catalogue DESI's
+    # `NX` is each object's PARENT-sample density -- exactly what its own FKP
+    # weight needs -- so the slice mean is a weighted average of the parents,
+    # not their sum. The covariance needs the TOTAL density of the sample.
+    #
+    # Measured on LRG3_ELG1: <NX> 2.39e-4 against 4.28e-4 from N*frac/V, and
+    # the latter is right because 4.28e-4 ~ 1.99e-4 (LRG3 alone) + 2.3e-4
+    # (ELG1) -- a sum. Using NX there would inflate 1/n by 1.79x.
+    #
+    # Detected by the same p0_eff signature S84 uses: a bin whose back-solved
+    # pivot is not constant is a mixed sample. Self-describing, so a future
+    # combined bin is handled without anyone remembering to special-case it.
+    if p0 is not None and float(np.max(p0)) / float(np.min(p0)) > 1.01:
+        return fallback, "N*frac/V (mixed bin)"
+
+    return np.asarray(nx, dtype=np.float64) * _nz_scale_factor(
+        tracer_bin, n_tracers, data_release), "NX"
+
+
 def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
-                        n_tracers=None, dataset: str = "dr1") -> float:
+                        n_tracers=None, data_release: str = "dr1") -> float:
     """DESI's effective redshift, DESI 2024 III Eq. (2.1).
 
     Verbatim from arXiv:2404.03000 S2.2: "The z_eff values are calculated
@@ -314,9 +519,10 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     LRG1/LRG2 move the other way because their n(z) rises across the bin, so
     the number-weighted mean sits ABOVE the volume-weighted one.
 
-    Pass n_tracers=None to evaluate at the dataset's own density.
+    Pass n_tracers=None to evaluate at the data_release's own density.
     """
-    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, data_release=data_release)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -327,11 +533,42 @@ def _desi_z_eff_from_nz(tracer_bin: str, cosmo, area_deg2: float,
     sky_frac = float(area_deg2) / 41252.96
     V_bin = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
 
-    nbar = (np.asarray(nbar_file, dtype=np.float64)
-            * _nz_scale_factor(tracer_bin, n_tracers, dataset))
-    # Eq. (2.1): weight by the SQUARE of the weighted number density.
-    n_weighted = nbar / (1.0 + nbar * _fkp_p0_for_tracer(tracer_bin))
-    w = n_weighted ** 2 * V_bin
+    # Eq. (2.1)'s n_ran is the WEIGHTED RANDOM DENSITY, and its weights include
+    # completeness / z-failures / imaging systematics (the `WEIGHT` column,
+    # 2411.12020 Eqs. 8.1-8.2), not just FKP. Two separable pieces:
+    #
+    #   S1_s   sum WEIGHT per slice -- mask and tiling geometry. FIXED in N.
+    #   nx_s   DESI's `NX` = n(z) <C_assign> (Eq. 8.3) -- the density their own
+    #          WEIGHT_FKP is built from. SCALES with N.
+    #
+    #   n_ran,s = S1_s * w_fkp(z_s ; nx_s)  /  V_s
+    #
+    # so the Eq. (2.1) weight is (S1_s w_fkp)^2 / V_s. Reproduces DESI's
+    # published z_eff to 0.064% mean when evaluated on their randoms directly.
+    #
+    # `nbar_file` is NOT n_ran (1.19-2.37x high, per-tracer) and the covariance
+    # path (`fkp_analytic_cov.load_nz_slices`, N*frac/V) is a THIRD value again.
+    # See shapefit CHANGELOG S51-S53.
+    nx, s1, p0_eff, _ntot = _desi_nz_geometry(tracer_bin, nbar_file, data_release=data_release)
+    nbar = nx * _nz_scale_factor(tracer_bin, n_tracers, data_release)
+    # PER-SLICE pivot when DESI's own weights supply one (S82), else the scalar
+    # tracers.yaml value. Note this stays a PIVOT rather than substituting the
+    # measured w_fkp directly: N_tracers enters z_eff ONLY through
+    # w_fkp = 1/(1 + nbar*alpha(N)*P0) (S53), so freezing w_fkp at DR1's density
+    # would silently make z_eff N-independent and flatten the design axis.
+    # Using p0_eff keeps that scaling and reproduces DESI's weight exactly at
+    # alpha = 1.
+    #
+    # It matters for the combined LRG3_ELG1 bin, where the true pivot runs
+    # 11335 -> 18679 across the bin (LRG giving way to ELG) and no scalar works.
+    # For single-tracer bins p0_eff is constant and equals the yaml value.
+    p0 = p0_eff if p0_eff is not None else _fkp_p0_for_tracer(tracer_bin)
+    w_fkp = 1.0 / (1.0 + nbar * p0)
+    if s1 is None:
+        # No geometry table: fall back to the density form, n_ran = nbar w_fkp.
+        w = (nbar * w_fkp) ** 2 * V_bin
+    else:
+        w = (s1 * w_fkp) ** 2 / V_bin
     if w.sum() <= 0.0:
         # Degenerate n̄ (e.g. nbar_file all zero); V-weighted mean.
         return float(np.sum(V_bin * z_mid) / np.sum(V_bin))
@@ -346,7 +583,7 @@ def _compute_z_eff_from_nz(
     b1: float,
     k_pivot: float = 0.14,
     n_tracers=None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> float:
     """Effective redshift from the n(z) slices.
 
@@ -356,7 +593,7 @@ def _compute_z_eff_from_nz(
     below still needs them and the call sites are shared.
 
     `n_tracers` rescales n(z) (see `_nz_scale_factor`); None evaluates at the
-    dataset's own density. BOTH conventions carry the dependence -- the V_eff
+    data_release's own density. BOTH conventions carry the dependence -- the V_eff
     weight is the same FKP factor squared, so it has the same two
     alpha-independent limits and the same sliding in between.
 
@@ -384,11 +621,12 @@ def _compute_z_eff_from_nz(
     """
     if Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return _desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
-                                   n_tracers=n_tracers, dataset=dataset)
+                                   n_tracers=n_tracers, data_release=data_release)
     if Z_EFF_CONVENTION != "fisher_veff":
         raise ValueError(f"Unknown Z_EFF_CONVENTION {Z_EFF_CONVENTION!r}")
 
-    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = _load_nz_slice_fractions(
+        tracer_bin, data_release=data_release)
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -405,7 +643,7 @@ def _compute_z_eff_from_nz(
         P_g[i] = float(b1) ** 2 * float(pk(np.array([k_pivot]))[0])
 
     nP = (np.asarray(nbar_file, dtype=np.float64)
-          * _nz_scale_factor(tracer_bin, n_tracers, dataset)) * P_g
+          * _nz_scale_factor(tracer_bin, n_tracers, data_release)) * P_g
     fkp_sq = (nP / (1.0 + nP)) ** 2
     V_eff_per_slice = V_bin * fkp_sq
 
@@ -456,6 +694,8 @@ def _compute_v_eff_fkp(
     area_deg2: float,
     tracer_bin: str,
     fkp_weight_sq_per_bin: np.ndarray,
+    *,
+    data_release: str,
 ) -> Tuple[float, float]:
     """Compute FKP-weighted V_eff at the given cosmology.
 
@@ -465,7 +705,8 @@ def _compute_v_eff_fkp(
     redshift slice, computed by the caller via _fkp_band_weight_sq using
     cosmology-driven P_g(k,z) on the _BAO_K_GRID.
     """
-    z_mid, z_edges, frac, _ = _load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, frac, _ = _load_nz_slice_fractions(
+        tracer_bin, data_release=data_release)
     z_lo = z_edges[:, 0]
     z_hi = z_edges[:, 1]
     sky_frac = float(area_deg2) / 41252.96
@@ -1359,7 +1600,7 @@ def build_bao_likelihood(
     area: float = 14000.0,
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
     override_sigmas: Tuple[float, float] | None = None,
     n_iter: int = 1,
     include_fog: bool = True,
@@ -1391,7 +1632,7 @@ def build_bao_likelihood(
 
     # Load tracer-specific configuration from tracers.yaml
     # (bias, smoothing scale, z-bin, fiducial number-density range, etc.)
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
 
     # Allow caller-side overrides of tracer config entries.
     if tracer_config is not None:
@@ -1426,7 +1667,7 @@ def build_bao_likelihood(
                 # forecasting a different N was internally inconsistent --
                 # the V_eff -> n_eff root-find below already uses N.
                 n_tracers=float(N_tracers),
-                dataset=dataset,
+                data_release=data_release,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])
@@ -1442,7 +1683,8 @@ def build_bao_likelihood(
     v_shell_for_footprint: Optional[float] = None
     if tracer_bin != "Lya_QSO":
         try:
-            z_mid_slice, z_edges_slice, frac_slice, _ = _load_nz_slice_fractions(tracer_bin)
+            z_mid_slice, z_edges_slice, frac_slice, _ = _load_nz_slice_fractions(
+                tracer_bin, data_release=data_release)
         except FileNotFoundError as exc:
             print(f"[veff] {tracer_bin}: nz slices missing -- using V_shell. ({exc})")
         else:
@@ -1453,7 +1695,22 @@ def build_bao_likelihood(
             chi_lo = np.asarray(cosmo.comoving_radial_distance(z_lo))
             chi_hi = np.asarray(cosmo.comoving_radial_distance(z_hi))
             V_bin_slice = (4.0 / 3.0) * np.pi * (chi_hi ** 3 - chi_lo ** 3) * sky_frac
-            nbar_slice = (float(N_tracers) * frac_slice) / np.maximum(V_bin_slice, 1.0)
+            # DESI's NX where the bin is single-tracer, N*frac/V otherwise
+            # (S85). Before this the covariance built its own density while
+            # z_eff used NX -- one sample, two densities.
+            # `cosmo` is the SAMPLED cosmology (l.1589), so pass it: NX is a
+            # comoving density in DESI's fiducial frame and must be converted
+            # into this one (S92). Omitting it froze n-bar at the fiducial.
+            nbar_slice, _nbar_src = cov_nbar_per_slice(
+                tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
+                data_release=data_release, cosmo=cosmo)
+            if not str(_nbar_src).startswith("NX"):
+                # cov_nbar_per_slice's docstring promises the fallback "says
+                # so"; it returned a source string that this call site threw
+                # away, so it never did (S96).
+                print(f"WARNING {tracer_bin}: covariance density fell back to "
+                      f"'{_nbar_src}' instead of DESI NX -- this sigma is NOT "
+                      "the S85/S87 density.", file=sys.stderr, flush=True)
             tracer_type_slice = str(cfg.get("tracer_type", "")).strip()
             if not tracer_type_slice:
                 raise ValueError(
@@ -1498,7 +1755,7 @@ def build_bao_likelihood(
 
             v_eff, v_shell = _compute_v_eff_fkp(
                 cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
-                fkp_weight_sq_per_bin=fkp_wsq_per_bin,
+                fkp_weight_sq_per_bin=fkp_wsq_per_bin, data_release=data_release,
             )
             v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
             # Effective 3D density n_eff such that the BAO-Fisher-band
@@ -2061,6 +2318,12 @@ def build_bao_likelihood(
         "observable": observable,
         "is_lya": is_lya,
         "cov_components": cov_components,
+        # Surfaced so callers can see WHICH z_eff was used -- it is derived
+        # here unless pinned, and it moves with both cosmology and N_tracers
+        # (§37). shapefit's build_shapefit_likelihood has always returned it;
+        # this closes that asymmetry and lets the regression harness record it
+        # directly instead of only through everything downstream.
+        "z_eff": float(z),
     }
 
 
@@ -2073,7 +2336,7 @@ def compute_pipeline_sigmas(
     area: float = 14000.0,
     n_iter: int = 1,
     include_fog: bool = True,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> Tuple[float, float]:
     """Return (sigma_perp_post, sigma_par_post) computed by the pipeline for this sample."""
     if param_defaults:
@@ -2082,7 +2345,7 @@ def compute_pipeline_sigmas(
     N_tracers = float(sample["N_tracers"])
     theta_cosmo, _hrdrag = _to_bao_cosmo_params(sample)
 
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     if zrange is None:
         zrange = tuple(cfg["zrange"])
 
@@ -2098,7 +2361,7 @@ def compute_pipeline_sigmas(
                 area_deg2=float(area),
                 b1=float(cfg.get("bias_recon", 2.0)),
                 n_tracers=float(N_tracers),
-                dataset=dataset,
+                data_release=data_release,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])

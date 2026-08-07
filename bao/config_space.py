@@ -42,18 +42,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 warnings.filterwarnings("ignore")
 
 import core
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, get_tracer_config
 from desilike.theories.galaxy_clustering import (
     DampedBAOWigglesTracerCorrelationFunctionMultipoles,
     DampedBAOWigglesTracerPowerSpectrumMultipoles,
 )
-from fkp_analytic_cov import NZSlices, _fkp_integrals, P_FKP_DEFAULT, load_nz_slices
+from fkp_analytic_cov import (NZSlices, _fkp_integrals, P_FKP_DEFAULT,
+                              fkp_p0_for, load_nz_slices)
+from util import tracer_area as _tracer_area
 
 # ---------------------------------------------------------------------------
 # Fixed analysis settings
 # ---------------------------------------------------------------------------
 _FID = {"Om": 0.3152, "hrdrag": 99.08}          # single fiducial: Fisher, Grieb-cov, MCMC
+# Nominal DR1 footprint. NOT the per-tracer area -- priority and imaging vetoes
+# remove different sky per sample (DESI 2024 II Table 2: BGS 7473, LRG 5740,
+# ELG 5924, QSO 7249). Use `_tracer_area(tracer)`; this remains only for call
+# sites with no tracer in hand. See shapefit CHANGELOG S54.
 _AREA = 7500.0
+
+
+def _pivot(tracer: str) -> float:
+    """DESI's FKP pivot for a tracer, measured from `*_desi_nx.csv` (S97).
+
+    `P_FKP_DEFAULT = 1e4` is LRG's value and was being applied to every tracer,
+    where Eq. (8.4) wants 7000 (BGS), 4000 (ELG) and 6000 (QSO). See shapefit
+    CHANGELOG S55. Single-parent bins recover those values; the combined bin
+    is measured rather than transcribed from yaml.
+
+    Delegates to `fkp_analytic_cov.fkp_p0_for` so there is ONE definition of
+    the pivot lookup -- S62c added the same helper for the Fourier path, and
+    two copies of a lookup like this is precisely the seam that S54 left open
+    for eight sections."""
+    return fkp_p0_for(tracer)
 _DESI_PRIOR_SCALE = {"sigmapar": 2.0, "sigmaper": 2.0, "sigmas": 2.0}
 
 _DR1_DIR = Path.home() / "data" / "desi" / "bao_dr1"
@@ -104,7 +125,8 @@ def _assert_bundle_zeff(tracer, z_bundle):
     (0.930, 1.317, 1.491). Small, but exactly the kind of drift that is
     invisible until it is expensive, so it is now an assertion.
     """
-    z_cfg = float(TRACER_CONFIGS[tracer]["z_eff"])
+    # config space is DR1-only by construction (see the module header).
+    z_cfg = float(get_tracer_config(tracer, data_release="dr1")["z_eff"])
     if abs(z_cfg - float(z_bundle)) > 1e-3:
         raise ValueError(
             f"z_eff mismatch for {tracer}: tracers.yaml has {z_cfg}, the DESI "
@@ -153,8 +175,49 @@ def bb_basis(obs_ells, obs_s, n_total, powers=(0, 2)):
 
 
 def _get_ntracers(tracer):
-    df = pd.read_csv(_DR1_DIR / "desi_data.csv")[["tracer", "passed"]].drop_duplicates("tracer")
-    return {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}[_NAME_MAP.get(tracer, tracer)]
+    """Delegates to util.ntracers (S80) -- see the note in bao/mcmc.py."""
+    from util import ntracers
+    return ntracers(tracer, "dr1")
+
+
+def _nz_slices_nx(tracer, cosmo, area_deg2, N_design, *, data_release):
+    """NZSlices whose n-bar is DESI's NX (`nbar_total`), not N*frac/V (S90).
+
+    `load_nz_slices` supplies the GEOMETRY -- z_mid and V_shell recomputed at
+    this cosmology and area -- and `core.cov_nbar_per_slice` supplies the
+    DENSITY, so the config-space covariance uses the same n-bar as z_eff and the
+    Fourier path.
+
+    Until S90 this module built n-bar = N*frac/V independently. That was the
+    third density for one sample (core.py's note at the z_eff block names all
+    three), and removing it was the whole point of S85/S87 -- but the wiring
+    stopped at the Fourier path, so the emulator's own sigma-driver kept the old
+    one. The two `load_nz_slices` frac/V filters are identical to
+    `core._load_nz_slice_fractions` (slice_fraction > 0, renormalised, same file
+    and order), which is what lets the arrays be combined element-wise; the
+    shape check below is the guard if that ever drifts apart.
+
+    Returns (NZSlices, source) -- the source string is propagated rather than
+    swallowed because a silent fallback here is the S58 failure mode.
+    """
+    sl = load_nz_slices(tracer_bin=tracer, cosmo=cosmo, area_deg2=area_deg2,
+                        N_design=N_design, data_release=data_release)
+    _, _, frac, _ = core._load_nz_slice_fractions(tracer, data_release=data_release)
+    if frac.shape != np.asarray(sl.nbar).shape:
+        raise ValueError(
+            f"{tracer}: slice-fraction shape {frac.shape} != geometry "
+            f"{np.asarray(sl.nbar).shape}; the two n(z) readers have diverged")
+    nbar, src = core.cov_nbar_per_slice(tracer, frac, sl.V, N_design,
+                                        data_release=data_release)
+    if not str(src).startswith("NX"):
+        # Deliberately stderr, not warnings.warn: this module calls
+        # warnings.filterwarnings("ignore") at import, which would swallow the
+        # one message that must never be swallowed.
+        print(f"WARNING {tracer}: config-space covariance fell back to '{src}' "
+              "instead of DESI NX -- the sigma this produces is NOT the "
+              "S85/S87 density", file=sys.stderr, flush=True)
+    return NZSlices(z_mid=sl.z_mid, nbar=np.asarray(nbar, dtype=np.float64),
+                    V=sl.V), str(src)
 
 
 # ===========================================================================
@@ -366,7 +429,7 @@ def _wide_Pell(tracer, info):
 
     Reuses the fid template from `info` so the cosmology matches exactly.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     template = info["template"]
     # broadband="power" not "pcs": the cov uses only the FIDUCIAL P_ℓ(k) (BB
     # nuisance = 0), where the two bases give byte-identical P. "power" avoids a
@@ -395,12 +458,14 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     Returns (C_obsgrid, C_windowed) where C_windowed = W @ C_theory @ W^T is
     the survey-window-convolved cov on the observable grid.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **_FID})
     cosmo = core.get_cosmo(("DESI", dict(theta)))
-    slices = load_nz_slices(
-        tracer_bin=tracer, cosmo=cosmo, area_deg2=_AREA,
-        N_design=float(_get_ntracers(tracer)),
+    slices, _ = _nz_slices_nx(
+        tracer, cosmo, _tracer_area(tracer),
+        # This module is DR1-only by construction: _get_ntracers reads
+        # desi_data.csv's `passed` and _AREA is the DR1 footprint (S62c).
+        float(_get_ntracers(tracer)), data_release="dr1",
     )
 
     P_wide = _wide_Pell(tracer, info)  # (3, Nk) for ells (0,2,4)
@@ -418,7 +483,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     C_obsgrid = gaussian_xi_multipole_cov(
         s=s_grid, ells_obs=tuple(obs_ells),
         k=K_WIDE, P_ells_in=P_wide, ells_in=(0, 2, 4),
-        slices=slices, ds=ds_obs,
+        slices=slices, ds=ds_obs, P_FKP=_pivot(tracer),
     )
 
     # Windowed variant: build on the THEORY s-grid (th_s, th_ells) then convolve
@@ -434,7 +499,7 @@ def gaussxi_cov_on_bundle_grid(tracer, info, bundle):
     C_theory = gaussian_xi_multipole_cov(
         s=s_th, ells_obs=tuple(th_ells),
         k=K_WIDE, P_ells_in=P_wide, ells_in=(0, 2, 4),
-        slices=slices, ds=ds_th,
+        slices=slices, ds=ds_th, P_FKP=_pivot(tracer),
     )
     W = bundle["W"]
     if W.shape[1] != C_theory.shape[0]:
@@ -491,7 +556,7 @@ def _validate_shotnoise_limit(verbose: bool = True) -> bool:
 # ===========================================================================
 # §3  Native ξ-theory + Fisher  (↔ fourier_space.run_fisher / get_bao_fisher_covariance)
 # ===========================================================================
-def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, dataset="dr1"):
+def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, data_release="dr1"):
     """Return dict with σ(DH/rd), σ(DM/rd), σ(DV/rd) from native-ξ Fisher.
 
     cov_override: optional ndarray to substitute for bundle['cov']. Pass the
@@ -502,8 +567,8 @@ def bundle_fisher_sigmas(tracer, cov_override=None, info=None, bundle=None, data
     generator builds these ONCE per cosmology (info) / ONCE total (bundle) and
     passes them in, so this function doesn't redundantly rebuild the template.
     """
-    cfg = TRACER_CONFIGS[tracer]
-    apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
+    cfg = get_tracer_config(tracer, data_release="dr1")
+    apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
     if info is None:
         # lean=True: skip the desilike observable/Fourier-cov/likelihood build.
         # This path uses only the template + fiducial nuisance values; the ξ-cov
@@ -663,11 +728,11 @@ class XiSigmaGenerator:
     survey geometry + Bessel basis), then call ``sigma_triplet(**cosmo)`` for
     each sampled cosmology. Thread the same instance across a cosmology sweep."""
 
-    def __init__(self, tracer, dataset="dr1"):
+    def __init__(self, tracer, data_release="dr1"):
         self.tracer = tracer
-        self.dataset = dataset
-        self.cfg = TRACER_CONFIGS[tracer]
-        self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, dataset) else "qparqper"
+        self.data_release = data_release
+        self.cfg = get_tracer_config(tracer, data_release=data_release)
+        self.apmode = "qiso" if core.is_iso_tracer_bin(tracer, data_release) else "qparqper"
         self.bundle = load_bundle(tracer)
 
         # FKP volume/n̄ at the FIDUCIAL frame (frame-fixed, like the window —
@@ -676,12 +741,14 @@ class XiSigmaGenerator:
             {**core.PARAM_DEFAULTS, **_FID})
         cosmo_fid = core.get_cosmo(("DESI", dict(theta_fid)))
         self._N_fid = float(_get_ntracers(tracer))
-        self.slices = load_nz_slices(
-            tracer_bin=tracer, cosmo=cosmo_fid, area_deg2=_AREA,
-            N_design=self._N_fid)
-        # n̄ is exactly linear in N_design (load_nz_slices: nbar = N·frac/V_shell
-        # at the fixed frame), so the cov shot-noise term can be rebuilt for any
-        # sampled N_tracers by rescaling — no pandas re-read, no geometry recompute.
+        self.slices, self.nbar_source = _nz_slices_nx(
+            tracer, cosmo_fid, _tracer_area(tracer),
+            self._N_fid, data_release=self.data_release)
+        # n̄ is still exactly linear in N_design after S90 — cov_nbar_per_slice
+        # returns nbar_total × α(N) with α = N/N_dataset, and its docstring
+        # commits to that linearity for this cache — so the cov shot-noise term
+        # can be rebuilt for any sampled N_tracers by rescaling: no pandas
+        # re-read, no geometry recompute.
         self._nbar_per_N = np.asarray(self.slices.nbar, dtype=np.float64) / self._N_fid
 
         # Theory s-grid + window: the windowed (theory-grid) cov is what feeds
@@ -716,7 +783,8 @@ class XiSigmaGenerator:
         C_theory = gaussian_xi_multipole_cov(
             s=self.s_th, ells_obs=tuple(self.th_ells), k=K_WIDE,
             P_ells_in=P_wide, ells_in=(0, 2, 4), slices=self._slices_for_N(N_tracers),
-            ds=self.ds_th, jbar_cache=self.jbar_cache)
+            ds=self.ds_th, jbar_cache=self.jbar_cache,
+            P_FKP=_pivot(self.tracer))
         C = self.W @ C_theory @ self.W.T
         return 0.5 * (C + C.T)
 
@@ -736,7 +804,7 @@ class XiSigmaGenerator:
             lean=True)
         cov = self.windowed_cov(info, N_tracers=N)
         return bundle_fisher_sigmas(self.tracer, cov_override=cov,
-                                    info=info, bundle=self.bundle, dataset=self.dataset)
+                                    info=info, bundle=self.bundle, data_release=self.data_release)
 
 
 # Per-tracer emulator targets (see core.emulator_target_names).
@@ -753,17 +821,17 @@ def _worker_xi_sigma(args_tuple):
     {N_tracers + cosmo} to per-tracer emulator targets via a cached per-process
     XiSigmaGenerator. Top-level + picklable for the spawn Pool. Returns
     (sample, target_vals, tb_str) — tb_str None on success."""
-    sample, tracer, dataset = args_tuple
+    sample, tracer, data_release = args_tuple
     try:
-        cache_key = (tracer, dataset)
+        cache_key = (tracer, data_release)
         gen = _XI_GEN_CACHE.get(cache_key)
         if gen is None:
-            gen = XiSigmaGenerator(tracer, dataset=dataset)
+            gen = XiSigmaGenerator(tracer, data_release=data_release)
             _XI_GEN_CACHE[cache_key] = gen
         N_tracers = sample.get("N_tracers")
         cosmo_overrides = {k: v for k, v in sample.items() if k != "N_tracers"}
         s = gen.sigma_triplet(N_tracers=N_tracers, **cosmo_overrides)
-        target_vals = core.fisher_sigmas_to_emulator_targets(s, tracer, dataset)
+        target_vals = core.fisher_sigmas_to_emulator_targets(s, tracer, data_release)
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
         return sample, target_vals, None
@@ -780,7 +848,7 @@ def build_native_theory_mcmc(tracer, apmode):
 
     Uses the same fiducial (_FID) as the Fisher / Grieb-cov path.
     """
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     theta, hrdrag_eff = core._to_bao_cosmo_params(
         {**core.PARAM_DEFAULTS, **_FID})
     info = core.build_bao_likelihood(

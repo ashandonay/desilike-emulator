@@ -2,14 +2,14 @@
 # Generate emulator training data (σ-triplet) for all tracer bins, one per
 # invocation of generate_covar_data.py, all written into the SAME version
 # folder so they form one coherent dataset. Output tree:
-#   bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
+#   bao/training_data/{data_release}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz
 #
 # Usage (from anywhere):
 #   bao/generate_training_data.sh [options]
 #
 # Options (all have defaults):
 #   --space        config | fourier        (default: config)
-#   --dataset      dr1 | dr2                (default: dr1) anchors N_tracers box
+#   --data-release      dr1 | dr2                (default: dr1) anchors N_tracers box
 #   --cosmo-model  base | base_w | base_w_wa | base_omegak | base_omegak_w_wa
 #                                           (default: base_w_wa)
 #   --n-samples    LHS draws per tracer     (default: 5000)
@@ -25,7 +25,7 @@
 # Examples:
 #   bao/generate_training_data.sh --cosmo-model base --n-samples 64 --workers 8 --version 99
 #   bao/generate_training_data.sh --space fourier --tracers "LRG2 QSO"
-#   bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
+#   bao/generate_training_data.sh --data-release dr2 --cosmo-model base --n-samples 10000
 set -euo pipefail
 
 # --- env (emulator conda env; cwd must be the bao/ dir) ---------------------
@@ -36,7 +36,7 @@ export LD_LIBRARY_PATH="$HOME/miniconda3/envs/emulator/lib:${LD_LIBRARY_PATH:-}"
 
 # --- defaults ---------------------------------------------------------------
 SPACE="config"
-DATASET="dr1"
+DATA_RELEASE="dr1"
 COSMO_MODEL="base_w_wa"
 N_SAMPLES=5000
 WORKERS=32          # workers are pinned to 1 BLAS thread each; scale toward ncores
@@ -49,7 +49,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --space)       SPACE="$2"; shift 2 ;;
-    --dataset)     DATASET="$2"; shift 2 ;;
+    --data-release)     DATA_RELEASE="$2"; shift 2 ;;
     --cosmo-model) COSMO_MODEL="$2"; shift 2 ;;
     --n-samples)   N_SAMPLES="$2"; shift 2 ;;
     --workers)     WORKERS="$2"; shift 2 ;;
@@ -69,13 +69,14 @@ save_args=()
 # tracers share one v{N} dir (distinguished by the {tracer}_ file prefix), so we
 # must NOT let each per-tracer save_dataset() call auto-increment on its own.
 if [[ -z "$VERSION" ]]; then
-  VERSION="$("$PYBIN" - "$SPACE" "$COSMO_MODEL" "$DATASET" "$SAVE_PATH" <<'PY'
+  VERSION="$("$PYBIN" - "$SPACE" "$COSMO_MODEL" "$DATA_RELEASE" "$SAVE_PATH" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.getcwd()))   # repo root (parent of bao/)
 from util import get_default_save_path, _next_version
-space, cosmo_model, dataset, save_path = sys.argv[1:5]
+space, cosmo_model, data_release, save_path = sys.argv[1:5]
 root = save_path or get_default_save_path(
-    analysis="bao", quantity=space, cosmo_model=cosmo_model, dataset=dataset)
+    analysis="bao", quantity=space, cosmo_model=cosmo_model,
+    data_release=data_release)
 print(_next_version(root))
 PY
 )"
@@ -85,11 +86,13 @@ fi
 # Fail loudly rather than scatter the batch across per-tracer auto-increments.
 if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
   echo "ERROR: could not resolve a numeric version (got '$VERSION'). " \
-       "Set \$SCRATCH, or pass --save-path / --version explicitly." >&2
+       "Set \$SCRATCH, or pass --save-path / --version explicitly. " \
+       "If the snippet above raised, that is the real cause -- read its " \
+       "traceback rather than this line." >&2
   exit 1
 fi
 
-echo "=== generate_covar_data: space=$SPACE dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
+echo "=== generate_covar_data: space=$SPACE data_release=$DATA_RELEASE model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
 echo "Tracers: $TRACERS"
 echo
 
@@ -98,10 +101,10 @@ for T in $TRACERS; do
   echo "  $T   ($(date '+%H:%M:%S'))"
   echo "----------------------------------------------------------------------"
   "$PYBIN" generate_covar_data.py \
-    --space "$SPACE" --dataset "$DATASET" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
+    --space "$SPACE" --data-release "$DATA_RELEASE" --tracer-bin "$T" --cosmo-model "$COSMO_MODEL" \
     --n-samples "$N_SAMPLES" --workers "$WORKERS" --version "$VERSION" \
     "${save_args[@]}" "${EXTRA[@]}"
   echo
 done
 
-echo "=== done: all tracers written to .../bao/training_data/$DATASET/$COSMO_MODEL/$SPACE/v$VERSION/ ==="
+echo "=== done: all tracers written to .../bao/training_data/$DATA_RELEASE/$COSMO_MODEL/$SPACE/v$VERSION/ ==="

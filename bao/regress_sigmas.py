@@ -22,12 +22,36 @@ last-bit noise, but deliberately auto-accepts neither.
 A dump takes ~6 min for all 6 tracers; `--config-only` skips the slower Fourier
 path. Run from the ``bao/`` directory -- DESI bundle paths resolve relative to
 it.
+
+Threading is pinned to one BLAS thread below, and that is load-bearing rather
+than a performance choice: multi-threaded reduction order is not fixed, so
+Fisher-derived outputs move by ~1e-10 relative between thread counts. That is
+small in absolute terms but it lands squarely on top of the signal this harness
+exists to detect -- unpinned, an otherwise byte-identical rerun reports
+hundreds of differing arrays (S99, found via the shapefit harness). The
+generators pin this already, in core._worker_init, but that runs in the spawn
+pool and never covered this single-process harness.
 """
 
 from __future__ import annotations
 
-import argparse
+import os
 import sys
+
+# Must precede `import numpy`: BLAS reads these at load time, so setting them
+# afterwards is a silent no-op. Forced rather than setdefault -- an inherited
+# OMP_NUM_THREADS is precisely what would defeat the pin -- but audible, since
+# overriding the caller's environment without saying so is its own trap (S96).
+_THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+for _v in _THREAD_VARS:
+    _prev = os.environ.get(_v)
+    if _prev not in (None, "1"):
+        print(f"NOTE: {_v}={_prev} overridden to 1 -- this harness requires "
+              f"deterministic BLAS reduction order (S99).", file=sys.stderr)
+    os.environ[_v] = "1"
+
+import argparse
 import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -119,7 +143,7 @@ def _dump_fourier(out: Dict[str, np.ndarray], tracer: str) -> None:
     observable's k-grid, since those are exactly what the lsstypes /
     2-D-bin-edge refactor could perturb, then the marginalized Fisher on top.
     """
-    cfg = core.TRACER_CONFIGS[tracer]
+    cfg = core.get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if core.is_iso_tracer_bin(tracer, "dr1") else "qparqper"
     N_fid = float(ntracers(tracer, "dr1"))
     for row in COSMO_GRID:
@@ -127,12 +151,23 @@ def _dump_fourier(out: Dict[str, np.ndarray], tracer: str) -> None:
         cosmo, _ = _sample_for(row)
         sample = {**core.PARAM_DEFAULTS, **config_space._FID, **cosmo}
         theta_cosmo, hrdrag = core._to_bao_cosmo_params(sample)
+        # z_eff is DERIVED here, not pinned from the yaml. Pinning it made the
+        # golden blind to the entire z_eff code path: it never reached
+        # _compute_z_eff_from_nz, so §36 and §37 both changed production
+        # labels while the regression stayed green. The lowN/highN grid rows
+        # now also exercise the N dependence (§37a), since z_eff moves with
+        # the sample size.
+        #
+        # NOTE the config dump above deliberately does the opposite -- config
+        # space pins z_eff from the DESI bundle by design (§36), so pinning
+        # there IS production behaviour.
         info = core.build_bao_likelihood(
             N_tracers=N_factor * N_fid, theta_cosmo=theta_cosmo,
             hrdrag=hrdrag, tracer_bin=tracer, zrange=cfg["zrange"],
-            z_eff=float(cfg["z_eff"]), area=_AREA, apmode=apmode,
+            area=_AREA, apmode=apmode,
         )
         pfx = f"fourier/{tracer}/{label}"
+        _record(out, f"{pfx}/z_eff", float(info["z_eff"]))
 
         # Raw desilike surfaces.
         for name, arr in info["cov_components"].items():

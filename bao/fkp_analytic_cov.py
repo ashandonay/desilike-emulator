@@ -42,13 +42,107 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Sequence, Tuple
 
+import sys as _sys
+
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 
 
-# Pivot used for FKP weights w = 1 / (1 + n P_FKP). DESI/BOSS standard for
-# LRG is P_FKP = 1e4 (Mpc/h)^3. Re-verify per-tracer at calibration time.
+# Pivot used for FKP weights w = 1 / (1 + n P_FKP). DESI 2024 II Eq. (8.4)
+# sets it PER TRACER: BGS 7000, LRG 10000, ELG 4000, QSO 6000 (Mpc/h)^3.
+#
+# This module-level constant is the LRG value and is only a last-resort default
+# for callers with no tracer in hand. Prefer `fkp_p0_for(tracer_bin)`, which
+# back-solves P0 from the vendored `*_desi_nx.csv` tables (S97) -- the same
+# measured pivot the rest of the pipeline weights with, so the analytic cov and
+# the Fisher path cannot disagree.
+#
+# S54 flagged the uniform 1e4 here as open: it silently applied the LRG pivot to
+# BGS (7000), ELG (4000) and QSO (6000), a 1.4-2.5x error in n*P0 for those.
 P_FKP_DEFAULT = 1.0e4
+
+
+_P0_CACHE: dict = {}
+
+
+def fkp_p0_for(tracer_bin: str, data_release: str = "dr1") -> float:
+    """DESI's FKP pivot for this tracer, MEASURED from their own weights (S97).
+
+    Back-solved from the vendored `_desi_nx` table:
+
+        P0 = mean[(1 / w_fkp_mean - 1) / nbar_total]
+
+    which inverts DESI's own `WEIGHT_FKP = 1/(1 + n P0)` against the density
+    the covariance actually uses (`nbar_total`, the summed-over-parents column
+    from S87). It is flat per tracer to <1%, and recovers DESI 2024 II
+    Eq. (8.4) exactly for the single-parent bins: BGS 7000, LRG 10000,
+    ELG 4000, QSO 6000.
+
+    It used to read a hand-entered `fkp_p0` from tracers.yaml. That was a
+    redundant transcription for six tracers and WRONG for the seventh:
+    LRG3_ELG1 carried 10000 with the comment "DESI 2024 II Eq. (8.4)", but
+    Eq. (8.4) tabulates single tracers and says nothing about a combined bin.
+    The combined-tracer paper (arXiv:2508.05467 Eq. 4.13) prescribes P0 = 6000
+    against a bias-weighted n_eff; back-solving against our `nbar_total`
+    returns 6244, i.e. that prescription in our density convention. The yaml's
+    10000 mis-weighted that bin's covariance by ~30% in w_fkp.
+
+    S82's "the pivot is z-dependent, 11335->18679, no scalar works" was an
+    artefact of dividing by `nbar_desi_nx` -- the FKP-weighted mean ACROSS
+    parents -- instead of the summed `nbar_total`. Against the right density the
+    pivot is flat. z_eff is unaffected either way: it uses its own
+    slice-calibrated pivot (core._desi_nz_geometry), which reproduces
+    `w_fkp_mean` identically by construction.
+
+    `analysis` is deliberately NOT passed to get_tracer_config: this helper
+    serves both pipelines and the bins differ between them (bao uses the
+    combined LRG3_ELG1, shapefit uses LRG3).
+    """
+    import numpy as _np
+    import pandas as _pd
+
+    key = (tracer_bin, data_release)
+    if key in _P0_CACHE:
+        return _P0_CACHE[key]
+
+    from util import nz_slices_path
+
+    path = nz_slices_path(f"{tracer_bin}_desi_nx.csv", data_release)
+    try:
+        df = _pd.read_csv(path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"No `{tracer_bin}_desi_nx.csv` for {data_release!r}: the FKP pivot "
+            "is MEASURED from DESI's weights (S97), not configured, so there is "
+            "no fallback. Rebuild it with shapefit/make_desi_nx.py --install."
+        ) from exc
+
+    missing = {"w_fkp_mean", "nbar_total"} - set(df.columns)
+    if missing:
+        raise KeyError(
+            f"{path.name} lacks {sorted(missing)}; the pivot back-solve needs "
+            "both. Regenerate with shapefit/make_desi_nx.py --install.")
+
+    wfm = df["w_fkp_mean"].to_numpy(dtype=_np.float64)
+    ntot = df["nbar_total"].to_numpy(dtype=_np.float64)
+    if not (_np.all(wfm > 0) and _np.all(wfm < 1) and _np.all(ntot > 0)):
+        raise ValueError(f"{path.name}: non-physical w_fkp_mean or nbar_total")
+
+    per_slice = (1.0 / wfm - 1.0) / ntot
+    p0 = float(_np.mean(per_slice))
+    spread = float(per_slice.max() / per_slice.min())
+    if spread > 1.05:
+        # Flat to <1% for every DR1 bin. A real spread would mean the single
+        # scalar the covariance takes cannot represent this sample -- say so
+        # rather than average it away. stderr, not warnings.warn: config_space
+        # filters warnings at import (S96).
+        print(f"WARNING {tracer_bin}: back-solved FKP pivot varies by "
+              f"{spread:.2f}x across the bin ({per_slice.min():.0f}-"
+              f"{per_slice.max():.0f}); the covariance takes one scalar, so "
+              f"{p0:.0f} is an average, not a description.",
+              file=_sys.stderr, flush=True)
+    _P0_CACHE[key] = p0
+    return p0
 
 # Calibration knob — initialized to 1.0 (pure FKP-1994 formula). After
 # comparing per-k diagonal to thecov at fid, set this to the geometric-mean
@@ -201,20 +295,23 @@ def load_nz_slices(
     area_deg2: float,
     N_design: float | None = None,
     nz_slices_dir: str | None = None,
+    *,
+    data_release: str,
 ) -> NZSlices:
     """Build NZSlices for a tracer at a given cosmology and total tracer count.
 
     The slice fractions are cosmology-INDEPENDENT (file-based). V_shell varies
     with cosmology through chi(z). n(z) = N_design * frac_i / V_i.
+
+    `data_release` is keyword-only and REQUIRED -- see S62c and `core.nz_slices_path`.
     """
     import pandas as pd
     from pathlib import Path
 
-    if nz_slices_dir is None:
-        nz_slices_dir = str(Path.home() / "data" / "desi" / "nz_slices")
-    path = Path(nz_slices_dir) / f"{tracer_bin}_nz_slices.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"No n(z) slices file: {path}")
+    from util import nz_slices_path
+
+    path = nz_slices_path(f"{tracer_bin}_nz_slices.csv", data_release,
+                          base_dir=nz_slices_dir)
 
     df = pd.read_csv(path)
     df = df[df["slice_fraction"] > 0.0].reset_index(drop=True)

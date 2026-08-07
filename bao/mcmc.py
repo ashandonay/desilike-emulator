@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 warnings.filterwarnings("ignore")
 
 from desi_reference import _recon_sigmas
-from util import TRACER_CONFIGS
+from util import TRACER_CONFIGS, get_tracer_config
 
 _HERE = Path(__file__).resolve().parent
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
@@ -119,7 +119,8 @@ def _print_seed(tracer, cov, seed, sig, ref):
 # ===========================================================================
 # config-space sweep
 # ===========================================================================
-def _sweep_config(tracer, covs, seeds, nwalkers, niter, burn):
+def _sweep_config(tracer, covs, seeds, nwalkers, niter, burn,
+                  data_release="dr1"):
     """{cov: {seed: {DH,DM,DV}}} for the config-space (native-ξ) frame."""
     import config_space as M
 
@@ -130,7 +131,7 @@ def _sweep_config(tracer, covs, seeds, nwalkers, niter, burn):
     cov_map = {"gaussxi": Cg, "bundle": Cb}
 
     tmpl = info["template"]
-    z = float(TRACER_CONFIGS[tracer]["z_eff"])
+    z = float(get_tracer_config(tracer, data_release=data_release)["z_eff"])
     DH, DM = float(tmpl.DH_over_rd_fid), float(tmpl.DM_over_rd_fid)
     DV = (z * DM * DM * DH) ** (1.0 / 3.0)
     print(f"\n{'=' * 70}\n  {tracer}  (config, apmode={apmode})\n{'=' * 70}")
@@ -171,11 +172,15 @@ def _run_emcee(log_prob, names, fid, seed, nwalkers, niter, burn):
 # ===========================================================================
 # fourier-space sweep (+ bundle cov → precision machinery)
 # ===========================================================================
-def _get_ntracers(dataset, tracer):
-    df = pd.read_csv(Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv")
-    df = df[["tracer", "passed"]].drop_duplicates("tracer")
-    n_by = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
-    return n_by[_NAME_MAP.get(tracer, tracer)]
+def _get_ntracers(data_release, tracer):
+    """Delegates to util.ntracers (S80).
+
+    Was a fourth private copy of this lookup, reading desi_data.csv straight
+    from ~/data -- which the repo no longer ships to, so it would have failed on
+    a fresh checkout while util.ntracers worked. Verified identical on all six
+    DR1 bins before switching."""
+    from util import ntracers
+    return ntracers(tracer, data_release)
 
 
 def _load_bundle(tracer):
@@ -224,7 +229,7 @@ def _precision_from_cov_xi(cov_xi, M, regularize=1e-10):
 
 
 def _sweep_fourier(tracer, covs, seeds, nwalkers, niter, burn, *,
-                   dataset, omega_m, hrdrag, alpha_low, alpha_high, apmode_arg,
+                   data_release, omega_m, hrdrag, alpha_low, alpha_high, apmode_arg,
                    save_chain):
     """{cov: {seed: {DH,DM,DV}}} for the Fourier-space (desilike-P) frame."""
     import core as pc
@@ -233,15 +238,15 @@ def _sweep_fourier(tracer, covs, seeds, nwalkers, niter, burn, *,
     apmode = ("qiso" if tracer in _ISO else "qparqper") if apmode_arg == "auto" else apmode_arg
     out = {}
     for cov in covs:
-        area = _DATASET_AREAS["dr1"] if cov == "bundle" else _DATASET_AREAS[dataset]
+        area = _DATASET_AREAS["dr1"] if cov == "bundle" else _DATASET_AREAS[data_release]
         print(f"\n{'=' * 70}\n  {tracer}  (fourier, cov={cov}, apmode={apmode}, "
               f"area={area:.0f})\n{'=' * 70}")
 
         theta, hrdrag_eff = pc._to_bao_cosmo_params(
             {**pc.PARAM_DEFAULTS, "Om": omega_m, "hrdrag": hrdrag})
-        cfg = TRACER_CONFIGS[tracer]
+        cfg = get_tracer_config(tracer, data_release=data_release)
         info = pc.build_bao_likelihood(
-            N_tracers=_get_ntracers("dr1" if cov == "bundle" else dataset, tracer),
+            N_tracers=_get_ntracers("dr1" if cov == "bundle" else data_release, tracer),
             theta_cosmo=theta, hrdrag=hrdrag_eff, tracer_bin=tracer,
             zrange=cfg["zrange"], z_eff=float(cfg["z_eff"]), area=area, apmode=apmode)
         likelihood = info["likelihood"]
@@ -279,7 +284,7 @@ def _sweep_fourier(tracer, covs, seeds, nwalkers, niter, burn, *,
             sampler_kwargs = dict(nwalkers=nwalkers, seed=seed)
             if save_chain:
                 _CHAIN_DIR.mkdir(exist_ok=True)
-                sampler_kwargs["save_fn"] = str(_CHAIN_DIR / f"{tracer}_{dataset}_{cov}_seed{seed}.h5")
+                sampler_kwargs["save_fn"] = str(_CHAIN_DIR / f"{tracer}_{data_release}_{cov}_seed{seed}.h5")
             sampler = EmceeSampler(likelihood, **sampler_kwargs)
             print(f"  emcee: {nwalkers} walkers × {niter} iter, seed={seed}")
             chain = sampler.run(max_iterations=niter, check=False)[0]
@@ -309,7 +314,7 @@ def main():
     ap.add_argument("--max-iterations", type=int, default=3000)
     ap.add_argument("--burnin-frac", type=float, default=0.3)
     # fourier-only knobs (ignored for --space config)
-    ap.add_argument("--dataset", choices=list(_DATASET_AREAS.keys()), default="dr1",
+    ap.add_argument("--data-release", choices=list(_DATASET_AREAS.keys()), default="dr1",
                     help="[fourier] survey area for analytic cov (bundle forces dr1).")
     ap.add_argument("--apmode", choices=["auto", "qparqper", "qiso"], default="auto",
                     help="[fourier] auto = qiso for BGS/QSO, qparqper otherwise.")
@@ -318,7 +323,7 @@ def main():
     ap.add_argument("--alpha-low", type=float, default=0.8, help="[fourier] AP prior.")
     ap.add_argument("--alpha-high", type=float, default=1.2, help="[fourier] AP prior.")
     ap.add_argument("--save-chain", action="store_true",
-                    help="[fourier] dump chains to chains_fourier/{tracer}_{dataset}_{cov}_seed{seed}.h5.")
+                    help="[fourier] dump chains to chains_fourier/{tracer}_{data_release}_{cov}_seed{seed}.h5.")
     args = ap.parse_args()
 
     valid = _COVS[args.space]
@@ -344,11 +349,12 @@ def main():
     for t in args.tracers:
         if args.space == "config":
             sweep = _sweep_config(t, covs, args.seeds, nwalkers,
-                                  args.max_iterations, args.burnin_frac)
+                                  args.max_iterations, args.burnin_frac,
+                                  data_release=args.data_release)
         else:
             sweep = _sweep_fourier(t, covs, args.seeds, nwalkers,
                                    args.max_iterations, args.burnin_frac,
-                                   dataset=args.dataset, omega_m=args.omega_m,
+                                   data_release=args.data_release, omega_m=args.omega_m,
                                    hrdrag=args.hrdrag, alpha_low=args.alpha_low,
                                    alpha_high=args.alpha_high, apmode_arg=args.apmode,
                                    save_chain=args.save_chain)

@@ -22,6 +22,7 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 import sys
 import traceback
 import warnings
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -156,7 +157,8 @@ def run_fisher(
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
     param_defaults: Dict[str, float] | None = None,
-    area: float = 14000.0,
+    area: float | None = None,
+    data_release: str = "dr1",
     resolution: int = 3,
     float_sigma_damp: bool = True,
     theory_cls=None,
@@ -183,6 +185,7 @@ def run_fisher(
         zrange=zrange,
         z_eff=z_eff,
         area=area,
+        data_release=data_release,
         resolution=resolution,
         float_sigma_damp=float_sigma_damp,
         **kwargs,
@@ -204,7 +207,13 @@ def run_fisher(
 # tb_str); sample None signals failure.
 # ===========================================================================
 def _worker_run_fisher_targets(args_tuple):
-    sample, tracer_bin, zrange, z_eff, param_defaults, area = args_tuple
+    """Covar worker. The task tuple carries `data_release` (as the mean worker's
+    always has): without it this fell back to run_fisher's data_release="dr1"
+    default, so a dr2 run would have been saved under dr2/ by
+    get_default_save_path while being generated from dr1 n(z) slices and the
+    dr1 z_eff. Harmless today only because --data-release is choices=["dr1"]."""
+    (sample, tracer_bin, zrange, z_eff, param_defaults, area,
+     data_release) = args_tuple
     try:
         targets = run_fisher(
             sample,
@@ -213,6 +222,7 @@ def _worker_run_fisher_targets(args_tuple):
             z_eff=z_eff,
             param_defaults=param_defaults,
             area=area,
+            data_release=data_release,
         )
         target_vals = [targets[t] for t in TARGET_NAMES]
         if not all(np.isfinite(v) for v in target_vals):
@@ -223,11 +233,31 @@ def _worker_run_fisher_targets(args_tuple):
 
 
 def _worker_run_mean_targets(args_tuple):
-    """Mean-pipeline worker: cosmology-only sample -> (qiso, qap, f_sigmar, m)
-    via a per-process cached ShapeFitPowerSpectrumExtractor at the tracer's
-    z_eff (see generate_mean_data.py)."""
-    sample, tracer_bin, z_eff, param_defaults = args_tuple
+    """Mean-pipeline worker: (cosmology, N_tracers) -> (qiso, qap, f_sigmar, m).
+
+    z_eff is derived PER SAMPLE from the sampled cosmology and N_tracers, not
+    frozen at the fiducial. Both dependencies are real and neither cancels:
+
+      - N_tracers, because the FKP weight is not linear in n̄ (bao core
+        `_desi_z_eff_from_nz`); up to 1.22% across the emulator box on LRG3.
+      - cosmology, through the comoving shell volumes; up to 1.1% on QSO
+        across the prior box.
+
+    Freezing z_eff also made mu and C inconsistent: the covar pipeline has
+    always derived z_eff from the sampled cosmology, so the mean and the
+    covariance of the SAME per-tracer Gaussian likelihood were evaluated at
+    different redshifts. See shapefit CHANGELOG S42.
+
+    `z_eff` may be a float to pin it (--z-eff, for sensitivity checks), or
+    None to derive.
+    """
+    (sample, tracer_bin, z_eff, param_defaults,
+     area_deg2, data_release) = args_tuple
     try:
+        merged_for_z = {**(param_defaults or {}), **sample}
+        if z_eff is None:
+            z_eff = _mean_z_eff_for_sample(
+                merged_for_z, tracer_bin, area_deg2, data_release)
         extractor = _get_mean_extractor(tracer_bin, z_eff)
         merged = {**(param_defaults or {}), **sample}
         theta = sf_core._to_mean_extractor_params(merged)
@@ -237,7 +267,8 @@ def _worker_run_mean_targets(args_tuple):
             float(extractor.qiso),
             float(extractor.qap),
             float(extractor.f_sigmar),
-            float(extractor.m),
+            # DESI's m (Eq. 4.9) == desilike's dm. See core.MEAN_TARGET_NAMES.
+            float(extractor.dm),
         ]
         if not all(np.isfinite(v) for v in target_vals):
             return None, None, "non-finite target values"
@@ -246,21 +277,81 @@ def _worker_run_mean_targets(args_tuple):
         return None, None, traceback.format_exc()
 
 
+def _mean_z_eff_for_sample(sample, tracer_bin: str, area_deg2: float,
+                           data_release: str = "dr1") -> float:
+    """z_eff at THIS sample's cosmology and N_tracers."""
+    from desilike.theories.primordial_cosmology import get_cosmo
+
+    cfg = sf_core.get_tracer_config(tracer_bin, analysis="shapefit",
+                                    data_release=data_release)
+    theta = sf_core._to_shapefit_cosmo_params(sample)
+    cosmo = get_cosmo(("DESI", dict(theta)))
+    try:
+        return sf_core._fs_compute_z_eff(
+            tracer_bin=tracer_bin, cosmo=cosmo, fo=cosmo.get_fourier(),
+            area_deg2=float(area_deg2),
+            b1=float(cfg.get("bias_recon", 2.0)),
+            n_tracers=sample.get("N_tracers"), data_release=data_release)
+    except (FileNotFoundError, ValueError):
+        return float(cfg["z_eff"])
+
+
 # Per-process extractor cache: construct-once/call-many (CLASS re-runs per
 # call anyway, but template/fiducial assembly is not free).
-_MEAN_EXTRACTOR_CACHE: Dict[Tuple[str, float], object] = {}
+#
+# Now that z_eff varies per sample the key must be quantized or the cache
+# never hits AND grows without bound -- the mean path already holds ~0.5 GB
+# RSS per worker, so an unbounded cache of CLASS-backed extractors is an OOM.
+# Rounding to 1e-4 in z is 0.01% at these redshifts, which propagates to
+# ~0.002% in f_sigmar (from the measured 2.28% z -> 0.52% f_sigmar slope) --
+# three orders below the emulator's own median error, so the quantization
+# staircase is far too small to bias a fit. Capacity is bounded by FIFO
+# eviction rather than left to grow.
+_MEAN_Z_QUANTUM = 4
+_MEAN_EXTRACTOR_MAXSIZE = 16
+_MEAN_EXTRACTOR_CACHE: "OrderedDict[Tuple[str, float], object]" = OrderedDict()
 
 
 def _get_mean_extractor(tracer_bin: str, z_eff: float):
-    key = (str(tracer_bin), round(float(z_eff), 6))
-    if key not in _MEAN_EXTRACTOR_CACHE:
+    key = (str(tracer_bin), round(float(z_eff), _MEAN_Z_QUANTUM))
+    if key in _MEAN_EXTRACTOR_CACHE:
+        _MEAN_EXTRACTOR_CACHE.move_to_end(key)
+    else:
         from desilike.theories.galaxy_clustering import ShapeFitPowerSpectrumExtractor
 
-        # with_now MUST be explicit — same de-wiggling trap as the template
-        # (desilike defaults to 'peakaverage'; DESI uses Wallisch 2018).
+        # with_now MUST be explicit — same de-wiggling trap as the template.
+        # It is set to 'peakaverage', which happens to equal desilike's default;
+        # pinning it is still the point, so an upstream default change cannot
+        # silently redefine the labels.
+        #
+        # 'peakaverage' and not 'wallish2018' since S76, for two reasons:
+        #   - it is what DESI's compressed likelihood uses (S73, read at
+        #     7d51f4f8: PowerSpectrumBAOFilter(..., engine='peakaverage'));
+        #   - the covar path resolves to peakaverage no matter what it is
+        #     handed, because REPT overrides it (core.py, S76). Leaving the
+        #     mean path on wallish2018 would make the two halves of this
+        #     pipeline disagree with each other AND with DESI.
+        # Cost of the switch, measured in S74: +0.004 in dm (0.02-0.08 sigma)
+        # and +0.36% in f_sigmar, at DESI's MAP.
+        #
+        # `fiducial` is explicit for the same reason, even though 'DESI' is
+        # already desilike's default. It is the denominator of every mean
+        # label: BAOExtractor._set_base(fiducial=True) evaluates it once at
+        # init, and get() returns qiso = DV_over_rd / DV_over_rd_fid,
+        # qap = DH_over_DM / DH_over_DM_fid. An upstream default change would
+        # silently redefine the whole training set, exactly as the
+        # 'peakaverage' default silently mislabelled sigma ~2x.
+        #
+        # NOTE this is the plain DESI fiducial, NOT the ("DESI", theta_cosmo)
+        # the covar template uses (core.py). There the fiducial IS the sample,
+        # so q == 1 identically and only the Fisher curvature is meaningful;
+        # here the fiducial is fixed and q carries the AP signal.
         extractor = ShapeFitPowerSpectrumExtractor(
-            z=float(z_eff),
-            with_now="wallish2018",
+            z=float(key[1]),
+            fiducial="DESI",
+            with_now="peakaverage",
         )
         _MEAN_EXTRACTOR_CACHE[key] = extractor
+        while len(_MEAN_EXTRACTOR_CACHE) > _MEAN_EXTRACTOR_MAXSIZE:
+            _MEAN_EXTRACTOR_CACHE.popitem(last=False)
     return _MEAN_EXTRACTOR_CACHE[key]

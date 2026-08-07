@@ -27,20 +27,23 @@ core.py                  constants + cosmology mapping + FS band kernel +
 fourier_space.py         Fisher → 4×4 (qiso,qap,df,dm) → physical basis →
                          σ/ρ targets; run_fisher; spawn workers (covar + mean)
 generate_covar_data.py   covar training-data CLI (per tracer)
-generate_mean_data.py       mean training-data CLI (per tracer)
-generate_training_data.sh   all-tracer driver, --quantity covar|mean,
-                            one shared auto-versioned v{N} folder
+generate_mean_data.py    mean training-data CLI (per tracer)
+generate_training_data.sh  all-tracer driver, --quantity covar|mean,
+                           one shared auto-versioned v{N} folder
 regress_sigmas.py        bit-exact dump/compare regression harness
-validate_forecast.py     fiducial σ table, σ(N) scaling, damping sensitivity
+validate_forecast.py     fiducial σ table, σ(N) scaling, damping, kmax
+validate_mean.py         mean-pipeline checks (mapping, AP, shape, covar)
+desi_reference.py        DESI 2024 V App. A datavectors + 4×4 covariances,
+                         and App. C Table 11 fiducials (the comparison anchor)
+compare_to_desi.py       forecast vs DESI data products (shot, pk, cov, sigma)
+comparison_plots.py      sigma / rho / rhomat / mean plots vs DESI
+make_lrg3_nz_slices.py   LRG-only n(z) slices for the full-shape 0.8–1.1 bin
 model.py                 emulator architecture (registered for analysis=shapefit)
 model_config.yaml        NN hyperparameters (key "default" = all cosmo models)
 ```
 
 Dependency direction: `core.py` → (`bao/core.py`, `util.py`); `fourier_space.py`
-→ `core.py`; the generators/harnesses sit on top. The legacy
-`prep_covar.py` / `prep_mean.py` / `run_single_fisher.py` / `run_prep_covar.sh`
-were deleted 2026-07-27 (single-bin toys; wrong de-wiggling engine, no
-HOD/n(z)/V_eff, guard-less `cov_*` targets).
+→ `core.py`; the generators/harnesses sit on top.
 
 ---
 
@@ -48,38 +51,50 @@ HOD/n(z)/V_eff, guard-less `cov_*` targets).
 
 | choice | value | why |
 |---|---|---|
-| Template | `ShapeFitPowerSpectrumTemplate(apmode="qisoqap", with_now="wallish2018")` | `with_now` MUST be explicit; desilike's `'peakaverage'` default mislabels σ ~2× and crashes chaotically across wide priors (bao/core.py:1641 comment). `dn` stays fixed — un-fixing it changes the definition of `m`. |
-| Theory | `KaiserTracerPowerSpectrumMultipoles` (pluggable `theory_cls`) | Fast first pass; velocileptors LPT (DESI KP4.5 reference) is the planned drop-in upgrade. |
-| Fit range | ells (0, 2), klim `[0.02, 0.2, 0.005]` | DESI KP4.5 full-shape reference config. |
-| Tracers | all 6 DR1 bins, all anisotropic | The iso/aniso split is a BAO-recon convention, not a full-shape one. No Lya. |
+| Template | `ShapeFitPowerSpectrumTemplate(apmode="qisoqap", with_now="wallish2018")` | `with_now` MUST be explicit; desilike's `'peakaverage'` default mislabels σ ~2× and crashes chaotically across wide priors. `dn` stays fixed — un-fixing it changes the definition of `m`. |
+| **Theory** | **`REPTVelocileptorsTracerPowerSpectrumMultipoles`** (pluggable `theory_cls`) | **This is DESI's own baseline** — 2024 V §4.7 item 2, *"We select velocileptors with its EPT option as our baseline choice"*. Kaiser remains available but is a different model, not an approximation: it under-reports σ by 1.6–2.1× and inverts two ρ signs on every tracer (§15/§16). Audited over the full prior box: REPT adds **zero** failures relative to Kaiser (§22). |
+| Nuisances | `prior_basis='physical'` → b1p, b2p, bsp, alpha0p, alpha2p, sn0p, sn2p — all Schur-marginalised | Matches DESI Table 4 **exactly**, including prior widths. `prior_basis='physical'` is what puts SN0 in units of 1/n̄ and SN2 in f_sat σ_v²/n̄, which is DESI's normalisation. Per-tracer preset (fsat, sigv) resolved by `core.default_theory_kwargs` from `tracers.yaml`. |
+| Fit range | ells (0, 2), klim `[0.02, 0.2, 0.005]` | Matches DESI: §4.7 item 3 drops the hexadecapole deliberately ("it causes stronger prior weight effects"), and item 4 sets 0.02 < k < 0.20. |
+| Tracers | BGS, LRG1, LRG2, **LRG3**, ELG2, QSO | **LRG3 is LRG-only, not LRG3+ELG1.** ELG1 failed DESI's pre-unblinding fibre-collision tests for growth-rate measurements and is excluded from full shape, while remaining in the BAO analysis (§2). `tracers.yaml` is analysis-scoped for exactly this reason (§31/§32). No Lya. |
 | Recon | none (pre-recon everywhere) | Full shape is a pre-recon analysis: no Σ_post, no smoothing_scale/bias_recon, no shifted-random shot term. |
-| Damping fiducials | pre-recon (linear + 1-loop) Σ⊥, Σ∥; HOD FoG added in quadrature to Σ∥ | Kaiser's damping is a single Gaussian — there is no separate Lorentzian streaming parameter. Floated with N(center, 2.0) priors (`float_sigma_damp`). |
-| Broadband | none — `sn0` is the only stochastic freedom | Kaiser has no broadband basis and DESI full-shape has no polynomial broadband either (EFT counterterms/stochastics arrive with velocileptors). Do not graft the BAO `pcs` basis onto FS, and do not tune nuisance choices to close F/D (bao CHANGELOG §33r error-cancellation lesson). |
-| Cosmology basis | `omega_cdm, omega_b, h, ln10A_s, n_s` (+ `w0`, `wa`) | Full shape constrains the P(k) shape/amplitude — no (Om, hrdrag) compression. Matches bedcosmo `prior_args_fs.yaml`. No Ω_k models yet (bedcosmo fullshape only has `base`). |
-| Domain constraint | derived Ω_m ∈ [0.01, 0.99] (`core._check_omega_m`, fail-fast) | The raw omega box reaches Ω_m ~ 17 (high ω_cdm, low h), where cosmoprimo's wallish2018 filter produces non-finite pknow — ~65% of the raw LHS box is out-of-domain and is rejected before any CLASS init; in-domain failure rate is 0. Mirrors the BAO `Om ∈ [0.01, 0.99]` box. **The bedcosmo prior must carry the same constraint** or it will query the emulator outside its training domain. |
-| FS band kernel | `dF/dk ∝ k²` over [0.02, 0.2] | Replaces the BAO Silk kernel `k⁴e^{-k²Σ²}` in the FKP V_eff → n_eff mapping and the z_eff weight; to leading order every mode in the band carries shape/growth information. |
-| z_eff | derived per sample from the n(z) slices (covar); fiducial-derived once (mean) | Cosmology-clean; the extractor's `z` is init-time so the mean pipeline freezes it at the fiducial-cosmology value (documented approximation, `--z-eff` to test). |
+| Damping | `theory_fiducial_params` per theory; under REPT only `b1p` is set | The BAO de-wiggling scales must NOT be fed into a full-spectrum Gaussian damping — doing so drove P2 negative above k≈0.155 (§14). `float_sigma_damp` is a no-op under REPT, which has no `sigmapar`. |
+| Broadband | none polynomial; the EFT counterterms and stochastic terms above ARE the small-scale freedom | DESI full-shape has no polynomial broadband either. Do not graft the BAO `pcs` basis onto FS, and do not tune nuisance choices to close the ratio to DESI (bao §33r error-cancellation lesson). |
+| Window | **none** (diagnostic hook only) | Measured, not assumed: applying DESI's window consistently (`C_obs = M C_kin Mᵀ`) changes LRG2's σ from 0.82/0.85/0.91/0.87 of DESI to 0.81/0.79/0.85/0.80, and every ρ by <0.03. Derivative smoothing and covariance correlation cancel. Worth ~36 s/cosmology to move σ ~5% in the wrong direction (§19). ⚠ `wmatrix=` alone convolves the derivatives but NOT the covariance — read the `core.py` comment before using it. |
+| Cosmology basis | `omega_cdm, omega_b, h, ln10A_s, n_s` (+ `w0`, `wa`) | Full shape constrains the P(k) shape/amplitude — no (Om, hrdrag) compression. No Ω_k models yet. |
+| Domain constraint | derived Ω_m ∈ [0.01, 0.99] (`core._check_omega_m`, fail-fast) | The raw omega box reaches Ω_m ~ 17; ~58% of the raw LHS box is out-of-domain and rejected before any CLASS init (measured acceptance 42.2%, §22). In-domain failure rate is 0 for **both** theories. **The bedcosmo prior must carry the same constraint.** |
+| FS band kernel | `dF/dk ∝ k²` over [0.02, 0.2] | Replaces the BAO Silk kernel in the FKP V_eff → n_eff mapping and the z_eff weight. |
+| Fiducial cosmology | cosmoprimo `("DESI", …)` = AbacusSummit c000 | DESI 2024 V Table 6 row 1; §4.7 item 10 uses this one cosmology as BOTH grid and template cosmology. Verified: our fiducial distances reproduce their Table 11 to ≤0.13%. |
 | Cov | Gaussian (FKP-effective volume) + SSC | Shared `bao/core.py` machinery; recon-shot term dropped (pre-recon). |
 
 **Target contract.** `TARGET_NAMES` = 4 `sigma_*` + 6 `rho_*`. The name
 prefixes are load-bearing: `util.transform_emulator_targets_*` and the
-bedcosmo decode guards (σ floor/ceiling, tanh ρ-clamp) dispatch on them.
-Pairwise ρ-clamps only guarantee PSD per 2×2 block — the bedcosmo-side 4×4
-assembly must add an eigenvalue-floor / nearest-PSD projection (follow-up).
+bedcosmo decode guards dispatch on them. Pairwise ρ-clamps only guarantee PSD
+per 2×2 block — the bedcosmo-side 4×4 assembly must add an eigenvalue-floor /
+nearest-PSD projection (follow-up).
 
 **Physical basis.** desilike varies `(qiso, qap, df, dm)`;
 `f_sigmar = df · f_sigmar_fid` and `m = m_fid + dm`, so the Jacobian is
-`diag(1, 1, f_sigmar_fid, 1)`. `m_fid` is the absolute fiducial slope at the
-pivot (≈ −0.58 at the DESI fiducial), not 0. Mean and covar pipelines are on
-the identical cosmology mapping (`_to_shapefit_cosmo_params` /
-`_to_mean_extractor_params`, which includes the neutrino density the legacy
-`util.to_extractor_params` dropped).
+`diag(1, 1, f_sigmar_fid, 1)`.
+
+**`m` follows DESI's convention — no conversion needed.** The mean emulator
+emits DESI's Eq. (4.9) shape parameter, which multiplies the fiducial template
+so `m = 0` means no shape change. Verified: the generator returns
+m = −4.5e−05 at the DESI fiducial cosmology.
+
+⚠ Watch the naming collision: **desilike's `m` is a different quantity** — the
+absolute log-slope of the de-wiggled spectrum at k_p, ≈ −0.5775 — and desilike's
+`dm = m − m_fid` is what equals DESI's m. The mean worker therefore reads
+`extractor.dm` into a target named `m`. Emitting the deviation also keeps §24's
+theory-dependent `m_fid` out of the interface entirely (REPT's attached template
+reports −0.6699 where the extractor says −0.5775). σ is offset-invariant, so the
+covar targets `sigma_m` / `rho_*_m` are unaffected and consistently named.
+
+Note the training box reaches m ∈ [−10.4, +3.7] because the Ω_m prior spans
+shapes far from the fiducial; DESI's measured values are ~0.05.
 
 ---
 
 ## Environment
-
-Same as `bao/`: run from `shapefit/` with the emulator conda env,
 
 ```bash
 cd ~/desilike-emulator/shapefit
@@ -88,47 +103,80 @@ LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
 ```
 
 `SCRATCH` must be set. Pinned deps: desilike @ `4cfd6bec`, cosmoprimo @
-`1b100803`, `lsstypes` (install from SHAs, never bare `main` — see
-`bao/README.md`). `velocileptors` is used for the 1-loop displacement
-variances.
+`1b100803`, `lsstypes` (install from SHAs, never bare `main`). `velocileptors`
+provides both the REPT theory and the 1-loop displacement variances.
 
 ---
 
 ## 1. Emulator training data
 
 ```bash
-# covar (errors), all 6 tracers -> next free v{N}
-shapefit/generate_training_data.sh --quantity covar --cosmo-model base --n-samples 5000
+# all 6 tracers -> next free v{N}
+./generate_training_data.sh --quantity covar --cosmo-model base --n-samples 512
+./generate_training_data.sh --quantity mean  --cosmo-model base --n-samples 512
 
-# mean, all 6 tracers
-shapefit/generate_training_data.sh --quantity mean --cosmo-model base --n-samples 10000
-
-# single tracer by hand (prefer the driver — it pins one shared version)
-python generate_covar_data.py --tracer-bin LRG2 --cosmo-model base \
-    --n-samples 5000 --workers 16
+# one tracer into an existing version
+./generate_training_data.sh --quantity covar --version 1 --tracers LRG3
 ```
 
-- Output: `$SCRATCH/.../emulator/shapefit/training_data/dr1/{cosmo_model}/{covar|mean}/v{N}/{tracer}_{train,test}.npz`.
-- The `N_tracers` box is anchored via `util.ntracers_range` (tracers.yaml
-  low/high factors × DR1 `passed` counts). **Never hardcode N** — production,
-  validation and plotting must all draw from the util helpers (bao §33n).
-- Train with `train.py --analysis shapefit --quantity {covar|mean}
-  --cosmo-model base --dataset dr1 --tracer-bin <T>`; eval auto-selects the
-  matching ground-truth generator from the checkpoint's recorded quantity.
+- Output: `$SCRATCH/bedcosmo/num_tracers/emulator/shapefit/training_data/dr1/{cosmo_model}/{covar|mean}/v{N}/{tracer}_{train,test}.npz`.
+  Note this is **6 levels deep** — a shallow `find` will miss it.
+- `--n-samples` is *accepted* rows; the generator redraws against the ~42%
+  Ω_m acceptance, so it costs attempts, not samples.
+- `--maxtasksperchild` defaults to 50. **Do not disable it** — the covar
+  workers leak and a wide pool has OOM-killed the box.
+- The `N_tracers` box comes from `util.ntracers_range`. **Never hardcode N.**
+- REPT costs ~3.2× Kaiser per accepted sample (~10.7 s vs ~3.3 s).
 
-## 2. Validation
+## 2. Validation against DESI
+
+The external anchor is `desi_reference.py` — DESI 2024 V Appendix A
+(ShapeFit-alone datavectors + full 4×4 covariances) and Appendix C Table 11
+(fiducial values). Use the **ShapeFit-alone** fits, not the tighter
+ShapeFit+BAO ones, since this forecast is power-only.
 
 ```bash
-python validate_forecast.py --check fiducial   # per-tracer σ/ρ table
-python validate_forecast.py --check scaling    # σ(N) monotone/saturation plot
-python validate_forecast.py --check damping    # float vs fixed damping deltas
+python compare_to_desi.py --check shot pk cov sigma --tracers LRG2
+python comparison_plots.py all          # sigma / rho / rhomat / mean
+python validate_forecast.py --check fiducial
 ```
 
-Fiducial anchor (2026-07-27, Kaiser, DR1 counts): σ(f_sigmar)/f_sigmar spans
-3.7% (LRG3+ELG1) – 9.6% (BGS), the same range as DESI DR1 full-shape
-σ(fσ8)/fσ8 ≈ 4–10% (direct-fit velocileptors; qualitative anchor only — an
-un-windowed Kaiser Gaussian-cov Fisher is expected to sit on the tight side).
-ρ(qap, f_sigmar) ≈ −0.66…−0.72 for every tracer (the AP–RSD degeneracy).
+**Current scorecard** (σ generator/DESI, REPT, DR1 counts):
+
+| | σ(qiso) | σ(qap) | σ(fσ_r) | σ(m) |
+|---|---|---|---|---|
+| BGS | 0.61 | 0.95 | 0.67 | 0.67 |
+| LRG1 | 0.99 | 1.01 | 1.03 | 1.07 |
+| LRG2 | 0.81 | 0.85 | 0.91 | 0.87 |
+| LRG3 | 0.68 | 0.66 | 0.73 | 0.73 |
+| ELG2 | 0.65 | 0.58 | 0.54 | 0.87 |
+| QSO | 0.80 | 0.83 | 0.74 | 0.98 |
+
+The forecast is systematically tighter than DESI. There is **no trend with
+redshift or density** — corr(ratio, z_eff) = −0.128 and corr(ratio, n̄P₀) =
++0.199, and BGS is the worst agreement at the *lowest* redshift (§33; an
+earlier "degrades with redshift" claim was a five-of-six cherry-pick). LRG1 is
+the only tracer that matches on all four.
+
+Two ρ offsets are systematic across all six tracers: ρ(qap, fσ_r) too strong
+by 0.09–0.16, ρ(fσ_r, m) too weak by 0.17–0.36.
+
+The **mean** pipeline is separately validated and in good shape: it reproduces
+DESI's Table 11 fiducial fσ_s8 to ≤0.4% on four tracers (LRG1 exact to 4
+decimals), with LRG3 and QSO off by 0.7% and 4.4% for known sample and z_eff
+reasons. qiso/qap reproduce independent distance ratios to 7e−5.
+
+**Leading explanation for the σ deficit, unresolved.** Our shot-noise floor is
+`V/N` = 3595 for LRG2 against DESI's measured `num_shotnoise/norm` = 5229.5 —
+a factor **1.4545**. Propagating that alone predicts a covariance ratio of
+0.852 against the 0.815 measured on the correctly-rotated comparison, so it
+accounts for most of the gap; the residual is Fisher-vs-MCMC. What is *ruled
+out*: the V_eff-vs-I₁₂/I₂₂ definition (§26a), mean completeness (§26c/§27,
+both by Cauchy–Schwarz and empirically), and the slice parser bug (§28). What
+is *not* established: the cause. Three area normalisations disagree, and the
+required area (10,908 deg²) matches none of them. **The same n̄ construction is
+shared with `bao/`** (§29). Read CHANGELOG §26–§29 before reopening — several
+plausible mechanisms have already been proposed and killed.
 
 ## 3. Regression harness
 
@@ -138,21 +186,28 @@ python regress_sigmas.py dump --out after.npz
 python regress_sigmas.py compare before.npz after.npz
 ```
 
-Exact-equality compare over a fixed 6-tracer × 8-cosmology grid (mean +
-covar surfaces). Run before/after any desilike/cosmoprimo/scipy/numpy change —
-these outputs are emulator training labels. Baseline dump at the current pins:
-`golden_4cfd6bec.npz` (gitignored; regenerate with the dump command).
+Exact-equality compare over a fixed 6-tracer × 8-cosmology grid. Run
+before/after any desilike/cosmoprimo/scipy/numpy change — these outputs are
+emulator training labels. Baseline: `golden_4cfd6bec.npz` (gitignored).
+**Always verify a new baseline is reproducible** by dumping twice and comparing
+— that bit-exactness is the harness's entire purpose.
 
 ---
 
-## Follow-ups (documented, not built)
+## Follow-ups
 
-- velocileptors LPT theory swap (`theory_cls` is ready; needs the physical
-  prior basis + analytic marginalization over `alpha*/sn*`).
+- **Fetch the 5 missing DR1 full-shape bundles.** Only LRG2 is local, and the
+  covariance files carry placeholder shot-noise fields (`num_shotnoise = 0,
+  norm = 1`). They unblock the cross-tracer shot-noise test, the window
+  question beyond LRG2, and the ELG2 disagreement.
+- Resolve the shot-noise / effective-area discrepancy (above). Not a fudge
+  factor — a constant would not vary with the design variable.
 - bedcosmo integration: `models.yaml` `shapefit:` block, extend
-  `_build_emulator_input`'s feature whitelist to the omega basis, 4×4 block
-  assembly with a PSD guard, shapefit reference data files, and a
-  `sample_parameters` decision for the shapefit basis.
-- Ω_k cosmology models; DR2 anchoring; a DESI FS systematic-error layer.
-- MCMC cross-check of the Fisher σ (bao §33t lesson: validate against
-  posterior widths before trusting Fisher labels tracer-by-tracer).
+  `_build_emulator_input` to the omega basis, and 4×4 assembly with a PSD
+  guard. No `m` conversion is needed — the emulator already emits DESI's
+  convention.
+- Ω_k cosmology models; DR2 anchoring (the `tracers.yaml` `overrides`
+  mechanism is wired but unpopulated); a DESI FS systematic-error layer.
+- MCMC cross-check of the Fisher σ before trusting labels tracer-by-tracer.
+- Cosmetic: `plot_rho_matrix` / `rhomat` / `shapefit_rho_matrix_vs_desi.png`
+  now plot covariance, not correlation — the names are misnomers.

@@ -55,7 +55,7 @@ base_omegak_w_wa:
 # capacity/accuracy knee (32-dim ties it; 48-dim only ~1.5x lower MSE at 4x
 # params); faithful 3-seed sweeps on v2 -> mean test_mse ~2e-7 (<0.1% sigma RMS).
 # Key convention: <release>_<cosmo_model>_<space>. Select with
-#   --analysis bao --dataset dr1 --cosmo-model base --quantity config --nn-model dr1_base_config
+#   --analysis bao --data-release dr1 --cosmo-model base --quantity config --nn-model dr1_base_config
 dr1_base_config:
   architecture: resnet
   hidden_dim: 24
@@ -82,7 +82,7 @@ dr1_base_config:
 # test_mse 2.08e-2; 96/6/4 is no better at 9x params and higher variance; 24 is
 # undercapacity for the 6-input function). Base 10-restart schedule transfers as-is.
 # Select with:
-#   --analysis bao --dataset dr1 --cosmo-model base_omegak_w_wa --quantity config \
+#   --analysis bao --data-release dr1 --cosmo-model base_omegak_w_wa --quantity config \
 #     --nn-model dr1_base_omegak_w_wa_config
 dr1_base_omegak_w_wa_config:
   architecture: resnet

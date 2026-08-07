@@ -15,6 +15,14 @@ Checks (select with --check, default all):
   damping  : sensitivity of the fiducial sigmas to floating vs fixing the
              Gaussian damping scales (float_sigma_damp), documenting the
              Kaiser FoG-in-quadrature approximation.
+  kmax     : sigmas vs the fit kmax, plus the k where the Kaiser quadrupole
+             crosses zero. compare_to_desi.py (CHANGELOG S4) found our P2 going
+             negative above k ~ 0.16 for LRG2 where DESI measures positive
+             power, so the top of the band contributes derivatives from a model
+             that has broken down. This quantifies how much information is
+             actually being drawn from there: if sigma(kmax=0.10) is close to
+             sigma(kmax=0.20), the broken region carries little weight and the
+             labels are safer than the P2 comparison alone suggests.
 
 Usage (from shapefit/, emulator env):
     python validate_forecast.py --check fiducial --tracers LRG2 QSO
@@ -37,15 +45,16 @@ import numpy as np
 
 import fourier_space
 from fourier_space import sf_core
-from util import TRACER_TYPE_CHOICES, ntracers, ntracers_range, plots_dir
+from util import (TRACER_TYPE_CHOICES, get_tracer_config, ntracers,
+                  ntracers_range, plots_dir, tracer_area)
 
-TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO")
+TRACERS_ALL = ("BGS", "LRG1", "LRG2", "LRG3", "ELG2", "QSO")
 
 FID_SAMPLE = {
     "omega_cdm": 0.1200,
     "omega_b": 0.02237,
     "h": 0.6736,
-    "ln10A_s": 3.044,
+    "ln10A_s": 3.036394,
     "n_s": 0.9649,
 }
 
@@ -145,9 +154,432 @@ def check_damping(tracers) -> None:
         print(f"{tracer:>10s} " + " ".join(deltas) + "   (float vs fixed)")
 
 
+_KMAX_GRID = (0.10, 0.125, 0.15, 0.175, 0.20)
+
+
+def _forecast_at_kmax(tracer: str, kmax: float) -> dict:
+    """Marginalized sigmas at a given fit kmax, plus the fiducial multipoles.
+
+    run_fisher does not expose klim_spec (the generators never vary it), so this
+    drives core.build_shapefit_likelihood directly.
+    """
+    sample = _fid_sample_for(tracer)
+    theta = sf_core._to_shapefit_cosmo_params(sample)
+    info = sf_core.build_shapefit_likelihood(
+        N_tracers=float(sample["N_tracers"]),
+        theta_cosmo=theta,
+        tracer_bin=tracer,
+        klim_spec=(0.02, float(kmax), 0.005),
+    )
+    cov_phys = fourier_space._sf_fisher_reduction(info)
+    out = dict(zip(fourier_space.TARGET_NAMES,
+                   fourier_space.fisher_cov_to_emulator_targets(cov_phys)))
+    out["k"] = np.asarray(info["observable"].k[0], dtype=np.float64)
+    out["flatdata"] = np.asarray(info["observable"].flatdata, dtype=np.float64)
+    return out
+
+
+def check_kmax(tracers) -> None:
+    print("\n=== sigma vs fit kmax (is the broken high-k region informative?) ===")
+    names = fourier_space.TARGET_NAMES[:4]
+    for tracer in tracers:
+        print(f"\n  {tracer}")
+        print(f"    {'kmax':>6s} " + " ".join(f"{n[6:]:>11s}" for n in names)
+              + f"   {'vs kmax=0.20':>12s}")
+        rows = {}
+        for kmax in _KMAX_GRID:
+            rows[kmax] = _forecast_at_kmax(tracer, kmax)
+        ref = rows[_KMAX_GRID[-1]]
+        for kmax in _KMAX_GRID:
+            r = rows[kmax]
+            infl = np.mean([r[n] / ref[n] for n in names])
+            print(f"    {kmax:>6.3f} " + " ".join(f"{r[n]:>11.5f}" for n in names)
+                  + f"   {infl:>11.2f}x")
+        # Zero-crossing of the Kaiser quadrupole on the widest band.
+        k, flat = ref["k"], ref["flatdata"]
+        nk = k.size
+        P2 = flat[nk:2 * nk]
+        neg = np.where(P2 < 0)[0]
+        if neg.size:
+            i = int(neg[0])
+            if i == 0:
+                kz = float(k[0])
+            else:  # linear interpolation between the bracketing bins
+                kz = float(k[i - 1] + (k[i] - k[i - 1]) * P2[i - 1]
+                           / (P2[i - 1] - P2[i]))
+            print(f"    P2 crosses zero at k = {kz:.3f} "
+                  f"({(k[-1] - kz) / (k[-1] - k[0]):.0%} of the band is past it)")
+        else:
+            print(f"    P2 stays positive to k = {k[-1]:.3f}")
+    print("\n  'vs kmax=0.20' is the mean sigma inflation from truncating the band.")
+    print("  Close to 1.0 => the high-k region carries little information, so the")
+    print("  Kaiser breakdown there costs little. Much above 1.0 => the labels")
+    print("  depend on a regime where the model is known to be wrong.")
+
+
+# q = 1 holds to ~1e-7, not to machine precision. That floor is NOT the
+# omega_cdm -> Omega_m -> omega_cdm round trip (measured: h, n_s, m_ncdm all
+# agree at exactly 0 relative error, so the mapping is exact). It is two
+# separately-initialised CLASS instances -- the fiducial built once at
+# extractor init, the calculator run per call -- requesting different outputs
+# and so interpolating the background off different grids. Measured at QSO:
+# rs_drag 1.0e-8, comoving_angular_distance 9.1e-8, efunc 1.6e-7, with the
+# same ClassEngine on both sides. Hence the rise with z: coarser grid, not a
+# growing physical discrepancy.
+#
+# 1e-5 is loose enough not to flag that and tight enough to catch the bug it
+# exists for: dropping omega_ncdm shifts omega_cdm by ~0.0006, which shows up
+# here at the 1e-4 level.
+_Q_UNITY_TOL = 1e-5
+# Agreement required between the extractor's q and the same ratio built
+# straight from cosmoprimo. Both are cosmoprimo underneath, so this is a
+# convention test (eta, DH/DM orientation, which cosmology is the fiducial),
+# not a numerical one -- it passes at <1e-6 or fails outright.
+_Q_AP_TOL = 1e-5
+# Same assertion for the two SHAPE targets, which q cannot reach: q is built
+# from distances alone, so it is blind to n_s and ln10A_s entirely. dm brings
+# in n_s; f_sigmar/f_sigmar_fid is the ONLY one of the four sensitive to
+# ln10A_s (amplitude does not change a slope, so dm does not move with it).
+#
+# Looser floor than q, and for a different reason: these run through the
+# de-wiggled P(k) and a numerical log-slope at kp, not a background integral.
+# Measured at fiducial input, |dm| <= 7.8e-5 and |f_sigmar/fid - 1| <= 6.5e-5,
+# worst at low z and not monotonic -- P(k)/filter numerics, not the background
+# grid. 5e-4 sits ~6x above that floor; a 0.1% error in n_s or ln10A_s gives
+# 9.4e-4 to 1.5e-3, so the check bites at roughly the 0.05% level.
+_SHAPE_UNITY_TOL = 5e-4
+
+
+# The absolute identity of cosmoprimo's "DESI" fiducial, recorded 2026-08-02
+# against cosmoprimo 1b100803. Every mean label is defined RELATIVE to this
+# object (the extractor's fiducial=), so if it moves, every label silently
+# changes meaning while all the ratio checks still pass.
+#
+# Inputs are definitional and compared exactly-ish; derived scalars carry a
+# loose tolerance because they come out of CLASS.
+_FIDUCIAL_PARAMS = {
+    "omega_cdm": 0.1200000000,
+    "omega_b": 0.0223700000,
+    "h": 0.6736000000,
+    "ln10A_s": 3.0363942553,
+    "n_s": 0.9649000000,
+    "m_ncdm": 0.0599999193,
+    "N_ncdm": 1.0,
+    "N_eff": 3.0459982215,
+    "tau_reio": 0.0544000000,
+    "w0_fld": -1.0,
+    "wa_fld": 0.0,
+}
+_FIDUCIAL_DERIVED = {"rs_drag": 99.0844267934, "sigma8": 0.8076353990}
+_FIDUCIAL_ENGINE = "cosmoprimo.classy.ClassEngine"
+_FID_PARAM_TOL = 1e-8
+# Loose enough for CLASS build/version jitter, tight enough that a precision
+# or engine change shows: precision='base' moves these well above 1e-6.
+_FID_DERIVED_TOL = 1e-6
+
+
+def check_fiducial_identity() -> None:
+    """Pin cosmoprimo's DESI fiducial in ABSOLUTE terms.
+
+    This is the gap `check_mean_ap` cannot close. Every check there is a
+    ratio of the varying cosmology to the fiducial, so anything that moves
+    BOTH sides together cancels exactly and passes:
+
+      - cosmoprimo repointing the `DESI` alias (it is `DESI =
+        AbacusSummitBase` at fiducial.py:264, and the same module already
+        ships DESIDR2Flatw0waCDM with quite different values);
+      - a different Boltzmann engine;
+      - a different precision setting (AbacusSummitBase takes precision=None
+        by default and documents precision='base' as materially different).
+
+    Any of those silently redefines every mean training label, since the
+    labels ARE ratios to this object. Absolute values are the only way to see
+    it. Compare to `with_now`, where trusting an upstream default mislabelled
+    sigma ~2x.
+    """
+    print("\n=== Fiducial identity (cosmoprimo 'DESI', absolute) ===")
+    from cosmoprimo.fiducial import DESI
+
+    c = DESI()
+    h = c.h
+    got = {
+        "omega_cdm": float(c.Omega0_cdm * h * h),
+        "omega_b": float(c.Omega0_b * h * h),
+        "h": float(h),
+        "ln10A_s": float(np.log(c.A_s * 1e10)),
+        "n_s": float(c.n_s),
+        "m_ncdm": float(np.atleast_1d(c.m_ncdm).sum()),
+        "N_ncdm": float(np.atleast_1d(c.N_ncdm).sum()),
+        "N_eff": float(c.N_eff),
+        "tau_reio": float(c.tau_reio),
+        "w0_fld": float(c.w0_fld),
+        "wa_fld": float(c.wa_fld),
+    }
+    fails = 0
+    print(f"{'param':>12s} {'expected':>18s} {'got':>18s} {'rel':>10s}")
+    for k, want in _FIDUCIAL_PARAMS.items():
+        rel = (got[k] - want) / want if want else got[k] - want
+        ok = abs(rel) < _FID_PARAM_TOL
+        fails += not ok
+        print(f"{k:>12s} {want:18.10f} {got[k]:18.10f} {rel:10.1e}"
+              f"{'' if ok else '  <-- FAIL'}")
+
+    derived = {"rs_drag": float(c.rs_drag),
+               "sigma8": float(c.get_fourier().sigma8_m)}
+    for k, want in _FIDUCIAL_DERIVED.items():
+        rel = derived[k] / want - 1.0
+        ok = abs(rel) < _FID_DERIVED_TOL
+        fails += not ok
+        print(f"{k:>12s} {want:18.10f} {derived[k]:18.10f} {rel:10.1e}"
+              f"{'' if ok else '  <-- FAIL'}")
+
+    eng = type(c.engine).__module__ + "." + type(c.engine).__name__
+    ok = eng == _FIDUCIAL_ENGINE
+    fails += not ok
+    print(f"{'engine':>12s} {_FIDUCIAL_ENGINE:>18s} -> {eng}"
+          f"{'' if ok else '  <-- FAIL'}")
+
+    print(f"\n  Tolerances: inputs {_FID_PARAM_TOL:g}, derived "
+          f"{_FID_DERIVED_TOL:g} (CLASS).")
+    print("  A failure here means the fiducial MOVED. Every mean label is")
+    print("  defined relative to it, so the training data is stale even")
+    print("  though every ratio check still passes.")
+    if fails:
+        raise SystemExit(f"  {fails} fiducial identity check(s) FAILED")
+    print("  fiducial unchanged.")
+
+
+def check_mean_ap(tracers) -> None:
+    """Self-consistency of the mean pipeline's AP outputs.
+
+    Needs no DESI reference data: qiso and qap are ratios of the SAME
+    extractor's varying cosmology to its fixed fiducial, both at the same z.
+
+      (a) at fiducial input, q must be exactly 1 -- the numerator and
+          denominator are then the same cosmology. This is the only test that
+          exercises the mean path's cosmology mapping (_to_mean_extractor_params
+          assembles Omega_m from the omega basis, including omega_ncdm; the
+          covar path passes omega_cdm straight through). If those two ever
+          disagree, the mean and covar emulators are trained on different
+          cosmologies and nothing else in the suite would notice.
+
+      (b) off-fiducial, q must equal the distance ratio computed directly from
+          cosmoprimo. This is the AP machinery proper, in the regime the
+          emulator is actually used in. Note the comparison plots CANNOT test
+          this: their AP panels compare a fiducial to a fiducial, so the
+          extractor's numerator never enters.
+    """
+    print("\n=== Mean-pipeline AP self-consistency ===")
+    from cosmoprimo.fiducial import DESI
+
+    def _q_from_cosmoprimo(theta, z):
+        c = sf_core.get_cosmo(("DESI", dict(theta)))
+        DH = (299792.458 / 1e3) / (100.0 * c.efunc(z))
+        DM = c.comoving_angular_distance(z)
+        # eta = 1/3, matching BAOExtractor._set_base.
+        DV = DH ** (1.0 / 3.0) * DM ** (2.0 / 3.0) * z ** (1.0 / 3.0)
+        return DV / c.rs_drag, DH / DM      # (DV/rd, DH/DM) -- NOT DM/DH
+
+    def _run(sample, tracer, z):
+        _s, vals, err = fourier_space._worker_run_mean_targets(
+            (sample, tracer, z, sf_core.PARAM_DEFAULTS,
+             float(tracer_area(tracer, "dr1")), "dr1"))
+        if vals is None:
+            raise RuntimeError(f"{tracer}: mean worker failed\n{err}")
+        return float(vals[0]), float(vals[1])
+
+    perturbations = [("omega_cdm +5%", {"omega_cdm": FID_SAMPLE["omega_cdm"] * 1.05}),
+                     ("h -3%", {"h": FID_SAMPLE["h"] * 0.97})]
+    fails = 0
+    print(f"{'tracer':>8s} {'case':>14s} {'qiso':>12s} {'qap':>12s} {'max dev':>10s}")
+    for t in tracers:
+        cosmo = DESI()
+        cfg = get_tracer_config(t, analysis="shapefit", data_release="dr1")
+        # Must pass N_tracers: z_eff depends on it (S42), and the fiducial
+        # row below asserts q == 1 at the DR1 count, so the z used here has
+        # to be the z the worker would derive for that same sample.
+        z = sf_core._fs_compute_z_eff(
+            tracer_bin=t, cosmo=cosmo, fo=cosmo.get_fourier(),
+            area_deg2=float(tracer_area(t, "dr1")),
+            b1=float(cfg.get("bias_recon", 2.0)),
+            n_tracers=ntracers(t, "dr1"), data_release="dr1")
+
+        qiso, qap = _run(dict(FID_SAMPLE), t, z)
+        dev = max(abs(qiso - 1.0), abs(qap - 1.0))
+        ok = dev < _Q_UNITY_TOL
+        fails += not ok
+        print(f"{t:>8s} {'fiducial':>14s} {qiso:12.8f} {qap:12.8f} "
+              f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
+
+        # Shape targets, same assertion, different numerics and different
+        # parameter coverage (see _SHAPE_UNITY_TOL). Read off the extractor
+        # rather than the worker: the worker returns the ABSOLUTE f_sigmar,
+        # and the self-consistent quantity is its ratio to f_sigmar_fid.
+        ex = fourier_space._get_mean_extractor(t, z)
+        ex(**sf_core._to_mean_extractor_params(
+            {**FID_SAMPLE, **sf_core.PARAM_DEFAULTS}))
+        ex.get()
+        dm = float(ex.dm)
+        dfsr = float(ex.f_sigmar / ex.f_sigmar_fid) - 1.0
+        sdev = max(abs(dm), abs(dfsr))
+        sok = sdev < _SHAPE_UNITY_TOL
+        fails += not sok
+        print(f"{'':>8s} {'  shape':>14s} {dm:12.2e} {dfsr:12.2e} "
+              f"{sdev:10.1e} {'' if sok else '  <-- FAIL'}")
+
+        for name, pert in perturbations:
+            s = {**FID_SAMPLE, **pert}
+            qiso, qap = _run(s, t, z)
+            theta_p = sf_core._to_shapefit_cosmo_params(s)
+            theta_f = sf_core._to_shapefit_cosmo_params(dict(FID_SAMPLE))
+            dv_p, dhdm_p = _q_from_cosmoprimo(theta_p, z)
+            dv_f, dhdm_f = _q_from_cosmoprimo(theta_f, z)
+            dev = max(abs(qiso / (dv_p / dv_f) - 1.0),
+                      abs(qap / (dhdm_p / dhdm_f) - 1.0))
+            ok = dev < _Q_AP_TOL
+            fails += not ok
+            print(f"{'':>8s} {name:>14s} {qiso:12.8f} {qap:12.8f} "
+                  f"{dev:10.1e} {'' if ok else '  <-- FAIL'}")
+
+    print(f"\n  Columns are (qiso, qap) except on the 'shape' rows, which are")
+    print(f"  (dm, f_sigmar/f_sigmar_fid - 1). 'max dev' is the distance from")
+    print(f"  the required value: 1 for q and f_sigmar/fid, 0 for dm; the")
+    print(f"  perturbed rows compare q against cosmoprimo instead.")
+    print(f"  Tolerances: q {_Q_UNITY_TOL:g} / AP {_Q_AP_TOL:g} / "
+          f"shape {_SHAPE_UNITY_TOL:g}.")
+    if fails:
+        raise SystemExit(f"  {fails} AP self-consistency check(s) FAILED")
+    print("  all rows pass.")
+
+
+# Both pipelines reach z_eff through the SAME function, core._fs_compute_z_eff,
+# from two different call sites (covar: inside build_shapefit_likelihood; mean:
+# inside _mean_z_eff_for_sample). So what this tolerance guards is not
+# arithmetic, it is the ARGUMENTS each call site assembles independently -- the
+# omega-basis -> cosmoprimo mapping, the survey area, whether N_tracers is
+# threaded through at all, and which data_release's n(z) slices are read.
+#
+# Measured over 6 tracers x {N x 0.5/1.0/1.5, omega_cdm +5%, h -3%}: the two
+# paths agree BIT FOR BIT -- 0 ULP, rel dev exactly 0.0 -- on all 30 points.
+# There is no numerical floor to sit above, so unlike _Q_UNITY_TOL this number
+# is not a measured jitter level; it is chosen from both sides instead. 1e-9 is
+# ~6 orders above double-rounding noise on a z ~ 1 quantity, so an
+# equivalent-but-reassociated rewrite of either call site still passes, and ~5
+# orders BELOW the extractor's own z quantum (fourier_space._MEAN_Z_QUANTUM,
+# 1e-4 in z), so it bites long before a disagreement could change even which
+# cached extractor gets built, let alone a label.
+_ZEFF_CONSISTENCY_TOL = 1e-9
+# A z_eff that ignored its inputs would pass the rows above vacuously -- which
+# is EXACTLY the pre-S42 bug (the mean path froze z_eff at the fiducial
+# cosmology and ignored N entirely), and it would sail through a
+# covar-vs-mean-agree test. So also require z_eff to actually move across the
+# grid. Measured spread (max-min)/min per tracer: LRG3 1.23e-2, ELG2 6.78e-3,
+# BGS 3.59e-3, QSO 1.81e-3, LRG1 4.14e-4, LRG2 2.43e-4. LRG1/LRG2 are the
+# tight ones (n̄P ~ 5 throughout, so N nearly cancels -- S42) and their spread
+# is carried by the cosmology rows, not the N rows. 1e-4 sits 2.4x under the
+# tightest tracer, which is enough margin for CLASS jitter and still catches a
+# frozen or constant z_eff.
+_ZEFF_SPREAD_MIN = 1e-4
+
+
+def check_zeff_consistency(tracers) -> None:
+    """The covar and mean pipelines must derive the SAME z_eff.
+
+    This is the assertion S42 was made FOR but never made. mu and C of the
+    same per-tracer Gaussian likelihood are produced by two separate
+    pipelines and two separate generators, and before S42 they disagreed:
+    the covar path derived z_eff from the sampled cosmology while the mean
+    path froze it at the fiducial (up to 1.1% apart on QSO), and neither took
+    N_tracers into account (up to 1.22% across the box on LRG3). Both were
+    fixed, but nothing asserted that the fix left the two in agreement.
+
+    Nothing else in the suite can see a re-divergence. `check_mean_ap` only
+    ever touches the mean path, and it PINS z itself before calling the
+    worker, so a covar/mean split in the derivation is invisible to it. The
+    training data would not show it either: each emulator is internally
+    self-consistent, and the mismatch only surfaces downstream, as a mu
+    evaluated at one redshift being scored against a C evaluated at another.
+
+    Each side is driven through its production entry point, not through
+    `core._fs_compute_z_eff` directly, since the shared function is not what
+    can drift -- the argument assembly around it is:
+
+      covar : fourier_space.run_fisher(sample, ...)["z_eff"], the call
+              generate_covar_data.py's worker makes. It owns the
+              sample -> theta_cosmo mapping, the N_tracers pull out of the
+              sample dict, and the area default.
+      mean  : fourier_space._mean_z_eff_for_sample(...), the helper
+              _worker_run_mean_targets calls whenever its z_eff task field is
+              None (the generator default -- --z-eff still pins it).
+
+    Note `area` is deliberately NOT passed to run_fisher: the covar path
+    defaults it internally (to tracer_area(tracer_bin, data_release) since S54),
+    while the mean worker receives it as an explicit task field. Forcing them
+    equal here would hide a drift between those two routes to the footprint.
+
+    That is the intent, and until now it did not work. The explicit field said
+    dataset_area("dr1") = 7500 while the covar default said tracer_area = 5740
+    on LRG -- a 1.31x drift, precisely the thing this check exists to catch --
+    and it passed anyway, because under Z_EFF_CONVENTION "desi_eq21" the area
+    cancels out of z_eff entirely (slice weight over V_bin). So the check was
+    blind by construction: it compares the one quantity the footprint does not
+    reach. Both sides now say tracer_area; the check is still worth running for
+    the N_tracers and cosmology dependences it does test, but it is NOT a test
+    of the footprint and must not be read as one.
+    """
+    print("\n=== z_eff consistency (covar pipeline vs mean pipeline) ===")
+    cases = [("N x 0.50", {}, 0.5),
+             ("N x 1.00", {}, 1.0),
+             ("N x 1.50", {}, 1.5),
+             ("omega_cdm +5%", {"omega_cdm": FID_SAMPLE["omega_cdm"] * 1.05}, 1.0),
+             ("h -3%", {"h": FID_SAMPLE["h"] * 0.97}, 1.0)]
+    fails = 0
+    print(f"{'tracer':>8s} {'case':>15s} {'z_eff covar':>14s} "
+          f"{'z_eff mean':>14s} {'rel dev':>10s}")
+    for t in tracers:
+        # Per tracer, inside the loop: the mean worker is handed an explicit
+        # area and generate_mean_data.py now resolves it from the tracer.
+        area = float(tracer_area(t, "dr1"))
+        z_grid = []
+        for i, (name, pert, n_factor) in enumerate(cases):
+            # N_tracers via _fid_sample_for -> util.ntracers; never hardcoded.
+            sample = {**_fid_sample_for(t, n_factor), **pert}
+            z_cov = float(fourier_space.run_fisher(
+                sample, tracer_bin=t, param_defaults=sf_core.PARAM_DEFAULTS,
+                data_release="dr1")["z_eff"])
+            z_mean = float(fourier_space._mean_z_eff_for_sample(
+                {**sf_core.PARAM_DEFAULTS, **sample}, t, area, "dr1"))
+            dev = abs(z_mean - z_cov) / z_cov
+            ok = dev < _ZEFF_CONSISTENCY_TOL
+            fails += not ok
+            z_grid.append(z_cov)
+            print(f"{t if i == 0 else '':>8s} {name:>15s} {z_cov:14.8f} "
+                  f"{z_mean:14.8f} {dev:10.1e}{'' if ok else '  <-- FAIL'}")
+        spread = (max(z_grid) - min(z_grid)) / min(z_grid)
+        sok = spread > _ZEFF_SPREAD_MIN
+        fails += not sok
+        print(f"{'':>8s} {'  spread':>15s} {'':>14s} {'':>14s} {spread:10.1e}"
+              f"{'' if sok else '  <-- FAIL (z_eff frozen?)'}")
+
+    print("\n  Both columns bottom out in core._fs_compute_z_eff, so a passing")
+    print("  'rel dev' is not an arithmetic result -- it says the two call")
+    print("  sites assembled the same arguments (cosmology mapping, area,")
+    print("  N_tracers, data_release). The 'spread' row is the range of z_eff over")
+    print("  the grid, and must be non-zero or the rows above pass vacuously:")
+    print("  that is precisely how the pre-S42 frozen-z_eff bug would hide.")
+    print(f"  Tolerances: consistency {_ZEFF_CONSISTENCY_TOL:g} "
+          f"(observed: exactly 0), min spread {_ZEFF_SPREAD_MIN:g}.")
+    if fails:
+        raise SystemExit(f"  {fails} z_eff consistency check(s) FAILED")
+    print("  covar and mean derive the same z_eff at every grid point.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--check", choices=["fiducial", "scaling", "damping", "all"],
+    p.add_argument("--check",
+                   choices=["fiducial", "scaling", "damping", "kmax",
+                            "mean-ap", "fiducial-id", "zeff-consistency",
+                            "all"],
                    default="all")
     p.add_argument("--tracers", nargs="*", default=None,
                    choices=list(TRACER_TYPE_CHOICES),
@@ -161,6 +593,14 @@ def main() -> int:
         check_scaling(tracers)
     if args.check in ("damping", "all"):
         check_damping(tracers)
+    if args.check in ("kmax", "all"):
+        check_kmax(tracers)
+    if args.check in ("fiducial-id", "all"):
+        check_fiducial_identity()
+    if args.check in ("mean-ap", "all"):
+        check_mean_ap(tracers)
+    if args.check in ("zeff-consistency", "all"):
+        check_zeff_consistency(tracers)
     return 0
 
 

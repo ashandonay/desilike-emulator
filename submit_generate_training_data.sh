@@ -11,7 +11,7 @@
 #                        -> shapefit/generate_mean_data.py   (--quantity mean)
 #
 # Output tree (one version folder shared by every tracer in a batch):
-#   {analysis}/training_data/{dataset}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
+#   {analysis}/training_data/{data_release}/{cosmo_model}/{quantity}/v{N}/{tracer}_{train,test}.npz
 #
 # The shared v{N} is resolved ONCE up front (on the login node) and passed
 # explicitly to every job, so the parallel jobs don't each auto-increment into
@@ -40,7 +40,7 @@
 #   --analysis         bao | shapefit            (default: bao)
 #   --space            config | fourier          (bao only; default: config)
 #   --quantity         covar | mean              (shapefit only; default: covar)
-#   --dataset          dr1 | dr2                 (default: dr1)
+#   --data-release          dr1 | dr2                 (default: dr1)
 #   --cosmo-model      MODEL                     (default: per analysis, below)
 #   --n-samples N      LHS draws per tracer      (default: 5000)
 #   --version N        shared v{N} folder        (default: auto = next free v{N})
@@ -78,7 +78,7 @@ NODES=1
 ANALYSIS="bao"
 SPACE=""            # bao only;      resolved to 'config' below if unset
 QUANTITY=""         # shapefit only; resolved to 'covar'  below if unset
-DATASET="dr1"
+DATA_RELEASE="dr1"
 COSMO_MODEL=""      # resolved per analysis below
 N_SAMPLES=5000
 VERSION=""
@@ -96,7 +96,7 @@ while [[ $# -gt 0 ]]; do
         --analysis)     ANALYSIS="$2"; shift 2 ;;
         --space)        SPACE="$2"; shift 2 ;;
         --quantity)     QUANTITY="$2"; shift 2 ;;
-        --dataset)      DATASET="$2"; shift 2 ;;
+        --data-release)      DATA_RELEASE="$2"; shift 2 ;;
         --cosmo-model)  COSMO_MODEL="$2"; shift 2 ;;
         --n-samples)    N_SAMPLES="$2"; shift 2 ;;
         --version)      VERSION="$2"; shift 2 ;;
@@ -161,13 +161,14 @@ mkdir -p "$LOG_DIR"
 # ── Resolve the shared version ONCE so every per-tracer job lands in the same
 #    v{N} folder. Default (empty) = next free v{N} via util._next_version. ──
 if [[ -z "$VERSION" ]]; then
-    VERSION="$("$PYBIN" - "$SCRIPT_DIR" "$ANALYSIS" "$QUANTITY" "$COSMO_MODEL" "$DATASET" "$SAVE_PATH" <<'PY'
+    VERSION="$("$PYBIN" - "$SCRIPT_DIR" "$ANALYSIS" "$QUANTITY" "$COSMO_MODEL" "$DATA_RELEASE" "$SAVE_PATH" <<'PY'
 import os, sys
-script_dir, analysis, quantity, cosmo_model, dataset, save_path = sys.argv[1:7]
+script_dir, analysis, quantity, cosmo_model, data_release, save_path = sys.argv[1:7]
 sys.path.insert(0, os.path.abspath(script_dir))
 from util import get_default_save_path, _next_version
 root = save_path or get_default_save_path(
-    analysis=analysis, quantity=quantity, cosmo_model=cosmo_model, dataset=dataset)
+    analysis=analysis, quantity=quantity, cosmo_model=cosmo_model,
+    data_release=data_release)
 print(_next_version(root))
 PY
 )"
@@ -176,14 +177,16 @@ fi
 
 if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
     echo "ERROR: could not resolve a numeric version (got '$VERSION'). " \
-         "Set \$SCRATCH, or pass --save-path / --version explicitly." >&2
+         "Set \$SCRATCH, or pass --save-path / --version explicitly. " \
+       "If the snippet above raised, that is the real cause -- read its " \
+       "traceback rather than this line." >&2
     exit 1
 fi
 
 SAVE_PATH_FLAG=""
 [[ -n "$SAVE_PATH" ]] && SAVE_PATH_FLAG="--save-path $SAVE_PATH"
 
-echo "=== $(basename "$GEN_SCRIPT"): analysis=$ANALYSIS quantity=$QUANTITY dataset=$DATASET model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
+echo "=== $(basename "$GEN_SCRIPT"): analysis=$ANALYSIS quantity=$QUANTITY data_release=$DATA_RELEASE model=$COSMO_MODEL n=$N_SAMPLES workers=$WORKERS version=v$VERSION ==="
 echo "Submitting one job per tracer: ${TRACER_NAMES[*]}"
 echo "Extra args: ${EXTRA_ARGS[*]:-<none>}"
 echo "SLURM: time=$TIME, queue=$QUEUE, nodes=$NODES"
@@ -213,7 +216,7 @@ echo "Node:         $(hostname)"
 echo "Tracer:       __NAME__"
 echo "Analysis:     __ANALYSIS__"
 echo "Quantity:     __QUANTITY__"
-echo "Dataset:      __DATASET__"
+echo "Data release: __DATA_RELEASE__"
 echo "Cosmo Model:  __COSMO_MODEL__"
 echo "Version:      v__VERSION__"
 echo "Workers:      __WORKERS__"
@@ -250,7 +253,7 @@ cd __SCRIPT_DIR__
 
 python __GEN_SCRIPT__ \
     __GEN_QUANTITY_FLAG__ \
-    --dataset __DATASET__ \
+    --data-release __DATA_RELEASE__ \
     --tracer-bin "__NAME__" \
     --cosmo-model __COSMO_MODEL__ \
     --n-samples __N_SAMPLES__ \
@@ -260,7 +263,7 @@ python __GEN_SCRIPT__ \
     __EXTRA_ARGS_RAW__
 
 echo ""
-echo "Tracer __NAME__ complete (saved to .../__ANALYSIS__/training_data/__DATASET__/__COSMO_MODEL__/__QUANTITY__/v__VERSION__/)."
+echo "Tracer __NAME__ complete (saved to .../__ANALYSIS__/training_data/__DATA_RELEASE__/__COSMO_MODEL__/__QUANTITY__/v__VERSION__/)."
 echo "End: $(date)"
 INNEREOF
 
@@ -272,7 +275,7 @@ INNEREOF
     sed -i "s|__ANALYSIS__|$ANALYSIS|g" "$BATCH_SCRIPT"
     sed -i "s|__QUANTITY__|$QUANTITY|g" "$BATCH_SCRIPT"
     sed -i "s|__GEN_QUANTITY_FLAG__|$GEN_QUANTITY_FLAG|g" "$BATCH_SCRIPT"
-    sed -i "s|__DATASET__|$DATASET|g" "$BATCH_SCRIPT"
+    sed -i "s|__DATA_RELEASE__|$DATA_RELEASE|g" "$BATCH_SCRIPT"
     sed -i "s|__COSMO_MODEL__|$COSMO_MODEL|g" "$BATCH_SCRIPT"
     sed -i "s|__N_SAMPLES__|$N_SAMPLES|g" "$BATCH_SCRIPT"
     sed -i "s|__WORKERS__|$WORKERS|g" "$BATCH_SCRIPT"
@@ -298,4 +301,4 @@ INNEREOF
 done
 
 echo
-echo "All jobs submitted. Outputs will land in .../$ANALYSIS/training_data/$DATASET/$COSMO_MODEL/$QUANTITY/v$VERSION/"
+echo "All jobs submitted. Outputs will land in .../$ANALYSIS/training_data/$DATA_RELEASE/$COSMO_MODEL/$QUANTITY/v$VERSION/"

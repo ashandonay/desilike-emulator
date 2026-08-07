@@ -131,19 +131,19 @@ into one shared, auto-incremented version folder (no overwrite):
 bao/generate_training_data.sh --space config --cosmo-model base --n-samples 10000
 
 # DR2 counts — same factors, different anchor (lands in its own v{N})
-bao/generate_training_data.sh --dataset dr2 --cosmo-model base --n-samples 10000
+bao/generate_training_data.sh --data-release dr2 --cosmo-model base --n-samples 10000
 
 # single tracer, by hand (auto-versions per save() call — prefer the driver)
-python generate_covar_data.py --space config --dataset dr1 --tracer-bin LRG2 \
+python generate_covar_data.py --space config --data-release dr1 --tracer-bin LRG2 \
     --cosmo-model base --n-samples 5000 --workers 16
 ```
 
-- Output: `$SCRATCH/.../emulator/bao/training_data/{dataset}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
+- Output: `$SCRATCH/.../emulator/bao/training_data/{data_release}/{cosmo_model}/{space}/v{N}/{tracer}_{train,test}.npz`
   with `target_names = [sigma_DH_over_rd, sigma_DM_over_rd, sigma_DV_over_rd]`
   and the cosmo + `N_tracers` inputs in `x`.
-- `--dataset` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors
+- `--data-release` ∈ {`dr1`, `dr2`} picks the DESI release whose `passed` count anchors
   the `N_tracers` box (`tracers.yaml low/high` are factors x that count) and forms
-  the `{dataset}` path segment. Train with the matching `train.py --dataset`.
+  the `{data_release}` path segment. Train with the matching `train.py --data-release`.
 - `--cosmo-model` ∈ {`base`, `base_w`, `base_w_wa`, `base_omegak`, `base_omegak_w_wa`}
   selects which cosmology parameters vary.
 - **`--space config` ignores `--area`/`--zrange`/`--z-eff`/`--nz-slices-path`** — its
@@ -171,7 +171,7 @@ to the same σ-triplet.
 # one CLI, pick the frame with --space {config|fourier}
 
 # Fourier — sample the desilike likelihood object
-python mcmc.py --space fourier --tracers LRG2 QSO --cov analytic --dataset dr1
+python mcmc.py --space fourier --tracers LRG2 QSO --cov analytic --data-release dr1
 python mcmc.py --space fourier --cov bundle              # DR1 RascalC cov_ξ as precision
 python mcmc.py --space fourier --cov bundle --seeds 42 43 44 45 46   # sweep → error bars
 

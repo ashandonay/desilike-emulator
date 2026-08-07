@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 import core
 import config_space as cc
 import desi_reference as desi_ref
-from util import TRACER_CONFIGS, plots_dir
+from util import TRACER_CONFIGS, get_tracer_config, plots_dir
 
 _TRACERS = ["BGS", "LRG1", "LRG2", "LRG3_ELG1", "ELG2", "QSO"]
 _QS = [("DH_over_rs", "DH/rd"), ("DM_over_rs", "DM/rd"), ("DV_over_rs", "DV/rd")]
@@ -49,7 +49,7 @@ def _rel_fro(C, Cb):
 
 
 def _analyze(tracer):
-    cfg = TRACER_CONFIGS[tracer]
+    cfg = get_tracer_config(tracer, data_release="dr1")
     apmode = "qiso" if tracer in core._ISO_TRACERS else "qparqper"
     theta, hrdrag = core._to_bao_cosmo_params({**core.PARAM_DEFAULTS, **cc._FID})
     info = core.build_bao_likelihood(
@@ -58,8 +58,11 @@ def _analyze(tracer):
         area=cc._AREA, apmode=apmode, lean=True)
 
     cosmo = core.get_cosmo(("DESI", dict(theta)))
-    slices = cc.load_nz_slices(tracer_bin=tracer, cosmo=cosmo, area_deg2=cc._AREA,
-                               N_design=float(cc._get_ntracers(tracer)))
+    # DESI NX density, same as the production covariance (S90). A diagnostic on
+    # a different n-bar than the pipeline it audits measures nothing.
+    slices, _ = cc._nz_slices_nx(tracer, cosmo, cc._AREA,
+                                 float(cc._get_ntracers(tracer)),
+                                 data_release="dr1")  # cc._AREA is DR1
     P_wide = cc._wide_Pell(tracer, info)
 
     bundle = cc.load_bundle(tracer)

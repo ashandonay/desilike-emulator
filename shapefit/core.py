@@ -7,17 +7,28 @@ the ShapeFit compressed parameters ``(qiso, qap, f_sigmar, m)``.
 Design decisions (see shapefit/README.md and shapefit/CHANGELOG.md):
 
 - Template: ``ShapeFitPowerSpectrumTemplate(apmode="qisoqap",
-  with_now="wallish2018")``. ``with_now`` MUST be explicit — the desilike
-  default ``'peakaverage'`` mislabels sigma ~2x and crashes chaotically across
-  wide emulator priors (see the long comment at bao/core.py:1641). ``dn``
-  stays fixed (un-fixing it changes the definition of ``m``).
-- Theory: ``KaiserTracerPowerSpectrumMultipoles`` by default, pluggable via
-  ``theory_cls`` (velocileptors LPT is the planned upgrade). Kaiser exposes
-  ``b1``, ``sn0`` and the Gaussian damping scales ``sigmapar``/``sigmaper``.
-- Broadband: none. Kaiser has no broadband basis and DESI full-shape has no
-  polynomial broadband either (EFT counterterms/stochastic terms arrive with
-  the velocileptors theory). ``sn0`` is the only stochastic freedom. Do not
-  graft the BAO 'pcs' basis onto full shape.
+  with_now="peakaverage")``. ``with_now`` MUST be explicit, so that an upstream
+  default change cannot silently redefine the labels — that is the standing
+  lesson, and it is why this is spelled out rather than inherited. The VALUE is
+  ``'peakaverage'`` since S76: REPT overrides this argument unconditionally, so
+  the production path resolves there regardless, and it is what DESI's own
+  full-shape baseline (also desilike REPT) therefore ran. NB the
+  ``'peakaverage'`` instability recorded for the BAO path (bao/core.py:1641,
+  sigma mislabelled ~2x, chaotic w0 sensitivity) is a real risk carried into
+  this choice; S76 probes it across the prior box. ``dn`` stays fixed
+  (un-fixing it changes the definition of ``m``).
+- Theory: ``REPTVelocileptorsTracerPowerSpectrumMultipoles`` by default,
+  pluggable via ``theory_cls``. This is DESI's own baseline -- 2024 V S4.7
+  item 2, "We select velocileptors with its EPT option as our baseline choice"
+  -- and with ``prior_basis='physical'`` it varies exactly DESI's Table 4 set
+  (b1p, b2p, bsp, alpha0p, alpha2p, sn0p, sn2p) at their prior widths, all
+  marginalised by the Schur reduction. Kaiser remains available and is a
+  different model, not an approximation to this one: it under-reports sigma by
+  1.6-2.1x and inverts two correlation signs on every tracer (CHANGELOG S15,
+  S16, S22).
+- Broadband: none, in the polynomial sense -- DESI full-shape has no broadband
+  basis either. The EFT counterterms and stochastic terms above ARE the
+  small-scale freedom. Do not graft the BAO 'pcs' basis onto full shape.
 - Pre-recon everywhere: no reconstruction template, no Sigma_post, no
   smoothing_scale/bias_recon modelling, no shifted-random shot-noise boost.
   Damping fiducials are the pre-recon (linear + 1-loop) Sigma_perp/Sigma_par
@@ -54,6 +65,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import numpy as np
 from scipy.optimize import brentq
 
+# numpy 2.0 renamed trapz -> trapezoid; this env is pinned at 1.26.4 for the
+# frozen desilike/cosmoprimo SHAs. bao/core.py:27 installs the same shim (for
+# velocileptors), and importing it below would supply this one as a side effect
+# -- but module-level np.trapezoid calls here would then depend on import order.
+# Guard locally instead.
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz
+
 # Suppress desilike import-time warnings (e.g. missing interpax/jax) before importing
 warnings.filterwarnings("ignore")
 
@@ -65,11 +84,12 @@ from desilike.observables.galaxy_clustering import (
 )
 from desilike.theories.galaxy_clustering import (
     KaiserTracerPowerSpectrumMultipoles,
+    REPTVelocileptorsTracerPowerSpectrumMultipoles,
     ShapeFitPowerSpectrumTemplate,
 )
 from desilike.theories.primordial_cosmology import get_cosmo
 
-from util import get_tracer_config
+from util import get_tracer_config, tracer_area
 
 # Shared survey-physics + sampling machinery from the production BAO pipeline.
 # Imported as a module (never `import core` — that would self-import when the
@@ -140,18 +160,63 @@ _TRIU_I, _TRIU_J = np.triu_indices(4, k=1)
 TARGET_NAMES = [f"sigma_{name}" for name in _PHYS_NAMES] + [
     f"rho_{_PHYS_NAMES[i]}_{_PHYS_NAMES[j]}" for i, j in zip(_TRIU_I, _TRIU_J)
 ]
+# The MEAN emulator's `m` is DESI's m: the ShapeFit shape parameter of their
+# Eq. (4.9),
+#     P'_lin(k) = P^fid_lin(k) exp[ (m/a) tanh(a ln(k/kp)) + n ln(k/kp) ],
+# which multiplies the FIDUCIAL template, so m = 0 means no shape change. It is
+# a deviation by construction and the paper calls it plain `m` -- "dm" appears
+# nowhere in DESI 2024 V.
+#
+# desilike names things differently: ITS `m` is the absolute log-slope of the
+# de-wiggled spectrum at kp (about -0.5775 at the DESI fiducial) and its `dm` is
+# `m - m_fid`. So DESI's m == desilike's dm, and the mean worker reads
+# `extractor.dm` while this target stays named `m`.
+#
+# Emitting the deviation rather than the absolute slope also removes the
+# CHANGELOG S24 hazard from the interface: nothing downstream has to subtract a
+# fiducial that turned out to be theory-dependent (REPT's attached template
+# reports -0.6699 where the extractor says -0.5775).
+#
+# The COVAR side is untouched either way: sigma is offset-invariant, so
+# sigma(m) = sigma(dm) exactly.
 MEAN_TARGET_NAMES = list(_PHYS_NAMES)
 
 # DESI KP4.5 full-shape reference fit range and multipoles.
 _ELLS = (0, 2)
 _KLIM = (0.02, 0.2, 0.005)
 
+# Effective survey area per data release [deg^2]. Mirrors the convention
+# already established in bao/mcmc.py:66 (_DATASET_AREAS) and used by the
+# production config-space driver (bao/config_space.py:56 _AREA = 7500) and
+# bao/desi_reference.py:33.
+#
+# shapefit previously defaulted to 14000, which is the DR2 footprint, while
+# being a DR1-only pipeline -- so every forecast ran DR1 galaxy counts over
+# roughly twice the sky. That inflates V, depresses nbar = N/V, and pushes the
+# HOD to a higher b1 for the same sample. Measured on LRG2 at the fiducial:
+# b1 2.418 -> 2.171 and P0/DESI_measured 1.250 -> 1.032, i.e. the theory
+# amplitude discrepancy against DESI's own spectra essentially closes.
+DATASET_AREAS = {"dr1": 7500.0, "dr2": 14000.0}
+
+
+def dataset_area(data_release: str = "dr1") -> float:
+    """Effective footprint for a data release. Callers should route through
+    this (or pass ``data_release=``) rather than hardcoding a number: freezing one
+    release's area as a module default is exactly how the DR2 footprint ended
+    up in a DR1-only pipeline."""
+    try:
+        return DATASET_AREAS[data_release]
+    except KeyError:
+        raise ValueError(
+            f"No footprint area for data_release {data_release!r}; "
+            f"known: {sorted(DATASET_AREAS)}") from None
+
 # ShapeFit template pivot/slope conventions (desilike defaults; DESI/Brieden+21).
 _SHAPEFIT_KP = 0.03
 _SHAPEFIT_A = 0.6
 
 
-def emulator_target_names(tracer_bin: str | None = None, dataset: str = "dr1") -> List[str]:
+def emulator_target_names(tracer_bin: str | None = None, data_release: str = "dr1") -> List[str]:
     """Per-tracer emulator targets — identical for all tracers (API symmetry
     with bao.core.emulator_target_names)."""
     return list(TARGET_NAMES)
@@ -233,6 +298,71 @@ def _to_mean_extractor_params(sample: Dict[str, float]) -> Dict[str, float]:
 
 
 # ===========================================================================
+# Theory-dependent fiducial nuisances.
+#
+# Kaiser and REPT expose completely different parameter sets, so the fiducial
+# `params` dict cannot be hardcoded. Dispatch is on the theory class rather
+# than on an instance because params must exist before the observable is
+# built. Unknown theories raise instead of silently under-parameterising --
+# a missing nuisance would not error downstream, it would just produce a
+# forecast that marginalises over less than it should, i.e. sigmas that are
+# too tight in exactly the way that matters for experimental design.
+# ===========================================================================
+# desilike's REPT `tracer` preset selects (fsat, sigv), which set the width of
+# the SN2 prior -- DESI's f_sat sigma_v^2 / nbar normalisation (Table 4). It
+# accepts BGS/LRG/ELG/QSO only, so our MIX bin has to choose: LRG3_ELG1 maps to
+# LRG because DESI's own 0.8-1.1 full-shape bin is LRG-only, which is the
+# sample their prior was tuned against.
+_REPT_TRACER_PRESET = {"BGS": "BGS", "LRG": "LRG", "ELG": "ELG",
+                       "QSO": "QSO", "MIX": "LRG"}
+
+
+def default_theory_kwargs(theory_cls, tracer_bin: str,
+                          data_release: str = "dr1") -> Dict:
+    """Theory kwargs when the caller passes none.
+
+    Kaiser takes none. REPT needs prior_basis='physical' (so its nuisances are
+    in DESI's units -- SN0 in 1/nbar, SN2 in f_sat sigma_v^2/nbar) and the
+    per-tracer preset behind those units. Getting this from the tracer config
+    rather than a caller argument keeps the generators, the regression harness
+    and the validators on one definition.
+    """
+    if "Velocileptors" not in theory_cls.__name__:
+        return {}
+    ttype = str(get_tracer_config(tracer_bin, data_release=data_release)
+               .get("tracer_type", "")).strip().upper()
+    if ttype not in _REPT_TRACER_PRESET:
+        raise ValueError(
+            f"No REPT tracer preset for tracer_type {ttype!r} (bin "
+            f"{tracer_bin!r}). Add one rather than defaulting: the preset sets "
+            f"fsat/sigv, which set the SN2 prior width.")
+    return {"prior_basis": "physical", "tracer": _REPT_TRACER_PRESET[ttype]}
+
+
+def theory_fiducial_params(theory_cls, *, b1, sigma_fog, sigma8_z):
+    """Fiducial nuisance values for the chosen theory.
+
+    Kaiser : {b1, sn0, sigmaper, sigmapar} -- sigmapar carries the FoG
+             dispersion alone and sigmaper is 0 (CHANGELOG S6).
+    REPT   : the 'physical' prior basis, b1p = (1 + b1_L) * sigma8(z) = b1_E *
+             sigma8(z). Every other counterterm/stochastic parameter is left at
+             its desilike prior centre, which is where DESI centres them too;
+             they are floated and marginalised, which is the entire point of
+             using REPT for a forecast.
+    """
+    name = theory_cls.__name__
+    if "Kaiser" in name:
+        return {"b1": float(b1), "sn0": 0.0,
+                "sigmaper": 0.0, "sigmapar": float(sigma_fog)}
+    if "Velocileptors" in name:
+        return {"b1p": float(b1) * float(sigma8_z)}
+    raise ValueError(
+        f"No fiducial nuisance mapping for theory {name!r}. Add one rather "
+        f"than falling back: an under-parameterised forecast produces sigmas "
+        f"that are too tight, and nothing downstream will flag it.")
+
+
+# ===========================================================================
 # Full-shape Fisher band kernel.
 #
 # The BAO pipeline weights the FKP V_eff band integral with the BAO Fisher
@@ -267,7 +397,7 @@ def _fs_compute_z_eff(
     area_deg2: float,
     b1: float,
     n_tracers=None,
-    dataset: str = "dr1",
+    data_release: str = "dr1",
 ) -> float:
     """Effective redshift from the n(z) slices.
 
@@ -293,11 +423,12 @@ def _fs_compute_z_eff(
     if bao_core.Z_EFF_CONVENTION in ("desi_eq21", "desi_fkp"):
         return bao_core._desi_z_eff_from_nz(tracer_bin, cosmo, area_deg2,
                                             n_tracers=n_tracers,
-                                            dataset=dataset)
+                                            data_release=data_release)
 
-    z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(tracer_bin)
+    z_mid, z_edges, _frac, nbar_file = bao_core._load_nz_slice_fractions(
+        tracer_bin, data_release=data_release)
     nbar_file = (np.asarray(nbar_file, dtype=np.float64)
-                 * bao_core._nz_scale_factor(tracer_bin, n_tracers, dataset))
+                 * bao_core._nz_scale_factor(tracer_bin, n_tracers, data_release))
     if z_mid.size == 0:
         raise ValueError(f"No valid n(z) slices for tracer {tracer_bin}")
 
@@ -331,14 +462,18 @@ def build_shapefit_likelihood(
     tracer_bin: str = "LRG2",
     zrange: Tuple[float, float] | None = None,
     z_eff: float | None = None,
-    area: float = 14000.0,
+    area: float | None = None,
+    data_release: str = "dr1",
     resolution: int = 3,
     tracer_config: Dict[str, float] | None = None,
     klim_spec: Tuple[float, float, float] = _KLIM,
     ells: Tuple[int, ...] = _ELLS,
-    theory_cls=KaiserTracerPowerSpectrumMultipoles,
+    theory_cls=REPTVelocileptorsTracerPowerSpectrumMultipoles,
     theory_kwargs: Dict | None = None,
     float_sigma_damp: bool = True,
+    cov_override: np.ndarray | None = None,
+    wmatrix=None,
+    skip_kmin_guard: bool = False,
 ) -> Dict:
     """Build the pre-recon full-shape Gaussian likelihood for one tracer bin.
 
@@ -356,7 +491,7 @@ def build_shapefit_likelihood(
         m_fid        : float (template fiducial slope; m = m_fid + dm)
         cov_components : {"C_gauss", "C_SSC", "C_total"}
     """
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     if tracer_config is not None:
         cfg.update(tracer_config)
     if zrange is None:
@@ -367,6 +502,14 @@ def build_shapefit_likelihood(
         raise ValueError(
             f"tracer_type missing from tracers.yaml entry for {tracer_bin!r}."
         )
+
+    # Footprint: explicit override wins, else this TRACER's area. The area is
+    # per tracer class, not per release -- priority and imaging vetoes remove
+    # different sky from different samples (DESI 2024 II Table 2: BGS 7473,
+    # LRG 5740, ELG 5924, QSO 7249 against a ~7500 nominal). Using 7500 for all
+    # inflates V by 1.31x on LRG and 1.27x on ELG. Never a frozen default --
+    # see util.tracer_area() and shapefit CHANGELOG S54.
+    area = float(area) if area is not None else tracer_area(tracer_bin, data_release)
 
     cosmo = get_cosmo(("DESI", dict(theta_cosmo)))
     fo = cosmo.get_fourier()
@@ -381,12 +524,14 @@ def build_shapefit_likelihood(
                 cosmo=cosmo,
                 fo=fo,
                 area_deg2=float(area),
+                b1=float(cfg.get("bias_recon", 2.0)),
                 # z_eff moves with the sample size -- the FKP weight is not
                 # linear in n̄, so alpha does not cancel (bao_core
-                # _desi_z_eff_from_nz). Must match what the BAO pipeline does,
-                # or the two derive different z_eff for the same tracer and N.
+                # _desi_z_eff_from_nz), up to 1.22% across the emulator box
+                # on LRG3. Must match what the BAO pipeline does, or the two
+                # derive different z_eff for the same tracer and N.
                 n_tracers=float(N_tracers),
-                b1=float(cfg.get("bias_recon", 2.0)),
+                data_release=data_release,
             )
         except (FileNotFoundError, ValueError):
             z_eff = float(cfg["z_eff"])
@@ -404,7 +549,7 @@ def build_shapefit_likelihood(
     v_shell_for_footprint: Optional[float] = None
     try:
         z_mid_slice, z_edges_slice, frac_slice, _ = bao_core._load_nz_slice_fractions(
-            tracer_bin
+            tracer_bin, data_release=data_release
         )
     except FileNotFoundError as exc:
         print(f"[veff] {tracer_bin}: nz slices missing -- using V_shell. ({exc})")
@@ -415,7 +560,18 @@ def build_shapefit_likelihood(
         chi_lo = np.asarray(cosmo.comoving_radial_distance(z_lo))
         chi_hi = np.asarray(cosmo.comoving_radial_distance(z_hi))
         V_bin_slice = (4.0 / 3.0) * np.pi * (chi_hi**3 - chi_lo**3) * sky_frac
-        nbar_slice = (float(N_tracers) * frac_slice) / np.maximum(V_bin_slice, 1.0)
+        # DESI's NX where the bin is single-tracer, N*frac/V otherwise (S85).
+        # Before this the covariance built its own density while z_eff used NX
+        # -- one sample, two densities.
+        # Sampled cosmology passed for the fiducial-frame conversion (S92) --
+        # same reasoning as the BAO Fourier path.
+        nbar_slice, _nbar_src = bao_core.cov_nbar_per_slice(
+            tracer_bin, frac_slice, V_bin_slice, float(N_tracers),
+            data_release=data_release, cosmo=cosmo)
+        if not str(_nbar_src).startswith("NX"):
+            print(f"WARNING {tracer_bin}: covariance density fell back to "
+                  f"'{_nbar_src}' instead of DESI NX (S96).",
+                  file=sys.stderr, flush=True)
 
         fkp_wsq_list = []
         for zi, ni in zip(z_mid_slice, nbar_slice):
@@ -437,7 +593,7 @@ def build_shapefit_likelihood(
 
         v_eff, v_shell = bao_core._compute_v_eff_fkp(
             cosmo=cosmo, area_deg2=area, tracer_bin=tracer_bin,
-            fkp_weight_sq_per_bin=fkp_wsq_per_bin,
+            fkp_weight_sq_per_bin=fkp_wsq_per_bin, data_release=data_release,
         )
         v_shell_for_footprint = float(v_shell) if v_shell > 0 else None
 
@@ -532,16 +688,35 @@ def build_shapefit_likelihood(
     sigma_v_sq_total = sigma_v_sq_eff + z_err_kms * z_err_kms
     sigma_fog = bao_core._sigma_fog_from_sigma_v_sq(sigma_v_sq_total, z=z, cosmo=cosmo)
 
-    # Kaiser's damping is a Gaussian exp(-k^2(sigmapar^2 mu^2 + sigmaper^2(1-mu^2))/2):
-    # there is no separate Lorentzian streaming parameter, so the FoG dispersion
-    # is added in quadrature to the LOS damping scale. Documented approximation;
-    # validate_forecast.py carries a with/without-floating sensitivity check.
-    params = {
-        "b1": float(b1),
-        "sn0": 0.0,
-        "sigmaper": float(sigma_perp_pre),
-        "sigmapar": float(np.sqrt(sigma_par_pre**2 + sigma_fog**2)),
-    }
+    # Kaiser's damping is a Gaussian
+    #   exp(-k^2 (sigmapar^2 mu^2 + sigmaper^2 (1 - mu^2)) / 2)
+    # applied by desilike to the ENTIRE pktable, not to the wiggle component
+    # (full_shape.py:492-497 — contrast bao.py:126,138, where the identical
+    # algebra multiplies only the oscillatory part). Two consequences fix the
+    # parameters we may pass:
+    #
+    #   sigmapar = sigma_fog ALONE. The pre-recon BAO scales (Sigma_par,
+    #     Sigma_perp) describe smearing of the BAO *feature* by large-scale
+    #     displacements; feeding them here suppresses the broadband instead.
+    #     The original build added sigma_fog to Sigma_par in quadrature, giving
+    #     sigma_par = 8.18 Mpc/h for LRG2 — enough to drive P2 NEGATIVE above
+    #     k ~ 0.155 where DESI measures +2000, and P0 34% low at k = 0.18
+    #     (CHANGELOG S5).
+    #   sigmaper = 0. Finger-of-God suppression is purely line-of-sight. A
+    #     transverse Gaussian damps the monopole isotropically for no physical
+    #     reason; Sigma_perp = 4.28 Mpc/h was doing exactly that.
+    #
+    # Sigma_par/Sigma_perp are still computed above: they remain meaningful as
+    # diagnostics and are recorded in the footprint attrs. They simply do not
+    # belong in a full-shape broadband damping.
+    #
+    # Not modelled, and deliberately so: BAO smearing itself. It is an
+    # IR-resummation effect that belongs inside the theory (REPT provides it),
+    # and this template hands Kaiser the full linear pk_dd with no wiggle-only
+    # damping available. sigma(qiso) is therefore somewhat optimistic in the
+    # Kaiser path, since the BAO feature is sharper than reality.
+    params = theory_fiducial_params(
+        theory_cls, b1=b1, sigma_fog=sigma_fog, sigma8_z=sigma8_delta)
 
     # ------------------------------------------------------------------
     # Final footprint with the V_eff-matched effective density injected
@@ -576,25 +751,103 @@ def build_shapefit_likelihood(
     L_survey = base_footprint.volume ** (1 / 3)
     kmin_window = 2.0 * np.pi / L_survey
     kmin_eff = max(float(klim_spec[0]), kmin_window)
+    if skip_kmin_guard:
+        # Only for building an auxiliary covariance on a prescribed k-grid (the
+        # window's theory grid starts at k=0.001, below the guard). Never for a
+        # fit range.
+        kmin_eff = float(klim_spec[0])
 
     # ------------------------------------------------------------------
     # ShapeFit template + full-shape theory
     # ------------------------------------------------------------------
+    # with_now: 'peakaverage' repo-wide since S76. Two things forced this.
+    #
+    #   1. Under REPT (the production default) this argument is INERT.
+    #      REPTVelocileptorsPowerSpectrumMultipoles.initialize does
+    #      `self.template.init.update(with_now='peakaverage')` UNCONDITIONALLY
+    #      (desilike full_shape.py:1416) -- an .update(), not the
+    #      .setdefault(..., if_none=True) that bao.py:81 uses, so it overwrites
+    #      whatever is passed here. Same in FOLPSAX (2310) and PyBird with
+    #      nnlo counterterms (1688, 1953). Measured on the production object:
+    #      REPT -> peakaverage, Kaiser -> whatever is set here.
+    #   2. DESI's full-shape baseline IS desilike REPT, so their fit template
+    #      was forced the same way. peakaverage is what they ran.
+    #
+    # Setting it explicitly is therefore not a change to production numbers
+    # (S76 verified the REPT path is bit-identical); it makes Kaiser agree with
+    # REPT so that Kaiser-vs-REPT deltas measure the THEORY MODEL and not a
+    # silent de-wiggling swap on top of it.
     template = ShapeFitPowerSpectrumTemplate(
         z=z,
         fiducial=("DESI", dict(theta_cosmo)),
         apmode="qisoqap",
-        with_now="wallish2018",
+        with_now="peakaverage",
     )
 
-    theory = theory_cls(template=template, **(theory_kwargs or {}))
+    theory = theory_cls(template=template,
+                        **(theory_kwargs if theory_kwargs is not None
+                           else default_theory_kwargs(theory_cls, tracer_bin)))
 
     klim = {int(ell): [kmin_eff, float(klim_spec[1]), float(klim_spec[2])]
             for ell in ells}
+    # wmatrix: DESI's survey window, as an lsstypes.WindowMatrix (a bundle path
+    # also works but loads the whole GaussianLikelihood, which desilike then
+    # rejects -- pass the matrix). Default None keeps the pipeline windowless,
+    # which is what every Fourier path in this repo has always been
+    # (bao/core.py:1625 calls its kmin guard "a simplified approximation to the
+    # full DESI window-function"). Supplying one makes desilike evaluate the
+    # theory on the window's own k-grid and convolve it down to the fit bins.
+    #
+    # Two things to know before using this.
+    #
+    # 1. The DR1 full-shape bundles ship the ROTATED window. Its theory axis is
+    #    the P0/P2/P4 spectrum block (3 x 349) PLUS two "rotation" and one
+    #    "photo" nuisance-template columns, i.e. an ObservableTree, and
+    #    desilike's WindowedPowerSpectrumMultipoles wants a plain poles->poles
+    #    matrix (it reads wmatrix.theory.ells, which a tree has no attribute
+    #    for -- the "lsstypes 1.1.0 vs desilike" AttributeError). Select the
+    #    spectrum block on both axes first:
+    #        W = (bundle.window.at.theory.get(observables='spectrum')
+    #                          .at.observable.get(observables='spectrum'))
+    #    That drops the 3 systematic-template columns DESI marginalizes over,
+    #    so the resulting Fisher is mildly optimistic on that account.
+    #
+    # 2. *** THE COVARIANCE DOES NOT FOLLOW. *** desilike's
+    #    ObservablesCovarianceMatrix has no window handling whatsoever (grep
+    #    wmatrix/window in observables/galaxy_clustering/covariance.py: no
+    #    hits), so it returns the unconvolved Gaussian covariance regardless.
+    #    Measured on LRG2: passing W changes the covariance diagonal by 0.5%
+    #    and the P0 nearest-neighbour correlation from 0.059 to 0.063, while
+    #    DESI's own covariance for the same estimator sits at 0.666. So a run
+    #    with wmatrix set has SMOOTHED DERIVATIVES AND AN UNSMOOTHED
+    #    COVARIANCE, which double-counts the window's information loss and
+    #    inflates sigma (LRG2: 1.38x on qiso, 1.30x on qap). Do not read those
+    #    sigmas as "the windowed answer". The consistent object is
+    #    C_obs = M C_kin M^T, with C_kin the Gaussian+SSC covariance on the
+    #    window's own theory grid -- build it by calling this function again
+    #    with ells=(0,2,4), klim_spec=the window k-edges, skip_kmin_guard=True,
+    #    and pass the result back through cov_override alongside wmatrix.
+    #
+    # Doing that (CHANGELOG S19) shows the window is very nearly a NO-OP for
+    # the compressed parameters: on LRG2 the consistently-windowed sigmas are
+    # 0.81/0.79/0.85/0.80 of DESI against 0.82/0.85/0.91/0.87 unwindowed, and
+    # every rho moves by <0.03. Derivative smoothing and covariance correlation
+    # cancel. It is worth ~36 s/cosmology, so production stays windowless; the
+    # residual ~20% gap to DESI is nuisance freedom and non-Gaussian covariance,
+    # not geometry.
+    #
+    # Also unresolved for production: W is DR1 geometry derived from the random
+    # catalogue at fiducial-cosmology distances, so windowing while also
+    # recomputing V/nbar/z_eff per cosmology mixes frames (the issue
+    # bao/config_space.py:626-632 documents). Diagnostic use only.
+    obs_kwargs = {}
+    if wmatrix is not None:
+        obs_kwargs["wmatrix"] = str(wmatrix) if isinstance(wmatrix, (str, Path)) else wmatrix
     observable = TracerPowerSpectrumMultipolesObservable(
         data=params,
         klim=klim,
         theory=theory,
+        **obs_kwargs,
     )
 
     # Gaussian covariance. theories= is passed explicitly: with a template-based
@@ -618,8 +871,16 @@ def build_shapefit_likelihood(
     k_centers = np.asarray(observable.k[0], dtype=np.float64)
     V_survey = float(footprint.volume)
 
-    theory(**params)
-    pk_multipoles = np.asarray(theory.power, dtype=np.float64)
+    observable(**params)
+    # Take the multipoles off the OBSERVABLE, not the theory calculator. With a
+    # wmatrix the theory lives on the window's own k-grid (349 points per ell
+    # for the DR1 bundles) while the observable is the 36-bin convolved vector,
+    # and the SSC response has to be built on the same grid as C_gauss. Without
+    # a wmatrix flattheory is the theory evaluated on the observable bins, so
+    # this is a no-op (checked bit-exact against observable.theory on LRG2).
+    pk_multipoles = np.asarray(
+        observable.flattheory, dtype=np.float64
+    ).reshape(len(ell_tuple), -1)
 
     sigma_b_sq = bao_core._sigma_b_sq(cosmo, fo, z, V_survey)
     C_ssc = bao_core._ssc_cov(
@@ -631,6 +892,21 @@ def build_shapefit_likelihood(
     if C_ssc.shape == C_full.shape:
         C_full += C_ssc
         cov_components["C_SSC"] = np.array(C_ssc, copy=True)
+
+    # Validation hook: substitute an externally-supplied covariance (e.g. DESI's
+    # own EZmock covariance) for our analytic one, holding the theory, the
+    # derivatives and the marginalization fixed. That isolates how much of any
+    # sigma difference is the covariance rather than the model — see
+    # compare_to_desi.py. Never used by the generators (default None).
+    if cov_override is not None:
+        cov_override = np.asarray(cov_override, dtype=np.float64)
+        if cov_override.shape != C_full.shape:
+            raise ValueError(
+                f"cov_override shape {cov_override.shape} != observable "
+                f"covariance shape {C_full.shape}"
+            )
+        cov_components["C_analytic"] = np.array(C_full, copy=True)
+        C_full = cov_override.copy()
 
     if not np.all(np.isfinite(C_full)):
         raise ValueError("Non-finite entries in augmented covariance")
@@ -651,11 +927,12 @@ def build_shapefit_likelihood(
     # analytically-computed values (analog of the BAO float_sigma_bao;
     # width 2.0 Mpc/h, the DESI Adame+24 Sec 4.2.1 convention). sn0 keeps
     # its desilike yaml prior (norm, scale 1000) — the only stochastic term.
-    if float_sigma_damp:
-        likelihood.all_params["sigmaper"].update(
-            fixed=False,
-            prior={"dist": "norm", "loc": float(params["sigmaper"]), "scale": 2.0},
-        )
+    # Only sigmapar floats. The FoG scale is genuinely uncertain, so it is
+    # marginalized with a prior centered on the HOD-derived value. sigmaper
+    # stays FIXED at 0: it is not an uncertain quantity but an absent one
+    # (FoG is line-of-sight only), and floating a physically-zero parameter
+    # would open a marginalization direction that removes real information.
+    if float_sigma_damp and "sigmapar" in params:
         likelihood.all_params["sigmapar"].update(
             fixed=False,
             prior={"dist": "norm", "loc": float(params["sigmapar"]), "scale": 2.0},
@@ -673,4 +950,13 @@ def build_shapefit_likelihood(
         "shapefit_kp": _SHAPEFIT_KP,
         "shapefit_a": _SHAPEFIT_A,
         "cov_components": cov_components,
+        # Survey-geometry diagnostics. n_eff is the FKP V_eff-matched effective
+        # density that sets the shot-noise level of the covariance; DESI ships
+        # the measured equivalent as num_shotnoise/norm in its full-shape
+        # bundles, so exposing it makes that comparison a one-liner
+        # (compare_to_desi.py). None when the n(z) slices are unavailable and
+        # the plain V_shell density is used instead.
+        "n_eff": (None if nbar_3d_eff is None else float(nbar_3d_eff)),
+        "nbar_comoving": float(nbar_comoving),
+        "V_survey": float(footprint.volume),
     }

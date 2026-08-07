@@ -1,6 +1,6 @@
 """Parallel generator of ShapeFit mean-emulator training data.
 
-Maps emulator INPUTS  (cosmology θ, omega basis — no N_tracers)
+Maps emulator INPUTS  (cosmology θ, omega basis, + N_tracers)
   to emulator OUTPUTS (qiso, qap, f_sigmar, m)
 
 via desilike's ShapeFitPowerSpectrumExtractor at the tracer's effective
@@ -9,11 +9,12 @@ side of the per-tracer ShapeFit Gaussian likelihood in bedcosmo (which has
 no differentiable f_sigmar/m of its own); the "covar" side is
 generate_covar_data.py.
 
-Per-tracer because z_eff differs per tracer. z_eff is computed ONCE at the
-DESI fiducial cosmology with the FS Fisher weight (the extractor's z is an
-init-time argument; the residual cosmology dependence of z_eff enters the
-labels only through slowly-varying volume weights — documented approximation;
---z-eff overrides for sensitivity checks).
+Per-tracer because z_eff differs per tracer. z_eff is derived PER SAMPLE from
+that sample's cosmology and N_tracers -- neither dependence cancels, and
+freezing it also left mu and C evaluated at different redshifts within one
+Gaussian likelihood (CHANGELOG S42). N_tracers is an emulator input for this
+reason: the compressed parameters are DEFINED at z_eff, so the predicted mean
+depends on the sample size. --z-eff pins it for sensitivity checks.
 
 Usage (from shapefit/, emulator env):
     LD_LIBRARY_PATH=~/miniconda3/envs/emulator/lib:$LD_LIBRARY_PATH \
@@ -41,8 +42,10 @@ from util import (
     TRACER_TYPE_CHOICES,
     get_default_save_path,
     get_tracer_config,
+    ntracers_range,
     parse_priors,
     save_dataset,
+    tracer_area,
 )
 
 COSMO_MODELS = sf_core.COSMO_MODELS
@@ -54,16 +57,17 @@ _FID_SAMPLE = {
     "omega_cdm": 0.1200,
     "omega_b": 0.02237,
     "h": 0.6736,
-    "ln10A_s": 3.044,
+    "ln10A_s": 3.036394,
     "n_s": 0.9649,
 }
 
 
-def _fiducial_z_eff(tracer_bin: str, area: float) -> float:
+def _fiducial_z_eff(tracer_bin: str, area: float,
+                    data_release: str = "dr1") -> float:
     """Tracer z_eff at the DESI fiducial cosmology with the FS band weight."""
     from desilike.theories.primordial_cosmology import get_cosmo
 
-    cfg = get_tracer_config(tracer_bin)
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
     theta = sf_core._to_shapefit_cosmo_params(_FID_SAMPLE)
     cosmo = get_cosmo(("DESI", dict(theta)))
     fo = cosmo.get_fourier()
@@ -100,15 +104,17 @@ def main() -> None:
     p.add_argument("--z-eff", type=float, default=None,
                    help="Pin the effective redshift. Default: derived at the "
                         "DESI fiducial cosmology with the FS Fisher weight.")
-    p.add_argument("--area", type=float, default=14000.0,
-                   help="Effective survey area in deg^2 (z_eff volume weights).")
+    p.add_argument("--area", type=float, default=None,
+                   help="Effective survey area in deg^2 (z_eff volume weights). "
+                        "Default: this TRACER's footprint (util.tracer_area) -- "
+                        "BGS 7473, LRG 5740, ELG 5924, QSO 7249.")
     p.add_argument("--name", type=str, default=None,
                    help="Tracer name prefix for saved files. Defaults to "
                         "--tracer-bin.")
     p.add_argument("--version", type=int, default=None,
                    help="Explicit version for the training_data/v{N} dir. "
                         "If omitted, auto-increments.")
-    p.add_argument("--dataset", type=str, default="dr1", choices=["dr1"],
+    p.add_argument("--data-release", type=str, default="dr1", choices=["dr1"],
                    help="Dataset path segment (dr1 only for now).")
     p.add_argument("--priors-json", type=str, default="",
                    help="JSON dict of priors overriding the cosmo-model set.")
@@ -123,7 +129,26 @@ def main() -> None:
     if args.priors_json:
         priors = parse_priors(args.priors_json)
     else:
-        priors = {k: dict(DEFAULT_PRIORS[k]) for k in model_params}
+        # N_tracers FIRST, matching generate_covar_data.py. Both emulators are
+        # consumed by the same bedcosmo code path, and a mean vector ordered
+        # [cosmo..., N_tracers] against a covar vector [N_tracers, cosmo...]
+        # is a silent transposition for anything that indexes by position
+        # rather than by param_names. Dict order is insertion order, and this
+        # order is what save_dataset records.
+        varied_keys = ["N_tracers"] + model_params
+        priors = {k: dict(DEFAULT_PRIORS[k]) for k in varied_keys}
+
+    # N_tracers is a mean-emulator INPUT: it moves z_eff, and the compressed
+    # parameters are defined AT z_eff, so the predicted mean genuinely depends
+    # on the sample size (shapefit CHANGELOG S42). Bounds always from
+    # ntracers_range -- never hardcoded (bao CHANGELOG S33n).
+    # Overwrites the placeholder value; dict semantics keep the key in its
+    # original (first) position, so the recorded order is unaffected.
+    priors["N_tracers"] = {
+        "dist": "uniform",
+        "low": ntracers_range(args.tracer_bin, args.data_release)[0],
+        "high": ntracers_range(args.tracer_bin, args.data_release)[1],
+    }
 
     all_cosmo_keys = set(DEFAULT_PRIORS) - {"N_tracers"}
     fixed_keys = all_cosmo_keys - set(model_params)
@@ -134,17 +159,29 @@ def main() -> None:
         if all(p in model_params for p in spec["params"])
     }
 
-    z_eff = args.z_eff if args.z_eff is not None else _fiducial_z_eff(
-        args.tracer_bin, args.area)
+    # Per TRACER, not per release (S54, and see generate_covar_data.py for the
+    # measured cost). Only reaches z_eff on this path, and under the production
+    # Z_EFF_CONVENTION ("desi_eq21") z_eff is area-INDEPENDENT -- the area
+    # cancels between the slice weight and V_bin -- so the mean labels do not
+    # move. It is corrected anyway so the two generators cannot disagree about
+    # the geometry, which is how S42's mu/C mismatch happened.
+    area = (float(args.area) if args.area is not None
+            else tracer_area(args.tracer_bin, args.data_release))
+    # z_eff is NOT resolved here any more. It is derived per sample inside the
+    # worker from that sample's cosmology AND N_tracers, because neither
+    # dependence cancels (shapefit CHANGELOG S42). --z-eff still pins it for
+    # sensitivity checks.
+    z_eff = args.z_eff
 
     save_path = os.path.abspath(
         args.save_path if args.save_path else
         get_default_save_path(analysis="shapefit", quantity="mean",
-                              cosmo_model=cosmo_model, dataset=args.dataset)
+                              cosmo_model=cosmo_model, data_release=args.data_release)
     )
 
     worker_fn = fourier_space._worker_run_mean_targets
-    make_task = lambda s: (s, args.tracer_bin, z_eff, param_defaults)  # noqa: E731
+    make_task = lambda s: (s, args.tracer_bin, z_eff, param_defaults,  # noqa: E731
+                           area, args.data_release)
 
     print(f"Tracer bin: {args.tracer_bin}")
     print(f"Cosmo model: {cosmo_model} (varied: {model_params})")
@@ -152,8 +189,10 @@ def main() -> None:
         print(f"Fixed params: {param_defaults}")
     print("Using priors:", priors)
     print(f"Active constraints: {list(constraints.keys())}")
-    print(f"z_eff = {z_eff:.4f} "
-          f"({'pinned' if args.z_eff is not None else 'fiducial-derived'})")
+    if z_eff is not None:
+        print(f"z_eff = {z_eff:.4f} (PINNED via --z-eff)")
+    else:
+        print("z_eff = per-sample (cosmology + N_tracers)")
     print(f"Target: {sf_core.MEAN_TARGET_NAMES}")
     print("Writing dataset to:", save_path)
 

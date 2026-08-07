@@ -111,15 +111,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "If omitted, auto-increments.",
     )
     p.add_argument(
-        "--dataset", type=str, default="dr1", choices=["dr1", "dr2"],
+        "--data-release", type=str, default="dr1", choices=["dr1", "dr2"],
         help="DESI release whose 'passed' counts anchor the N_tracers box "
-             "(box = tracers.yaml low/high FACTORS x passed[dataset]).",
+             "(box = tracers.yaml low/high FACTORS x passed[data_release]).",
     )
     p.add_argument(
         "--ntracers-range", type=float, nargs=2, default=None,
         metavar=("NTRACERS_LOW", "NTRACERS_HIGH"),
         help="Override the N_tracers prior with ABSOLUTE bounds. Default is "
-             "tracers.yaml low/high factors x the --dataset passed count.",
+             "tracers.yaml low/high factors x the --data-release passed count.",
     )
     p.add_argument(
         "--priors-json", type=str, default="",
@@ -147,7 +147,7 @@ def main() -> None:
     sys.argv = [a for a in sys.argv if a.strip()]
     args = _build_arg_parser().parse_args()
 
-    tracer_bin_cfg = get_tracer_config(args.tracer_bin)
+    tracer_bin_cfg = get_tracer_config(args.tracer_bin, data_release=args.data_release)
     zrange = tuple(args.zrange) if args.zrange is not None else tuple(tracer_bin_cfg["zrange"])
     z_eff = args.z_eff if args.z_eff is not None else float(tracer_bin_cfg["z_eff"])
 
@@ -164,7 +164,7 @@ def main() -> None:
     if args.ntracers_range is not None:
         nt_low, nt_high = args.ntracers_range
     else:
-        nt_low, nt_high = ntracers_range(args.tracer_bin, args.dataset)
+        nt_low, nt_high = ntracers_range(args.tracer_bin, args.data_release)
     priors["N_tracers"] = {"dist": "uniform", "low": nt_low, "high": nt_high}
 
     all_cosmo_keys = {"Om", "Ok", "w0", "wa", "hrdrag"}
@@ -179,7 +179,7 @@ def main() -> None:
     save_path = os.path.abspath(
         args.save_path if args.save_path else
         get_default_save_path(analysis="bao", quantity=args.space,
-                              cosmo_model=cosmo_model, dataset=args.dataset)
+                              cosmo_model=cosmo_model, data_release=args.data_release)
     )
 
     # Backend selection: pick the picklable worker (defined in its space's module)
@@ -190,15 +190,15 @@ def main() -> None:
         worker_fn = fourier_space._worker_run_fisher_sigma
         make_task = lambda s: (  # noqa: E731
             s, args.tracer_bin, zrange, z_eff, param_defaults, args.area,
-            args.nz_slices_path, args.dataset,
+            args.nz_slices_path, args.data_release,
         )
     else:
         import config_space
         tracer = args.tracer_bin
         worker_fn = config_space._worker_xi_sigma
-        make_task = lambda s: (s, tracer, args.dataset)  # noqa: E731
+        make_task = lambda s: (s, tracer, args.data_release)  # noqa: E731
 
-    target_names = emulator_target_names(args.tracer_bin, args.dataset)
+    target_names = emulator_target_names(args.tracer_bin, args.data_release)
 
     print(f"Space: {args.space}")
     print(f"Tracer bin: {args.tracer_bin}")

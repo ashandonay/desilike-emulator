@@ -7,10 +7,10 @@
 #
 # Usage:
 #   bash submit_train.sh --analysis bao --quantity config --epochs 5000
-#   bash submit_train.sh --analysis bao --dataset dr1 --quantity config \
+#   bash submit_train.sh --analysis bao --data-release dr1 --quantity config \
 #       --cosmo-model base --nn-model dr1_base_config --data-dir v2
 #   bash submit_train.sh --tracers "BGS LRG2" --queue debug --time 00:30:00 \
-#       --analysis bao --dataset dr1 --quantity config --nn-model dr1_base_config \
+#       --analysis bao --data-release dr1 --quantity config --nn-model dr1_base_config \
 #       --data-dir v2 --epochs 500
 #   bash submit_train.sh --local --tracers BGS --analysis bao --quantity config \
 #       --epochs 100

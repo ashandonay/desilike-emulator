@@ -48,22 +48,58 @@
 #                    Values here are DR1 (Adame+24 Table 1), matching the DR1
 #                    bundles. DR2 differs for LRG3+ELG1/ELG2/QSO
 #                    (0.934/1.321/1.484) and is not carried here under the
-#                    DR1-first rule; the per-release `overrides` mechanism is
-#                    where it belongs when DR2 comes up.
+#                    DR1-first rule; it belongs in a `dr2:` block under
+#                    `data_release:`, beside the DR1 one.
+#
+# Analysis / data-release scoping:
+#
+#   analyses         Which analyses this bin belongs to, e.g. [bao, shapefit].
+#                    Absent means "all" (back-compatible). This exists because
+#                    DESI does NOT use the same samples for both: the 0.8-1.1
+#                    bin is LRG3+ELG1 for BAO but LRG3-only for full shape,
+#                    since ELG1 failed the pre-unblinding fibre-collision tests
+#                    for growth-rate measurements while remaining harmless for
+#                    BAO (DESI 2024 V Sec 2; shapefit CHANGELOG S31). Hence the
+#                    two separate blocks LRG3_ELG1 (bao) and LRG3 (shapefit).
+#   components       (optional) Sub-samples making up this bin, as labels in
+#                    data/{release}/desi_tracers.csv. When present,
+#                    util.ntracers sums targets x comp x efficiency over them
+#                    instead of reading desi_data.csv's `passed` column, which
+#                    only carries the BAO bin combinations.
+#   nz_slices        (optional) Basename of the n(z) slice file if it differs
+#                    from the bin key: ~/data/desi/nz_slices/<name>_nz_slices.csv.
+#   supported        (optional, default true) False marks a bin as gated off;
+#                    get_tracer_config raises for it. Only Lya_QSO, whose
+#                    bF0/gamma_bF/Sigma_*_fid/f_fid/sigma8_fid/sigma2_pix/
+#                    delta_r_pix keys feed the Lya provider in bao/core.py --
+#                    real code, reachable only once Lya is un-gated.
 #
 # Emulator-sampler config (used only by the training-set generator, not
 # by the physics pipeline):
 #
-#   low, high        N_tracers LHS bounds as MULTIPLICATIVE FACTORS on the DESI
+#   data_release     Per-release values, keyed by release (dr1|dr2). Selected by
+#                    util.get_tracer_config(data_release=), which RAISES if the
+#                    requested release is absent -- it never falls back, because
+#                    a silently-wrong N box is the S58 failure mode.
+#
+#     low, high      N_tracers LHS bounds as MULTIPLICATIVE FACTORS on the DESI
 #                    "passed" count: the absolute box is
 #                        [low * passed, high * passed]
 #                    where passed is read at runtime from
-#                    ~/data/desi/bao_{dataset}/desi_data.csv (dataset = dr1|dr2,
-#                    chosen with --dataset; see util.ntracers_range). So the
-#                    same factors transparently rescale to DR1 or DR2 counts.
-#                    Defaults (0.5, 1.5) centre the box on passed (uniform mean
-#                    = passed). passed itself derives from observed via the BED
-#                    passed-fraction.
+#                    data/{release}/desi_data.csv; see util.ntracers_range.
+#
+#                    These are NOT release-portable, which an earlier version of
+#                    this comment wrongly claimed ("the same factors transparently
+#                    rescale to DR1 or DR2"). Only the ANCHOR is per-release; the
+#                    FACTORS depend on bedcosmo's per-class design bounds, which
+#                    differ between releases (design_args_dr1 vs _dr2: every class
+#                    but ELG moves, QSO at both ends). Hence the per-release block.
+#
+#                    DR1 values are set from the achievable design range
+#                    (S94): high anchored to target availability where it binds
+#                    (a survey fact -- 1/comp, i.e. every target observed), low
+#                    left generous because bedcosmo's floors are hand-set policy
+#                    constants that can move without a physics change.
 #
 # Derived quantities NOT listed here (computed inside the pipeline from
 # n(z) slices + cosmology):
@@ -81,63 +117,105 @@
 BGS:
   tracer_type: BGS
   zrange: [0.1, 0.4]
-  z_eff: 0.295                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 9.2e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.5
   smoothing_scale: 15.0
   f_interloper: 0.0              # bright low-z sample, essentially no line confusion
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design 0.537-1.572; 1.572 = every BGS target observed (1/comp), a hard ceiling
+    dr1:
+      area_deg2: 7473  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 0.295                   # config-space anchor; = DESI bundle (see header)
+      low: 0.45
+      high: 1.6
 
 LRG1:
   tracer_type: LRG
   zrange: [0.4, 0.6]
-  z_eff: 0.510                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2; LRGs essentially clean
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design 0.425-1.443; 1.443 = every LRG target observed (1/comp)
+    dr1:
+      area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 0.510                   # config-space anchor; = DESI bundle (see header)
+      low: 0.35
+      high: 1.5
 
 LRG2:
   tracer_type: LRG
   zrange: [0.6, 0.8]
-  z_eff: 0.706                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 8.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.0
   smoothing_scale: 15.0
   f_interloper: 0.002            # Adame+24 Table 2
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design 0.425-1.443; 1.443 = every LRG target observed (1/comp)
+    dr1:
+      area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 0.706                   # config-space anchor; = DESI bundle (see header)
+      low: 0.35
+      high: 1.5
 
 LRG3_ELG1:
+  # BAO ONLY. DESI's BAO analysis combines LRG3 + ELG1 in 0.8-1.1; the ELG1
+  # fibre-collision systematics were negligible for BAO (DESI 2024 V Sec 2).
+  # Full shape uses the LRG3 block below instead.
+  analyses: [bao]
   tracer_type: MIX
+  # No Table 2 row: this bin mixes LRG (5740) and ELG (5924). Take LRG's, since
+  # LRG dominates; the two differ by 3% so the choice is not consequential.
   zrange: [0.8, 1.1]
-  z_eff: 0.930                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 5.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.6
   smoothing_scale: 15.0
   f_interloper: 0.03             # bias-weighted blend of LRG3 (~0.002) and ELG1 (~0.05)
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design total 0.899-1.299 (two anti-correlated parents); margin kept
+    dr1:
+      area_deg2: 5740                # DESI 2024 II Table 2, LRG-dominated combined bin
+      z_eff: 0.930                   # config-space anchor; = DESI bundle (see header)
+      low: 0.5
+      high: 1.45
+
+LRG3:
+  # FULL SHAPE ONLY. DESI 2024 V Sec 2: "for the Full-Shape type of analyses
+  # presented in this paper, the ELG bin between 0.8 < z < 1.1 (ELG1) was not
+  # included as it failed to pass the required tests before unblinding ...
+  # uncorrected systematic effects related to fibre collisions". So this bin is
+  # LRG-only, with 859,822 tracers against LRG3_ELG1's 1,876,187 - a factor
+  # 2.18 that fully explained the old scorecard outlier (shapefit CHANGELOG S31).
+  analyses: [shapefit]
+  tracer_type: LRG
+  zrange: [0.8, 1.1]
+  bias_recon: 2.0                # LRG value, as LRG1/LRG2 - not the MIX blend
+  smoothing_scale: 15.0          # unused pre-recon; kept for schema symmetry
+  f_interloper: 0.002            # LRG value (Adame+24 Table 2), not the blend
+  components: [LRG3]             # N from desi_tracers.csv, not desi_data.csv
+  nz_slices: LRG3                # LRG-only slices, not the LRG+ELG1 combination
+  data_release:
+    # design 0.425-1.443; 1.443 = every LRG target observed (1/comp)
+    dr1:
+      area_deg2: 5740  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 0.919                   # FALLBACK ONLY; DESI 2024 V Table 1 (LRG3)
+      low: 0.35
+      high: 1.5
 
 ELG2:
   tracer_type: ELG
   zrange: [1.1, 1.6]
-  z_eff: 1.317                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 2.9e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 1.2
   smoothing_scale: 15.0
   f_interloper: 0.07             # Adame+24 / Yang+24: [OII] vs OIII/Hβ confusion ~5-10%
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design 0.561-1.218; ceiling is the 0.5-of-budget CAP, not targets (soft)
+    dr1:
+      area_deg2: 5924  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 1.317                   # config-space anchor; = DESI bundle (see header)
+      low: 0.45
+      high: 1.35
 
 QSO:
   tracer_type: QSO
   zrange: [0.8, 2.1]
-  z_eff: 1.491                   # config-space anchor; = DESI bundle (see header)
-  fkp_p0: 5.0e3         # DESI 2024 III Table 2, P0(k=0.14)
   bias_recon: 2.1
   smoothing_scale: 30.0
   f_interloper: 0.02             # Adame+24 Table 2; broad-line catastrophic z
@@ -148,17 +226,28 @@ QSO:
   # Other DESI tracers (BGS, LRG, ELG) use narrow lines with ~50 km/s
   # precision and the contribution is negligible.
   z_error_kms: 600.0
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # design 0.348-1.144; 1.144 = every QSO target observed (1/comp)
+    dr1:
+      area_deg2: 7249  # DESI 2024 II Table 2, after priority+imaging vetoes
+      z_eff: 1.491                   # config-space anchor; = DESI bundle (see header)
+      low: 0.28
+      high: 1.25
 
 Lya_QSO:
+  analyses: [bao]                # Lya is a BAO-only probe (and gated off below)
   # Marked unsupported until a proper Lyα forecast (Arinyo-i-Prats bias
   # + β_F + pixel-noise P_N) is wired in.
   supported: false
   zrange: [1.8, 4.2]
-  z_eff: 2.33                    # Lyα currently bypasses the n(z) derivation.
-  low: 0.5                       # factor x passed[dataset]; box centred on passed
-  high: 1.5
+  data_release:
+    # gated off (supported: false); placeholder to keep the schema uniform.
+    # No area_deg2: Lya bypasses the n(z)/footprint derivation entirely, which
+    # is why the loader treats that key as optional per release.
+    dr1:
+      z_eff: 2.33                  # Lyα currently bypasses the n(z) derivation.
+      low: 0.5
+      high: 1.5
   # Lyα flux-bias parameters (Arinyo-i-Prats 2015 model)
   bF0: -0.117
   gamma_bF: 2.9

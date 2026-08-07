@@ -1,6 +1,7 @@
+import warnings
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import json
@@ -41,9 +42,9 @@ _THIS_DIR = Path(__file__).resolve().parent
 _TRACER_CONFIG_PATH = _THIS_DIR / "tracers.yaml"
 _REQUIRED_TRACER_KEYS = {
     "zrange",
-    "z_eff",
-    "low",
-    "high",
+    # `z_eff`, `area_deg2`, `low`, `high` are NOT here: they are RELEASE-scoped
+    # and live under `data_release:`, validated per release below (S95).
+    "data_release",
 }
 
 
@@ -67,6 +68,31 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
         if missing:
             raise ValueError(f"Tracer config for {key!r} missing keys: {sorted(missing)}")
 
+        # `low`/`high` moved under a per-release block (S94). Validate them
+        # there instead: every release entry must carry both, so a half-filled
+        # block fails at import rather than at sampling time.
+        by_release = cfg.get("data_release")
+        if by_release is not None:
+            if not isinstance(by_release, dict) or not by_release:
+                raise ValueError(
+                    f"Tracer config for {key!r}: `data_release` must be a "
+                    f"non-empty mapping of release -> values")
+            for rel, vals in by_release.items():
+                if not isinstance(vals, dict):
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} must be a mapping")
+                # `area_deg2` is deliberately NOT required: the gated Lya block
+                # has no footprint, since Lya bypasses the n(z) derivation.
+                miss = {"low", "high", "z_eff"} - set(vals)
+                if miss:
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} missing "
+                        f"{sorted(miss)}")
+                if float(vals["low"]) >= float(vals["high"]):
+                    raise ValueError(
+                        f"Tracer config for {key!r}: data_release/{rel} has "
+                        f"low {vals['low']} >= high {vals['high']}")
+
         zrange = cfg["zrange"]
         if not isinstance(zrange, (list, tuple)) or len(zrange) != 2:
             raise ValueError(f"Tracer config for {key!r} must have zrange as length-2 list")
@@ -75,9 +101,16 @@ def _load_tracer_configs(path: Path) -> Dict[str, Dict[str, object]]:
         # bF0, gamma_bF, Sigma_perp_fid, etc.), then coerce the mandatory ones.
         entry: Dict[str, object] = dict(cfg)
         entry["zrange"] = (float(zrange[0]), float(zrange[1]))
-        entry["z_eff"] = float(cfg["z_eff"])
-        entry["low"] = float(cfg["low"])
-        entry["high"] = float(cfg["high"])
+        def _coerce_release(v):
+            out = dict(v)
+            for k2 in ("low", "high", "z_eff"):
+                out[k2] = float(v[k2])
+            if "area_deg2" in v:
+                out["area_deg2"] = float(v["area_deg2"])
+            return out
+
+        entry["data_release"] = {str(rel): _coerce_release(v)
+                                 for rel, v in cfg["data_release"].items()}
         if "bias_recon" in cfg:
             entry["bias_recon"] = float(cfg["bias_recon"])
         if "smoothing_scale" in cfg:
@@ -150,24 +183,187 @@ def _load_hod_configs(path: Path) -> Dict[str, Dict[str, object]]:
 HOD_CONFIGS: Dict[str, Dict[str, float]] = _load_hod_configs(_HOD_CONFIG_PATH)
 
 
-def get_tracer_config(tracer_bin: str) -> Dict[str, object]:
-    """Return validated tracer config dict."""
+def tracers_for(analysis: str) -> List[str]:
+    """Tracer bins belonging to ``analysis``, in tracers.yaml order.
+
+    A block with no ``analyses`` key belongs to every analysis. Exists because
+    DESI's 0.8-1.1 bin differs between analyses: LRG3+ELG1 for BAO, LRG3-only
+    for full shape (see the tracers.yaml header and shapefit CHANGELOG S31).
+    """
+    out = []
+    for key, cfg in TRACER_CONFIGS.items():
+        an = cfg.get("analyses")
+        if an is None or analysis in an:
+            out.append(key)
+    return out
+
+
+def get_tracer_config(tracer_bin: str, analysis: str | None = None,
+                      data_release: str | None = None) -> Dict[str, object]:
+    """Return validated tracer config dict.
+
+    With ``analysis``/``data_release`` omitted this is exactly the historical
+    behaviour — the base yaml block, minus bookkeeping keys — so existing
+    callers (all of ``bao/``, which is regression-frozen) are untouched.
+
+    Passing ``analysis`` validates the bin against the block's ``analyses``
+    list. There used to be an `overrides` merge here for per-analysis /
+    per-release deltas; it was removed in S98 -- no tracer ever populated it,
+    the per-release half is now `data_release:`, and the per-analysis half has
+    no use case because the bins that differ between analyses (LRG3_ELG1 vs
+    LRG3) are separate blocks. An untested path that silently `cfg.update()`s
+    is the S58 failure mode waiting to happen.
+    """
     key = tracer_bin.strip()
     if key not in TRACER_CONFIGS:
         raise ValueError(f"Unknown tracer bin {tracer_bin!r}. Choices: {TRACER_TYPE_CHOICES}")
     cfg = dict(TRACER_CONFIGS[key])
     if not cfg.get("supported", True):
         raise ValueError(f"Tracer bin {tracer_bin!r} is marked unsupported in tracers.yaml")
+
+    if analysis is not None:
+        allowed = cfg.get("analyses")
+        if allowed is not None and analysis not in allowed:
+            raise ValueError(
+                f"Tracer bin {tracer_bin!r} is not part of the {analysis!r} analysis "
+                f"(tracers.yaml declares analyses={list(allowed)}). "
+                f"Valid bins: {tracers_for(analysis)}")
+
+    # Per-release block (S94). Selected, never merged-with-fallback: if the
+    # requested release has no entry we RAISE, because the values are not
+    # release-portable (the factors follow bedcosmo's per-class design bounds,
+    # which differ between releases) and a silently-wrong N box is exactly the
+    # S58 failure mode. Left unresolved when no release is requested, so the
+    # many callers that never read these keys are untouched.
+    by_release = cfg.pop("data_release", None)
+    if by_release is not None and data_release is None:
+        raise ValueError(
+            f"get_tracer_config({tracer_bin!r}) needs `data_release=`: "
+            f"z_eff, area_deg2 and the N_tracers box are RELEASE-scoped (S95). "
+            f"Available: {sorted(by_release)}.")
+    if by_release is not None and data_release is not None:
+        if data_release not in by_release:
+            raise ValueError(
+                f"Tracer bin {tracer_bin!r} has no {data_release!r} block under "
+                f"`data_release:` in tracers.yaml (present: "
+                f"{sorted(by_release)}). These values are release-specific -- "
+                f"see the header note -- so there is deliberately no fallback.")
+        cfg.update(dict(by_release[data_release]))
+        cfg["data_release"] = data_release
     return cfg
 
 
 _CSV_NAME_MAP = {"LRG3_ELG1": "LRG3+ELG1", "Lya_QSO": "Lya QSO"}
-_NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # dataset -> {csv_label: passed}
+_NTRACERS_CACHE: Dict[str, Dict[str, float]] = {}  # data_release -> {csv_label: passed}
+_COMPONENTS_CACHE: Dict[str, Dict[str, float]] = {}  # data_release -> {component: passed}
+
+_DATASET_AREA_FALLBACK = {"dr1": 7500.0, "dr2": 14000.0}
+
+# Small DESI-derived reference tables live IN THE REPO (S79/S80), so a fresh
+# checkout runs the forecast with no downloads: the n(z) slice tables, the
+# {tracer}_desi_nx.csv summaries reduced from DESI's randoms (20.9 GB in, ~10 KB
+# out), and the two N_tracers tables. 39 KB total.
+#
+# This is the SINGLE source of truth. There is deliberately no ~/data/desi
+# fallback: two copies of a reference table is how you get a machine that
+# silently disagrees with the repo, and the whole point of committing them is
+# that what runs is what is version-controlled. Every file here is reproducible
+# -- see data/dr1/PROVENANCE.md for what regenerates each one.
+#
+# Set DESI_REF_DATA_DIR to point elsewhere (a scratch regeneration, say).
+REPO_DATA_DIR = Path(os.environ.get(
+    "DESI_REF_DATA_DIR", Path(__file__).resolve().parent / "data"))
 
 
-def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
+def reference_table_path(data_release: str, *parts: str) -> Path:
+    """Path to a vendored reference table, raising with the regeneration
+    recipe rather than a bare FileNotFoundError."""
+    p = REPO_DATA_DIR.joinpath(str(data_release), *parts)
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Missing reference table {p}. These ship with the repo; if it is "
+            "absent the checkout is incomplete or DESI_REF_DATA_DIR points "
+            f"somewhere wrong (currently {REPO_DATA_DIR}). Regeneration "
+            "recipes are in data/dr1/PROVENANCE.md.")
+    return p
+
+
+def nz_slices_path(filename: str, data_release: str,
+                   base_dir=None) -> Path:
+    """Resolve a release-scoped n(z) file: ``{base}/{data_release}/{filename}``.
+
+    Release-scoped since S62c, because `ntracers`, `tracer_area` and
+    `get_default_save_path` all switch on `data_release` -- a release-mixing bug in
+    the n(z) layer would surface only as a subtly wrong covariance, the same
+    silent class as S58 (a fallback that never fired) and S59 (a caller never
+    updated).
+
+    The base is the REPO's data/ (S80). There is no ~/data/desi fallback and no
+    flat-layout fallback: those existed while the tables lived outside the repo,
+    and keeping them would allow a stale local copy to shadow the committed one.
+    `base_dir` overrides for a scratch regeneration.
+
+    Lives here, beside `tracer_area`/`ntracers`, because it is the same kind of
+    release-scoped lookup. It must NOT live in bao/core.py: `fkp_analytic_cov`
+    needs it too, and a bare ``import core`` there resolves to shapefit/core.py
+    whenever cwd is shapefit/.
+    """
+    if base_dir is not None:
+        p = Path(base_dir) / str(data_release) / filename
+        if not p.exists():
+            raise FileNotFoundError(f"No n(z) file {filename!r} under {base_dir}/{data_release}")
+        return p
+    return reference_table_path(data_release, "nz_slices", filename)
+
+
+def tracer_area(tracer_bin: str, data_release: str = "dr1") -> float:
+    """Footprint in deg^2 for ``tracer_bin``: `area_deg2` from tracers.yaml.
+
+    The area is NOT one number per release. DESI 2024 II Table 2 gives it per
+    tracer CLASS, because priority vetoes remove sky from lower-priority
+    samples (a QSO target can veto an LRG) and the imaging vetoes differ:
+
+        BGS 7473    LRG 5740    ELG 5924    QSO 7249
+
+    against the ~7500 nominal DR1 footprint. Using 7500 everywhere inflates V
+    by 1.31x for LRG and 1.27x for ELG, which depresses nbar = N/V by the same
+    factor -- most of the n(z) gap measured in shapefit CHANGELOG S50 -- and
+    inflates the covariance mode count. BGS (0.996) and QSO (0.967) are barely
+    affected, which is why they behaved differently from LRG/ELG throughout
+    S46-S51.
+
+    ``area`` is survey GEOMETRY and is held fixed: `N_tracers` is the design
+    variable and scales the DENSITY within this footprint. Scaling area with N
+    instead would leave nbar invariant and the design axis inert.
+
+    Falls back to the release footprint, with a warning, for bins carrying no
+    `area_deg2` (e.g. Lya_QSO).
+    """
+    # area_deg2 moved under the per-release block (S95); resolve through
+    # get_tracer_config so the release actually selects it.
+    try:
+        cfg = get_tracer_config(tracer_bin, data_release=data_release)
+    except ValueError:
+        cfg = {}
+    area = cfg.get("area_deg2")
+    if area is not None:
+        return float(area)
+    try:
+        fallback = _DATASET_AREA_FALLBACK[data_release]
+    except KeyError:
+        raise ValueError(
+            f"Unknown data_release {data_release!r}; "
+            f"known: {sorted(_DATASET_AREA_FALLBACK)}") from None
+    warnings.warn(
+        f"tracers.yaml has no `area_deg2` for {tracer_bin!r}; falling back to "
+        f"the {data_release} footprint ({fallback:.0f} deg^2). Per-tracer areas are "
+        "DESI 2024 II Table 2 -- see shapefit CHANGELOG S54.")
+    return float(fallback)
+
+
+def ntracers(tracer_bin: str, data_release: str = "dr1") -> float:
     """Return the DESI 'passed' N_tracers for ``tracer_bin`` from
-    ``~/data/desi/bao_{dataset}/desi_data.csv`` (dataset in {dr1, dr2}).
+    ``data/{data_release}/desi_data.csv`` in the repo (data_release in {dr1, dr2}).
 
     The HOD M_cut root-find depends on nbar = N_tracers / V_eff, so any
     pipeline configuration that compares predictions against bundle data must
@@ -175,15 +371,35 @@ def ntracers(tracer_bin: str, dataset: str = "dr1") -> float:
     Using a mismatched N silently shifts the HOD-weighted b1 and invalidates
     downstream b1/f_AB calibration.
     """
-    if dataset not in _NTRACERS_CACHE:
+    # Bins declaring `components` are not in desi_data.csv, which only carries
+    # the BAO combinations (there is no LRG3 row, only LRG3+ELG1). Sum the
+    # per-component passed counts from desi_tracers.csv instead:
+    #     passed = targets x comp x efficiency
+    # verified to reproduce DESI 2024 V Table 1 for every tracer.
+    cfg = TRACER_CONFIGS.get(tracer_bin.strip(), {})
+    components = cfg.get("components")
+    if components:
+        if data_release not in _COMPONENTS_CACHE:
+            import pandas as pd
+            tdf = pd.read_csv(reference_table_path(data_release, "desi_tracers.csv"))
+            _COMPONENTS_CACHE[data_release] = {
+                str(r["tracer"]): float(r["targets"]) * float(r["comp"]) * float(r["efficiency"])
+                for _, r in tdf.iterrows()}
+        ccache = _COMPONENTS_CACHE[data_release]
+        missing = [c for c in components if c not in ccache]
+        if missing:
+            raise KeyError(f"desi_tracers.csv ({data_release}) has no rows {missing} for "
+                           f"{tracer_bin!r}; available: {sorted(ccache)}")
+        return float(sum(ccache[c] for c in components))
+
+    if data_release not in _NTRACERS_CACHE:
         import pandas as pd
-        path = Path.home() / "data" / "desi" / f"bao_{dataset}" / "desi_data.csv"
-        df = pd.read_csv(path)[["tracer", "passed"]].drop_duplicates("tracer")
-        _NTRACERS_CACHE[dataset] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
-    cache = _NTRACERS_CACHE[dataset]
+        df = pd.read_csv(reference_table_path(data_release, "desi_data.csv"))[["tracer", "passed"]].drop_duplicates("tracer")
+        _NTRACERS_CACHE[data_release] = {r["tracer"]: float(r["passed"]) for _, r in df.iterrows()}
+    cache = _NTRACERS_CACHE[data_release]
     key = _CSV_NAME_MAP.get(tracer_bin, tracer_bin)
     if key not in cache:
-        raise KeyError(f"No {dataset} N_tracers for {tracer_bin!r} (looked up as {key!r}). "
+        raise KeyError(f"No {data_release} N_tracers for {tracer_bin!r} (looked up as {key!r}). "
                        f"Available: {sorted(cache)}")
     return cache[key]
 
@@ -193,13 +409,17 @@ def dr1_ntracers(tracer_bin: str) -> float:
     return ntracers(tracer_bin, "dr1")
 
 
-def ntracers_range(tracer_bin: str, dataset: str = "dr1") -> Tuple[float, float]:
+def ntracers_range(tracer_bin: str, data_release: str = "dr1") -> Tuple[float, float]:
     """Absolute N_tracers LHS bounds for ``tracer_bin``: the per-tracer
     ``low``/``high`` *multiplicative factors* in tracers.yaml times the DESI
-    ``passed`` count for ``dataset``. E.g. factors (0.5, 1.5) -> [0.5*passed,
-    1.5*passed], a box centred on the passed count."""
-    cfg = get_tracer_config(tracer_bin)
-    p = ntracers(tracer_bin, dataset)
+    ``passed`` count for ``data_release``.
+
+    The factors now live under a per-release block and are NOT portable across
+    releases (S94), so the release is threaded into `get_tracer_config` rather
+    than defaulted -- omitting it silently returned the raw mapping instead of
+    the values, which is the bug this signature change closes."""
+    cfg = get_tracer_config(tracer_bin, data_release=data_release)
+    p = ntracers(tracer_bin, data_release)
     return float(cfg["low"]) * p, float(cfg["high"]) * p
 
 
@@ -367,7 +587,8 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
     """
     _here = os.path.dirname(os.path.abspath(__file__))
 
-    tracer_bin_cfg = get_tracer_config(tracer_bin) if tracer_bin else None
+    tracer_bin_cfg = (get_tracer_config(tracer_bin, data_release="dr1")
+                      if tracer_bin else None)
 
     if analysis == "shapefit":
         if quantity not in ("covar", "mean"):
@@ -399,19 +620,38 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
                 return sf_fs.run_fisher(sample, tracer_bin=_tracer)
             return priors, target_names, ground_truth_fn, None
 
-        # quantity == "mean": per-tracer extractor at the fiducial-derived z_eff
-        # (matches generate_mean_data.py's convention).
-        gen_mean = _load_module(
-            "shapefit_gen_mean", os.path.join(_here, "shapefit", "generate_mean_data.py"))
+        # quantity == "mean": per-tracer extractor, z_eff derived PER SAMPLE.
         target_names = list(sf_core.MEAN_TARGET_NAMES)
         varied = [str(p) for p in param_names] if param_names is not None \
             else list(sf_core.COSMO_MODELS["base"])
         priors = {p: dict(sf_core.DEFAULT_PRIORS[p])
                   for p in varied if p != "N_tracers"}
-        z_eff = gen_mean._fiducial_z_eff(tracer_bin, 14000.0)
+        # This call site had drifted twice out of step with the worker it calls,
+        # and the second one made shapefit mean eval raise on every sample:
+        #
+        #   1. the task tuple is 6 fields (sample, tracer, z_eff,
+        #      param_defaults, area, data_release). It was passing 4, so
+        #      _worker_run_mean_targets died on the unpack -- which happens
+        #      BEFORE its try/except, so the failure was a hard ValueError, not
+        #      the (None, None, traceback) the contract promises. Verified:
+        #      "not enough values to unpack (expected 6, got 4)".
+        #
+        #   2. it pinned z_eff to a single fiducial value. S42 made z_eff depend
+        #      on the sampled cosmology AND on N_tracers, and the generator
+        #      passes z_eff=None so the worker derives it per sample. Pinning it
+        #      here would score the emulator against labels evaluated at a
+        #      different redshift from the ones it was trained on -- reviving
+        #      exactly the frozen-z_eff bug S42 removed.
+        #
+        # The area is this TRACER's footprint (S54/S58), not the release's; it
+        # is the argument the worker hands to _fs_compute_z_eff. shapefit is
+        # DR1-only (generate_covar_data.py restricts --data-release), so pin DR1
+        # rather than thread a data_release argument through get_pipeline.
+        _area = tracer_area(tracer_bin, "dr1")
 
-        def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _z=z_eff):
-            _s, vals, tb = sf_fs._worker_run_mean_targets((sample, _tracer, _z, None))
+        def ground_truth_fn(_setup, sample, _tracer=tracer_bin, _area=_area):
+            _s, vals, tb = sf_fs._worker_run_mean_targets(
+                (sample, _tracer, None, None, _area, "dr1"))
             if vals is None:
                 raise RuntimeError(f"mean extractor failed:\n{tb}")
             return dict(zip(target_names, vals))
@@ -435,7 +675,7 @@ def get_pipeline(analysis: str, quantity: str, tracer_bin: str | None = None, pa
             sys.path.insert(0, _bao_dir)
         import core as bao_core
 
-        target_names = list(bao_core.emulator_target_names(tracer_bin, dataset="dr1"))
+        target_names = list(bao_core.emulator_target_names(tracer_bin, data_release="dr1"))
 
         # Restrict priors to the trained model's varied params (param_names),
         # else default to N_tracers + the base cosmo set. N_tracers bounds come
@@ -513,20 +753,36 @@ def mlflow_tracking_uri(analysis: str) -> str:
     return f"file:{mlflow_tracking_dir(analysis)}"
 
 
+def logs_dir(analysis: str) -> str:
+    """Filesystem path of the per-analysis log directory, created on demand.
+
+    Sibling of training_data/, models/ and mlruns/ under
+    emulator/{analysis}/. Exists so generation drivers write their logs
+    somewhere discoverable instead of wherever the caller happened to
+    redirect -- a run whose log lands in a scratch dir is a run nobody can
+    audit later.
+    """
+    scratch = os.environ.get("SCRATCH", os.path.expanduser("~"))
+    d = os.path.join(
+        scratch, "bedcosmo", "num_tracers", "emulator", analysis, "logs")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def get_default_save_path(analysis: str = "shapefit", quantity: str = "mean",
                           cosmo_model: str | None = None,
-                          dataset: str | None = None) -> str:
+                          data_release: str | None = None) -> str:
     scratch = os.environ.get("SCRATCH")
     if not scratch:
         raise EnvironmentError("SCRATCH is not set; please pass --save-path explicitly.")
-    # {analysis}/training_data/[{dataset}/][{cosmo_model}/]{quantity}
+    # {analysis}/training_data/[{data_release}/][{cosmo_model}/]{quantity}
     # The analysis segment is the TOP level under emulator/ so that each
     # pipeline owns its own training_data/, models/ and logs/ subtree. It must
     # stay above the quantity: 'covar' is a valid quantity for both bao (the
     # Fourier Fisher backend) and shapefit, so an analysis-last layout collides.
     parts = [scratch, "bedcosmo", "num_tracers", "emulator", analysis, "training_data"]
-    if dataset is not None:
-        parts.append(dataset)
+    if data_release is not None:
+        parts.append(data_release)
     if cosmo_model is not None:
         parts.append(cosmo_model)
     parts.append(quantity)
